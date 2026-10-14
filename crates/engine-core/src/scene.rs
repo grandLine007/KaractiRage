@@ -30,12 +30,23 @@ pub struct DoorEntity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WallEntity {
+    pub id: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SceneData {
     pub name: String,
     pub description: String,
     pub player: PlayerSpawn,
     pub coins: Vec<CoinEntity>,
     pub doors: Vec<DoorEntity>,
+    #[serde(default)]
+    pub walls: Vec<WallEntity>,
 }
 
 impl SceneData {

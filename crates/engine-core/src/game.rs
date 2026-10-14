@@ -38,6 +38,14 @@ pub struct DoorInstance {
     pub is_open: bool,
 }
 
+pub struct WallInstance {
+    pub id: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
 pub struct GameState {
     pub scene_path: String,
     pub scene_name: String,
@@ -47,6 +55,7 @@ pub struct GameState {
     pub player_size: f32,
     pub coins: Vec<CoinInstance>,
     pub doors: Vec<DoorInstance>,
+    pub walls: Vec<WallInstance>,
     pub particles: Vec<Particle>,
     pub kvl_graphs: HashMap<String, Graph>,
     pub kvl_context: ExecutionContext,
@@ -123,6 +132,18 @@ impl GameState {
             })
             .collect();
 
+        let walls = scene_data
+            .walls
+            .into_iter()
+            .map(|w| WallInstance {
+                id: w.id,
+                x: w.x,
+                y: w.y,
+                w: w.w,
+                h: w.h,
+            })
+            .collect();
+
         Ok(Self {
             scene_path: path.to_string(),
             scene_name: scene_data.name,
@@ -132,6 +153,7 @@ impl GameState {
             player_size: scene_data.player.size,
             coins,
             doors,
+            walls,
             particles: Vec::new(),
             kvl_graphs,
             kvl_context,
@@ -345,6 +367,23 @@ impl GameState {
                     return;
                 }
 
+                // 6. Clic sur un Mur
+                let mut found_wall = None;
+                for (idx, wall) in self.walls.iter().enumerate() {
+                    if mx >= wall.x - 8.0 && mx <= wall.x + wall.w + 8.0 && my >= wall.y - 8.0 && my <= wall.y + wall.h + 8.0 {
+                        found_wall = Some(idx);
+                        break;
+                    }
+                }
+                if let Some(idx) = found_wall {
+                    self.editor.selected = SelectedEntity::Wall(idx);
+                    self.editor.is_dragging = true;
+                    self.editor.drag_offset_x = self.walls[idx].x - mx;
+                    self.editor.drag_offset_y = self.walls[idx].y - my;
+                    self.status_message = format!("Mur solide '{}' sélectionné. Déplacez-le à la souris.", self.walls[idx].id);
+                    return;
+                }
+
                 // Clic dans la zone de jeu vide -> désélectionner
                 if mx < 720.0 && my >= 65.0 && my <= 620.0 {
                     self.editor.selected = SelectedEntity::None;
@@ -375,6 +414,12 @@ impl GameState {
                         if idx < self.doors.len() {
                             self.doors[idx].x = new_x;
                             self.doors[idx].y = new_y;
+                        }
+                    }
+                    SelectedEntity::Wall(idx) => {
+                        if idx < self.walls.len() {
+                            self.walls[idx].x = new_x;
+                            self.walls[idx].y = new_y;
                         }
                     }
                     SelectedEntity::None => {}
@@ -430,11 +475,69 @@ impl GameState {
             move_y /= len;
         }
 
-        self.player_x += move_x * self.player_speed * dt;
-        self.player_y += move_y * self.player_speed * dt;
+        // ==========================================
+        // PHYSIQUE 2D & GLISSEMENT AABB (AXE SÉPARÉ)
+        // ==========================================
+        let half = self.player_size / 2.0;
 
-        self.player_x = self.player_x.clamp(40.0, 1140.0);
-        self.player_y = self.player_y.clamp(80.0, 570.0);
+        // Liste des boîtes solides (murs fixes + portes fermées)
+        #[derive(Clone, Copy)]
+        struct SolidBox {
+            x: f32,
+            y: f32,
+            w: f32,
+            h: f32,
+        }
+        let mut solid_boxes: Vec<SolidBox> = self.walls.iter()
+            .map(|w| SolidBox { x: w.x, y: w.y, w: w.w, h: w.h })
+            .collect();
+        for door in &self.doors {
+            if !door.is_open {
+                solid_boxes.push(SolidBox { x: door.x, y: door.y, w: door.w, h: door.h });
+            }
+        }
+
+        // 1. Déplacement et résolution sur l'axe X (glissement fluide le long des parois verticales)
+        if move_x != 0.0 {
+            self.player_x += move_x * self.player_speed * dt;
+            self.player_x = self.player_x.clamp(30.0 + half, 1160.0 - half);
+
+            let p_min_x = self.player_x - half;
+            let p_max_x = self.player_x + half;
+            let p_min_y = self.player_y - half;
+            let p_max_y = self.player_y + half;
+
+            for obs in &solid_boxes {
+                if p_max_x > obs.x && p_min_x < obs.x + obs.w && p_max_y > obs.y && p_min_y < obs.y + obs.h {
+                    if move_x > 0.0 {
+                        self.player_x = obs.x - half;
+                    } else if move_x < 0.0 {
+                        self.player_x = obs.x + obs.w + half;
+                    }
+                }
+            }
+        }
+
+        // 2. Déplacement et résolution sur l'axe Y (glissement fluide le long des parois horizontales)
+        if move_y != 0.0 {
+            self.player_y += move_y * self.player_speed * dt;
+            self.player_y = self.player_y.clamp(75.0 + half, 595.0 - half);
+
+            let p_min_x = self.player_x - half;
+            let p_max_x = self.player_x + half;
+            let p_min_y = self.player_y - half;
+            let p_max_y = self.player_y + half;
+
+            for obs in &solid_boxes {
+                if p_max_x > obs.x && p_min_x < obs.x + obs.w && p_max_y > obs.y && p_min_y < obs.y + obs.h {
+                    if move_y > 0.0 {
+                        self.player_y = obs.y - half;
+                    } else if move_y < 0.0 {
+                        self.player_y = obs.y + obs.h + half;
+                    }
+                }
+            }
+        }
 
         // Particules
         for p in &mut self.particles {
@@ -566,6 +669,25 @@ impl GameState {
             }
         }
 
+        // Rendu des murs solides (Physique AABB)
+        for (idx, wall) in self.walls.iter().enumerate() {
+            let wx = wall.x as i32;
+            let wy = wall.y as i32;
+            let ww = wall.w as u32;
+            let wh = wall.h as u32;
+
+            canvas.draw_rect(wx, wy, ww, wh, 0x001E293B);
+            canvas.draw_rect_outline(wx, wy, ww, wh, 0x00475569, 2);
+            if ww > 8 && wh > 8 {
+                canvas.draw_rect_outline(wx + 3, wy + 3, ww - 6, wh - 6, 0x00334155, 1);
+            }
+
+            if is_edit_mode && self.editor.selected == SelectedEntity::Wall(idx) {
+                canvas.draw_rect_outline(wx - 4, wy - 4, ww + 8, wh + 8, 0x00FBBF24, 2);
+                canvas.draw_text(wx, wy - 20, &format!("MUR: {}", wall.id), 0x00FBBF24, 2);
+            }
+        }
+
         // Rendu des portes
         for (idx, door) in self.doors.iter().enumerate() {
             let door_color = if door.is_open { 0x0010B981 } else { 0x00EF4444 };
@@ -684,6 +806,21 @@ impl GameState {
                     let pos_str = format!("Pos : X:{:.0}  Y:{:.0}", door.x, door.y);
 
                     self.render_entity_inspector(canvas, insp_x, insp_y, insp_w, &ent_title, 0x0010B981, &pos_str, &script_path);
+                }
+                SelectedEntity::Wall(idx) => {
+                    let wall = &self.walls[idx];
+                    canvas.draw_text(insp_x + 18, insp_y + 60, &format!("ENTITE : MUR SOLIDE ({})", wall.id), 0x0094A3B8, 2);
+                    let pos_str = format!("Pos : X:{:.0}  Y:{:.0}", wall.x, wall.y);
+                    canvas.draw_text(insp_x + 18, insp_y + 90, &pos_str, 0x00F8FAFC, 2);
+                    let dim_str = format!("Taille : {} x {} px", wall.w as u32, wall.h as u32);
+                    canvas.draw_text(insp_x + 18, insp_y + 115, &dim_str, 0x00CBD5E1, 2);
+
+                    canvas.draw_rect(insp_x + 18, insp_y + 145, (insp_w - 36) as u32, 1, 0x00334155);
+                    canvas.draw_text(insp_x + 18, insp_y + 165, "PROPRIETES PHYSIQUES :", 0x00FBBF24, 2);
+                    canvas.draw_text(insp_x + 18, insp_y + 195, "- Collision AABB Solide", 0x0034D399, 2);
+                    canvas.draw_text(insp_x + 18, insp_y + 225, "- Glissement continu X/Y", 0x0034D399, 2);
+                    canvas.draw_text(insp_x + 18, insp_y + 255, "- Bloque passage joueur", 0x0034D399, 2);
+                    canvas.draw_text(insp_x + 18, insp_y + 295, "(Deplacement libre souris)", 0x0094A3B8, 2);
                 }
             }
         }
@@ -966,5 +1103,92 @@ impl GameState {
                 canvas.draw_text(mx + 12, my - 10, "RELIER A L'ENTREE", 0x00FDE047, 1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_test_scene_path() -> &'static str {
+        if std::path::Path::new("assets/scenes/level_01.scene.json").exists() {
+            "assets/scenes/level_01.scene.json"
+        } else {
+            "../../assets/scenes/level_01.scene.json"
+        }
+    }
+
+    #[test]
+    fn test_aabb_wall_blocking_and_sliding() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        let wall_x = state.walls[0].x;
+        let wall_y = state.walls[0].y;
+        let wall_h = state.walls[0].h;
+        let half = state.player_size / 2.0;
+
+        // Position initiale : 5 px avant le mur sur X, centré sur Y
+        state.player_x = wall_x - half - 5.0;
+        state.player_y = wall_y + (wall_h / 2.0);
+
+        let initial_y = state.player_y;
+
+        // Simuler une entrée de déplacement diagonale : Droite + Bas
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyD); // Droite
+        input.on_key_down(KeyCode::KeyS); // Bas
+
+        // Mettre à jour avec un dt de 0.1s
+        state.update(0.1, &input);
+
+        // 1. Le joueur doit avoir glissé vers le bas (Y a augmenté)
+        assert!(state.player_y > initial_y, "Le joueur doit pouvoir glisser librement sur l'axe Y");
+
+        // 2. Le joueur ne doit PAS avoir pénétré le mur sur X (bloqué au bord exact du mur)
+        assert!(
+            (state.player_x - (wall_x - half)).abs() < 0.01,
+            "Le joueur doit être bloqué exactement au bord du mur (X: {}, attendu: {})",
+            state.player_x,
+            wall_x - half
+        );
+    }
+
+    #[test]
+    fn test_door_solidity_when_closed_vs_open() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        let half = state.player_size / 2.0;
+        let door_x = state.doors[0].x;
+        let door_h = state.doors[0].h;
+        assert!(!state.doors[0].is_open, "La porte doit démarrer fermée");
+
+        // Positionner le joueur à gauche de la porte fermée
+        state.player_x = door_x - half - 5.0;
+        state.player_y = state.doors[0].y + (door_h / 2.0);
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyD); // Tenter de traverser vers la droite
+
+        state.update(0.1, &input);
+
+        // La porte fermée doit bloquer le joueur
+        assert!(
+            (state.player_x - (door_x - half)).abs() < 0.01,
+            "La porte fermée doit bloquer le joueur comme un mur solide"
+        );
+
+        // Ouvrir la porte
+        state.doors[0].is_open = true;
+
+        // Réessayer d'avancer vers la droite
+        state.update(0.1, &input);
+
+        // Le joueur doit maintenant pouvoir traverser la porte ouverte
+        assert!(
+            state.player_x > door_x - half,
+            "La porte ouverte doit laisser passer le joueur"
+        );
     }
 }

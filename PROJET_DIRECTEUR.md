@@ -106,6 +106,18 @@
   * 100% des tests validés (5/5).
   * Temps de frame CPU < 500 µs (consommation < 4% du budget 60 FPS).
 
+### Étape 8 : Moteur Physique 2D, Murs Solides & Glissement Continu AABB *(14 Octobre 2026)*
+* **Réalisations** :
+  * Implémentation du **système de collision physique 2D et glissement continu** (Option B choisie par l'utilisateur).
+  * Ajout de `WallEntity` et du champ `walls` dans le format de scène data-driven `level_01.scene.json` (cloisons de salle et embrasure de porte).
+  * Algorithme de détection et résolution AABB par passes d'axes séparées (X puis Y) garantissant un glissement fluide et naturel le long des parois lors de déplacements diagonaux.
+  * Liaison physique KVL : les portes fermées constituent des obstacles infranchissables, et deviennent perméables dès leur ouverture interactive par script KVL.
+  * Rendu texturé des murs et intégration complète dans le Mode Éditeur (`TAB`) : sélection, déplacement à la souris et fiche de propriétés physiques.
+* **Mesures & Benchmarks** :
+  * 7/7 tests unitaires réussis à 100% (incluant `test_aabb_wall_blocking_and_sliding` et `test_door_solidity_when_closed_vs_open`).
+  * Temps de frame CPU toujours < 500 µs.
+
+
 
 
 ---
