@@ -64,6 +64,43 @@ impl Canvas {
         }
     }
 
+    /// Algorithme de tracé de ligne de Bresenham ultra-rapide et déterministe
+    pub fn draw_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32) {
+        let dx = (x1 - x0).abs();
+        let dy = -(y1 - y0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+        let mut curr_x = x0;
+        let mut curr_y = y0;
+
+        loop {
+            self.set_pixel(curr_x, curr_y, color);
+            if curr_x == x1 && curr_y == y1 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                curr_x += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                curr_y += sy;
+            }
+        }
+    }
+
+    /// Tracé de ligne épaisse pour les fils de connexion KVL
+    pub fn draw_thick_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, thickness: i32, color: u32) {
+        let offset = thickness / 2;
+        for ox in -offset..=offset {
+            for oy in -offset..=offset {
+                self.draw_line(x0 + ox, y0 + oy, x1 + ox, y1 + oy, color);
+            }
+        }
+    }
+
     /// Rendu de texte bitmap 5x7 intégré (autonome, sans dépendance TTF externe)
     pub fn draw_text(&mut self, start_x: i32, start_y: i32, text: &str, color: u32, scale: usize) {
         let mut cur_x = start_x;
@@ -134,6 +171,14 @@ fn get_char_glyph(c: char) -> Option<[u8; 7]> {
         'X' => Some([0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001]),
         'Y' => Some([0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100]),
         'Z' => Some([0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111]),
+        '>' => Some([0b10000, 0b01000, 0b00100, 0b00010, 0b00100, 0b01000, 0b10000]),
+        '<' => Some([0b00010, 0b00100, 0b01000, 0b10000, 0b01000, 0b00100, 0b00010]),
+        '[' => Some([0b01110, 0b01000, 0b01000, 0b01000, 0b01000, 0b01000, 0b01110]),
+        ']' => Some([0b01110, 0b00010, 0b00010, 0b00010, 0b00010, 0b00010, 0b01110]),
+        '(' => Some([0b00100, 0b01000, 0b01000, 0b01000, 0b01000, 0b01000, 0b00100]),
+        ')' => Some([0b00100, 0b00010, 0b00010, 0b00010, 0b00010, 0b00010, 0b00100]),
+        ',' => Some([0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00100, 0b01000]),
+        '*' => Some([0b00000, 0b10101, 0b01110, 0b11111, 0b01110, 0b10101, 0b00000]),
         ':' => Some([0b00000, 0b00100, 0b00000, 0b00000, 0b00100, 0b00000, 0b00000]),
         '/' => Some([0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b00000, 0b00000]),
         '-' => Some([0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000]),

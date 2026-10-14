@@ -187,30 +187,119 @@ impl GameState {
         // GESTION DU MODE ÉDITION
         // ==========================================
         if self.editor.mode == EditorMode::Edit {
+            self.editor.mouse_x = input.mouse_x;
+            self.editor.mouse_y = input.mouse_y;
+
+            // Annuler le câblage avec Échap ou Clic droit
+            if input.is_key_just_pressed(KeyCode::Escape) || input.mouse_right_just_clicked {
+                if self.editor.active_wire.is_some() {
+                    self.editor.cancel_wire();
+                    self.status_message = "Câblage annulé.".into();
+                    return;
+                }
+            }
+
             if input.is_key_just_pressed(KeyCode::Space) {
                 self.editor.toggle_view_detail();
                 self.status_message = if self.editor.is_detailed_view {
-                    "Inspecteur KVL : Vue détaillée technique dépliée".into()
+                    "Inspecteur KVL : Vue détaillée technique dépliée (câblage actif)".into()
                 } else {
                     "Inspecteur KVL : Vue simplifiée (macro-blocs)".into()
                 };
             }
 
-            // Sélection à la souris
+            // Gestion des clics en mode édition
             if input.mouse_just_clicked {
                 let mx = input.mouse_x;
                 let my = input.mouse_y;
 
-                // 1. Bouton toggle vue détaillée (dans le panneau droit)
-                if mx >= 720.0 && my >= 130.0 && my <= 175.0 {
+                // Récupérer le script_path de l'entité sélectionnée si applicable
+                let selected_script_path = match self.editor.selected {
+                    SelectedEntity::Coin(idx) if idx < self.coins.len() => Some(self.coins[idx].script_path.clone()),
+                    SelectedEntity::Door(idx) if idx < self.doors.len() => Some(self.doors[idx].script_path.clone()),
+                    _ => None,
+                };
+
+                // 1. Clic sur le bouton de bascule [Vue Détaillée / Vue Simplifiée] (haut du panneau droit)
+                if mx >= 740.0 && mx <= 1180.0 && my >= 170.0 && my <= 215.0 {
                     self.editor.toggle_view_detail();
                     return;
                 }
 
-                // 2. Clic sur le Joueur
+                // 2. Si vue détaillée active : vérifier clic sur les éléments KVL
+                if self.editor.is_detailed_view {
+                    if let Some(ref script_path) = selected_script_path {
+                        // A. Clic sur le bouton [X] pour couper une liaison
+                        if let Some(cut_hit) = self.editor.find_connection_cut_at(mx, my) {
+                            let conn_id = cut_hit.connection_id.clone();
+                            if let Some(graph) = self.kvl_graphs.get_mut(script_path) {
+                                if graph.remove_connection_by_id(&conn_id) {
+                                    self.status_message = format!("Connexion '{}' coupée avec succès !", conn_id);
+                                    return;
+                                }
+                            }
+                        }
+
+                        // B. Clic sur une broche (Pin)
+                        if let Some(pin_hit) = self.editor.find_pin_at(mx, my) {
+                            let node_id = pin_hit.node_id.clone();
+                            let pin_id = pin_hit.pin_id.clone();
+                            let is_output = pin_hit.is_output;
+                            let sock_x = pin_hit.socket_x;
+                            let sock_y = pin_hit.socket_y;
+
+                            if let Some(wire) = self.editor.active_wire.take() {
+                                if !is_output {
+                                    // Relier la sortie active vers cette entrée
+                                    if let Some(graph) = self.kvl_graphs.get_mut(script_path) {
+                                        match graph.connect_pins(&wire.from_node, &wire.from_pin, &node_id, &pin_id) {
+                                            Ok(_) => {
+                                                self.status_message = format!("Nouvelle liaison établie : {}:{} -> {}:{} !", wire.from_node, wire.from_pin, node_id, pin_id);
+                                            }
+                                            Err(err) => {
+                                                self.status_message = format!("Liaison refusée : {}", err);
+                                            }
+                                        }
+                                    }
+                                } else if wire.from_node == node_id && wire.from_pin == pin_id {
+                                    self.status_message = "Câblage annulé.".into();
+                                } else {
+                                    // Changer la broche source de câblage
+                                    self.editor.start_wire(node_id.clone(), pin_id.clone(), sock_x, sock_y);
+                                    self.status_message = format!("Nouvelle source de câblage : {}:{}", node_id, pin_id);
+                                }
+                            } else {
+                                if is_output {
+                                    self.editor.start_wire(node_id.clone(), pin_id.clone(), sock_x, sock_y);
+                                    self.status_message = format!("Fil de câblage actif depuis {}:{}. Cliquez sur une entrée.", node_id, pin_id);
+                                } else {
+                                    // Clic sur une entrée existante : si connectée, la déconnecter !
+                                    if let Some(graph) = self.kvl_graphs.get_mut(script_path) {
+                                        let removed = graph.disconnect_pin(&node_id, &pin_id);
+                                        if removed > 0 {
+                                            self.status_message = format!("Broche {}:{} déconnectée ({} fil retiré).", node_id, pin_id, removed);
+                                        } else {
+                                            self.status_message = format!("Broche {}:{} libre (prête à recevoir un fil).", node_id, pin_id);
+                                        }
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                    }
+
+                    // Si on a un fil actif et qu'on a cliqué ailleurs dans l'espace vide : annuler le fil
+                    if self.editor.active_wire.is_some() {
+                        self.editor.cancel_wire();
+                        self.status_message = "Câblage annulé.".into();
+                        return;
+                    }
+                }
+
+                // 3. Clic sur le Joueur
                 let half = self.player_size / 2.0;
-                if mx >= self.player_x - half - 5.0 && mx <= self.player_x + half + 5.0
-                    && my >= self.player_y - half - 5.0 && my <= self.player_y + half + 5.0
+                if mx >= self.player_x - half - 8.0 && mx <= self.player_x + half + 8.0
+                    && my >= self.player_y - half - 8.0 && my <= self.player_y + half + 8.0
                 {
                     self.editor.selected = SelectedEntity::Player;
                     self.editor.is_dragging = true;
@@ -220,12 +309,12 @@ impl GameState {
                     return;
                 }
 
-                // 3. Clic sur une Pièce
+                // 4. Clic sur une Pièce
                 let mut found_coin = None;
                 for (idx, coin) in self.coins.iter().enumerate() {
                     let dx = mx - coin.x;
                     let dy = my - coin.y;
-                    if (dx * dx + dy * dy).sqrt() <= (coin.radius + 12.0) {
+                    if (dx * dx + dy * dy).sqrt() <= (coin.radius + 16.0) {
                         found_coin = Some(idx);
                         break;
                     }
@@ -239,10 +328,10 @@ impl GameState {
                     return;
                 }
 
-                // 4. Clic sur une Porte
+                // 5. Clic sur une Porte
                 let mut found_door = None;
                 for (idx, door) in self.doors.iter().enumerate() {
-                    if mx >= door.x - 8.0 && mx <= door.x + door.w + 8.0 && my >= door.y - 8.0 && my <= door.y + door.h + 8.0 {
+                    if mx >= door.x - 12.0 && mx <= door.x + door.w + 12.0 && my >= door.y - 12.0 && my <= door.y + door.h + 12.0 {
                         found_door = Some(idx);
                         break;
                     }
@@ -257,7 +346,7 @@ impl GameState {
                 }
 
                 // Clic dans la zone de jeu vide -> désélectionner
-                if mx < 700.0 && my >= 65.0 && my <= 580.0 {
+                if mx < 720.0 && my >= 65.0 && my <= 620.0 {
                     self.editor.selected = SelectedEntity::None;
                 }
             }
@@ -268,8 +357,8 @@ impl GameState {
 
             // Déplacement de l'objet sélectionné à la souris
             if self.editor.is_dragging && input.mouse_pressed {
-                let new_x = (input.mouse_x + self.editor.drag_offset_x).clamp(40.0, 680.0);
-                let new_y = (input.mouse_y + self.editor.drag_offset_y).clamp(80.0, 560.0);
+                let new_x = (input.mouse_x + self.editor.drag_offset_x).clamp(50.0, 700.0);
+                let new_y = (input.mouse_y + self.editor.drag_offset_y).clamp(80.0, 580.0);
 
                 match self.editor.selected {
                     SelectedEntity::Player => {
@@ -429,7 +518,7 @@ impl GameState {
         }
     }
 
-    pub fn render(&self, canvas: &mut Canvas) {
+    pub fn render(&mut self, canvas: &mut Canvas) {
         canvas.clear(0x00141923);
 
         let is_edit_mode = self.editor.mode == EditorMode::Edit;
@@ -552,6 +641,9 @@ impl GameState {
             let insp_w = 440;
             let insp_h = play_area_h;
 
+            self.editor.pin_hitboxes.clear();
+            self.editor.connection_hitboxes.clear();
+
             canvas.draw_rect(insp_x, insp_y, insp_w as u32, insp_h, 0x000F172A);
             canvas.draw_rect_outline(insp_x, insp_y, insp_w as u32, insp_h, 0x0038BDF8, 2);
 
@@ -563,7 +655,7 @@ impl GameState {
                     canvas.draw_text(insp_x + 18, insp_y + 65, "AUCUN OBJET SELECTIONNE.", 0x0094A3B8, 2);
                     canvas.draw_text(insp_x + 18, insp_y + 100, "Cliquez sur une piece,", 0x0064748B, 2);
                     canvas.draw_text(insp_x + 18, insp_y + 125, "la porte ou le joueur pour", 0x0064748B, 2);
-                    canvas.draw_text(insp_x + 18, insp_y + 150, "inspecter sa logique KVL.", 0x0064748B, 2);
+                    canvas.draw_text(insp_x + 18, insp_y + 150, "inspecter ou relier sa logique.", 0x0064748B, 2);
                 }
                 SelectedEntity::Player => {
                     canvas.draw_text(insp_x + 18, insp_y + 60, "ENTITE : JOUEUR", 0x0038BDF8, 2);
@@ -579,83 +671,19 @@ impl GameState {
                 }
                 SelectedEntity::Coin(idx) => {
                     let coin = &self.coins[idx];
-                    canvas.draw_text(insp_x + 18, insp_y + 55, &format!("ENTITE : PIECE ({})", coin.id), 0x00FBBF24, 2);
+                    let script_path = coin.script_path.clone();
+                    let ent_title = format!("ENTITE : PIECE ({})", coin.id);
                     let pos_str = format!("Pos : X:{:.0}  Y:{:.0}", coin.x, coin.y);
-                    canvas.draw_text(insp_x + 18, insp_y + 80, &pos_str, 0x00F8FAFC, 2);
 
-                    // Bouton bascule de vue
-                    let view_btn_bg = if self.editor.is_detailed_view { 0x00047857 } else { 0x001D4ED8 };
-                    canvas.draw_rect(insp_x + 18, insp_y + 110, (insp_w - 36) as u32, 32, view_btn_bg);
-                    let view_btn_txt = if self.editor.is_detailed_view { "[ VUE DETAILLEE (ESPACE) ]" } else { "[ VUE SIMPLIFIEE (ESPACE) ]" };
-                    canvas.draw_text(insp_x + 28, insp_y + 118, view_btn_txt, 0x00FFFFFF, 2);
-
-                    if !self.editor.is_detailed_view {
-                        canvas.draw_text(insp_x + 18, insp_y + 160, "CHAINE LOGIQUE VISUELLE :", 0x0038BDF8, 2);
-
-                        // Bloc 1
-                        canvas.draw_rect(insp_x + 18, insp_y + 190, (insp_w - 36) as u32, 38, 0x001E293B);
-                        canvas.draw_rect_outline(insp_x + 18, insp_y + 190, (insp_w - 36) as u32, 38, 0x003B82F6, 2);
-                        canvas.draw_text(insp_x + 28, insp_y + 202, "1. Contact Joueur", 0x0093C5FD, 2);
-
-                        canvas.draw_text(insp_x + 180, insp_y + 234, "V", 0x00FBBF24, 2);
-
-                        // Bloc 2
-                        canvas.draw_rect(insp_x + 18, insp_y + 255, (insp_w - 36) as u32, 38, 0x001E293B);
-                        canvas.draw_rect_outline(insp_x + 18, insp_y + 255, (insp_w - 36) as u32, 38, 0x0010B981, 2);
-                        canvas.draw_text(insp_x + 28, insp_y + 267, "2. Score +10", 0x006EE7B7, 2);
-
-                        canvas.draw_text(insp_x + 180, insp_y + 299, "V", 0x00FBBF24, 2);
-
-                        // Bloc 3
-                        canvas.draw_rect(insp_x + 18, insp_y + 320, (insp_w - 36) as u32, 38, 0x001E293B);
-                        canvas.draw_rect_outline(insp_x + 18, insp_y + 320, (insp_w - 36) as u32, 38, 0x00EF4444, 2);
-                        canvas.draw_text(insp_x + 28, insp_y + 332, "3. Disparaitre", 0x00FCA5A5, 2);
-                    } else {
-                        canvas.draw_text(insp_x + 18, insp_y + 155, "NOEUDS & PINS TECHNIQUES :", 0x0010B981, 2);
-
-                        canvas.draw_text(insp_x + 18, insp_y + 185, "[Event: evt_overlap]", 0x0093C5FD, 2);
-                        canvas.draw_text(insp_x + 30, insp_y + 208, "Out : [Trigger: out] -->", 0x0094A3B8, 2);
-
-                        canvas.draw_text(insp_x + 18, insp_y + 240, "[Action: act_add_score]", 0x006EE7B7, 2);
-                        canvas.draw_text(insp_x + 30, insp_y + 263, "In  : [Trigger: in]", 0x0094A3B8, 2);
-                        canvas.draw_text(insp_x + 30, insp_y + 285, "Out : [Trigger: out] -->", 0x0094A3B8, 2);
-
-                        canvas.draw_text(insp_x + 18, insp_y + 318, "[Action: act_destroy]", 0x00FCA5A5, 2);
-                        canvas.draw_text(insp_x + 30, insp_y + 340, "In  : [Trigger: in]", 0x0094A3B8, 2);
-                    }
+                    self.render_entity_inspector(canvas, insp_x, insp_y, insp_w, &ent_title, 0x00FBBF24, &pos_str, &script_path);
                 }
                 SelectedEntity::Door(idx) => {
                     let door = &self.doors[idx];
-                    canvas.draw_text(insp_x + 18, insp_y + 55, &format!("ENTITE : PORTE ({})", door.id), 0x0010B981, 2);
+                    let script_path = door.script_path.clone();
+                    let ent_title = format!("ENTITE : PORTE ({})", door.id);
                     let pos_str = format!("Pos : X:{:.0}  Y:{:.0}", door.x, door.y);
-                    canvas.draw_text(insp_x + 18, insp_y + 80, &pos_str, 0x00F8FAFC, 2);
 
-                    let view_btn_bg = if self.editor.is_detailed_view { 0x00047857 } else { 0x001D4ED8 };
-                    canvas.draw_rect(insp_x + 18, insp_y + 110, (insp_w - 36) as u32, 32, view_btn_bg);
-                    let view_btn_txt = if self.editor.is_detailed_view { "[ VUE DETAILLEE (ESPACE) ]" } else { "[ VUE SIMPLIFIEE (ESPACE) ]" };
-                    canvas.draw_text(insp_x + 28, insp_y + 118, view_btn_txt, 0x00FFFFFF, 2);
-
-                    if !self.editor.is_detailed_view {
-                        canvas.draw_text(insp_x + 18, insp_y + 160, "CHAINE LOGIQUE VISUELLE :", 0x0038BDF8, 2);
-
-                        canvas.draw_rect(insp_x + 18, insp_y + 195, (insp_w - 36) as u32, 42, 0x001E293B);
-                        canvas.draw_rect_outline(insp_x + 18, insp_y + 195, (insp_w - 36) as u32, 42, 0x003B82F6, 2);
-                        canvas.draw_text(insp_x + 28, insp_y + 208, "1. Touche E (Proximite)", 0x0093C5FD, 2);
-
-                        canvas.draw_text(insp_x + 180, insp_y + 248, "V", 0x00FBBF24, 2);
-
-                        canvas.draw_rect(insp_x + 18, insp_y + 275, (insp_w - 36) as u32, 42, 0x001E293B);
-                        canvas.draw_rect_outline(insp_x + 18, insp_y + 275, (insp_w - 36) as u32, 42, 0x0010B981, 2);
-                        canvas.draw_text(insp_x + 28, insp_y + 288, "2. Basculer Etat", 0x006EE7B7, 2);
-                    } else {
-                        canvas.draw_text(insp_x + 18, insp_y + 155, "NOEUDS & PINS TECHNIQUES :", 0x0010B981, 2);
-
-                        canvas.draw_text(insp_x + 18, insp_y + 190, "[Event: evt_door_interact]", 0x0093C5FD, 2);
-                        canvas.draw_text(insp_x + 30, insp_y + 215, "Out : [Trigger: out] -->", 0x0094A3B8, 2);
-
-                        canvas.draw_text(insp_x + 18, insp_y + 250, "[Action: act_toggle_door]", 0x006EE7B7, 2);
-                        canvas.draw_text(insp_x + 30, insp_y + 275, "In  : [Trigger: in]", 0x0094A3B8, 2);
-                    }
+                    self.render_entity_inspector(canvas, insp_x, insp_y, insp_w, &ent_title, 0x0010B981, &pos_str, &script_path);
                 }
             }
         }
@@ -727,6 +755,215 @@ impl GameState {
                     let bar_color = if time_us > 16_666 { 0x00EF4444 } else if time_us > 8_000 { 0x00FBBF24 } else { 0x0010B981 };
                     canvas.draw_rect(bar_x, graph_y + graph_h - (bar_h as i32) - 2, 2, bar_h.max(2), bar_color);
                 }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_entity_inspector(
+        &mut self,
+        canvas: &mut Canvas,
+        insp_x: i32,
+        insp_y: i32,
+        insp_w: i32,
+        title: &str,
+        title_color: u32,
+        pos_str: &str,
+        script_path: &str,
+    ) {
+        canvas.draw_text(insp_x + 18, insp_y + 55, title, title_color, 2);
+        canvas.draw_text(insp_x + 18, insp_y + 78, pos_str, 0x00F8FAFC, 2);
+
+        // Bouton bascule de vue
+        let view_btn_bg = if self.editor.is_detailed_view { 0x00047857 } else { 0x001D4ED8 };
+        let btn_y = insp_y + 105;
+        let btn_w = (insp_w - 36) as u32;
+        canvas.draw_rect(insp_x + 18, btn_y, btn_w, 34, view_btn_bg);
+        canvas.draw_rect_outline(insp_x + 18, btn_y, btn_w, 34, 0x0038BDF8, 1);
+        let view_btn_txt = if self.editor.is_detailed_view {
+            "[ VUE DETAILLEE : CABLAGE (ESPACE) ]"
+        } else {
+            "[ VUE SIMPLIFIEE : MACRO (ESPACE) ]"
+        };
+        canvas.draw_text(insp_x + 28, btn_y + 10, view_btn_txt, 0x00FFFFFF, 2);
+
+        let graph = match self.kvl_graphs.get(script_path) {
+            Some(g) => g,
+            None => {
+                canvas.draw_text(insp_x + 18, insp_y + 155, "Script KVL introuvable.", 0x00EF4444, 2);
+                return;
+            }
+        };
+
+        if !self.editor.is_detailed_view {
+            // ==========================================
+            // VUE SIMPLIFIÉE (MACRO-BLOCS)
+            // ==========================================
+            canvas.draw_text(insp_x + 18, insp_y + 155, "CHAINE LOGIQUE VISUELLE :", 0x0038BDF8, 2);
+
+            let mut sorted_nodes: Vec<&Node> = graph.nodes.values().collect();
+            sorted_nodes.sort_by_key(|n| match n.kind {
+                NodeKind::Event { .. } => 0,
+                NodeKind::Action { ref action_type } if action_type == "AddScore" => 1,
+                _ => 2,
+            });
+
+            for (idx, node) in sorted_nodes.iter().enumerate() {
+                let block_y = insp_y + 185 + (idx as i32 * 60);
+                let (box_col, badge) = match node.kind {
+                    NodeKind::Event { .. } => (0x000284C7, "1. EVENT :"),
+                    _ if idx == 1 => (0x00059669, "2. ACTION :"),
+                    _ => (0x009333EA, "3. EFFET :"),
+                };
+
+                canvas.draw_rect(insp_x + 18, block_y, btn_w, 40, 0x001E293B);
+                canvas.draw_rect_outline(insp_x + 18, block_y, btn_w, 40, box_col, 2);
+
+                let label = format!("{} {}", badge, node.name);
+                canvas.draw_text(insp_x + 28, block_y + 12, &label, 0x00F8FAFC, 2);
+
+                if idx + 1 < sorted_nodes.len() {
+                    canvas.draw_text(insp_x + (btn_w as i32 / 2) - 4, block_y + 44, "V", 0x00FBBF24, 2);
+                }
+            }
+        } else {
+            // ==========================================
+            // VUE DÉTAILLÉE : CÂBLAGE VISUEL DE PINS
+            // ==========================================
+            canvas.draw_text(insp_x + 18, insp_y + 150, "CABLAGE DE NOEUDS & PINS :", 0x0010B981, 2);
+
+            let mut sorted_nodes: Vec<&Node> = graph.nodes.values().collect();
+            sorted_nodes.sort_by_key(|n| match n.kind {
+                NodeKind::Event { .. } => 0,
+                NodeKind::Action { ref action_type } if action_type == "AddScore" => 1,
+                _ => 2,
+            });
+
+            let mut pin_sockets: HashMap<(String, String), (i32, i32)> = HashMap::new();
+            let mut cur_y = insp_y + 175;
+
+            for node in &sorted_nodes {
+                let max_pins = node.inputs.len().max(node.outputs.len()).max(1);
+                let card_h = 30 + (max_pins as i32 * 32);
+
+                let (header_col, header_tag) = match node.kind {
+                    NodeKind::Event { .. } => (0x000284C7, "EVENT"),
+                    _ => (0x00059669, "ACTION"),
+                };
+
+                // Fond de la boîte de nœud
+                canvas.draw_rect(insp_x + 18, cur_y, btn_w, card_h as u32, 0x00131C2E);
+                canvas.draw_rect_outline(insp_x + 18, cur_y, btn_w, card_h as u32, header_col, 2);
+
+                // En-tête du nœud
+                canvas.draw_rect(insp_x + 18, cur_y, btn_w, 24, header_col);
+                let header_title = format!("[{}] {}", header_tag, node.id);
+                canvas.draw_text(insp_x + 26, cur_y + 5, &header_title, 0x00FFFFFF, 2);
+
+                // Inputs (à gauche)
+                for (p_idx, pin) in node.inputs.iter().enumerate() {
+                    let py = cur_y + 32 + (p_idx as i32 * 30);
+                    let sock_x = insp_x + 26;
+                    let sock_y = py;
+                    let is_connected = graph.is_pin_connected(&node.id, &pin.id);
+
+                    // Couleur du connecteur
+                    let sock_col = if is_connected { 0x0010B981 } else { 0x00475569 };
+                    canvas.draw_rect(sock_x, sock_y, 22, 20, sock_col);
+                    canvas.draw_rect_outline(sock_x, sock_y, 22, 20, 0x00FFFFFF, 1);
+                    canvas.draw_text(sock_x + 6, sock_y + 3, ">", 0x00FFFFFF, 2);
+
+                    let pin_lbl = format!("{}:In", pin.id);
+                    canvas.draw_text(sock_x + 28, sock_y + 3, &pin_lbl, 0x00CBD5E1, 2);
+
+                    // Enregistrer hitbox & position
+                    let socket_center = (sock_x + 11, sock_y + 10);
+                    pin_sockets.insert((node.id.clone(), pin.id.clone()), socket_center);
+                    self.editor.pin_hitboxes.push(crate::editor::PinHitbox {
+                        node_id: node.id.clone(),
+                        pin_id: pin.id.clone(),
+                        is_output: false,
+                        x: sock_x,
+                        y: sock_y,
+                        w: 120,
+                        h: 22,
+                        socket_x: socket_center.0,
+                        socket_y: socket_center.1,
+                    });
+                }
+
+                // Outputs (à droite)
+                for (p_idx, pin) in node.outputs.iter().enumerate() {
+                    let py = cur_y + 32 + (p_idx as i32 * 30);
+                    let sock_x = insp_x + (btn_w as i32) - 32;
+                    let sock_y = py;
+                    let is_connected = graph.is_pin_connected(&node.id, &pin.id);
+
+                    let sock_col = if is_connected { 0x0006B6D4 } else { 0x00FBBF24 };
+                    canvas.draw_rect(sock_x, sock_y, 22, 20, sock_col);
+                    canvas.draw_rect_outline(sock_x, sock_y, 22, 20, 0x00FFFFFF, 1);
+                    canvas.draw_text(sock_x + 6, sock_y + 3, ">", 0x00000000, 2);
+
+                    let pin_lbl = format!("{}:Out", pin.id);
+                    let text_w = pin_lbl.len() as i32 * 12;
+                    canvas.draw_text(sock_x - text_w - 6, sock_y + 3, &pin_lbl, 0x00FDE047, 2);
+
+                    let socket_center = (sock_x + 11, sock_y + 10);
+                    pin_sockets.insert((node.id.clone(), pin.id.clone()), socket_center);
+                    self.editor.pin_hitboxes.push(crate::editor::PinHitbox {
+                        node_id: node.id.clone(),
+                        pin_id: pin.id.clone(),
+                        is_output: true,
+                        x: sock_x - text_w - 8,
+                        y: sock_y,
+                        w: (text_w + 32) as u32,
+                        h: 22,
+                        socket_x: socket_center.0,
+                        socket_y: socket_center.1,
+                    });
+                }
+
+                cur_y += card_h + 18;
+            }
+
+            // ==========================================
+            // TRACÉ DES CONNEXIONS ET BOUTON DE COUPURE [X]
+            // ==========================================
+            for conn in &graph.connections {
+                let from_key = (conn.from_node.clone(), conn.from_pin.clone());
+                let to_key = (conn.to_node.clone(), conn.to_pin.clone());
+
+                if let (Some(&(fx, fy)), Some(&(tx, ty))) = (pin_sockets.get(&from_key), pin_sockets.get(&to_key)) {
+                    // Fil reliant la sortie à l'entrée
+                    canvas.draw_thick_line(fx, fy, tx, ty, 3, 0x0010B981);
+
+                    // Bouton de coupure [X] au milieu du fil
+                    let cut_x = (fx + tx) / 2 - 10;
+                    let cut_y = (fy + ty) / 2 - 10;
+                    canvas.draw_rect(cut_x, cut_y, 20, 20, 0x00991B1B);
+                    canvas.draw_rect_outline(cut_x, cut_y, 20, 20, 0x00EF4444, 1);
+                    canvas.draw_text(cut_x + 5, cut_y + 3, "X", 0x00FFFFFF, 2);
+
+                    self.editor.connection_hitboxes.push(crate::editor::ConnectionHitbox {
+                        connection_id: conn.id.clone(),
+                        x: cut_x,
+                        y: cut_y,
+                        w: 20,
+                        h: 20,
+                    });
+                }
+            }
+
+            // ==========================================
+            // FIL EN COURS DE CÂBLAGE (DRAG & HOVER)
+            // ==========================================
+            if let Some(ref wire) = self.editor.active_wire {
+                let mx = self.editor.mouse_x as i32;
+                let my = self.editor.mouse_y as i32;
+
+                canvas.draw_thick_line(wire.start_x, wire.start_y, mx, my, 3, 0x00F59E0B);
+                canvas.draw_circle(mx, my, 6, 0x00FBBF24);
+                canvas.draw_text(mx + 12, my - 10, "RELIER A L'ENTREE", 0x00FDE047, 1);
             }
         }
     }

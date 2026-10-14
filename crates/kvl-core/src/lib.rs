@@ -136,4 +136,34 @@ mod tests {
         assert!(json.contains("Émeraude"));
         assert!(json.contains("gem_ping.wav"));
     }
+
+    #[test]
+    fn test_dynamic_pin_wiring_and_disconnect() {
+        let mut graph = Graph::new("g_test", "Test Wiring", "");
+        let n1 = Node::new("n1", "Source", Category::Interactions, "", NodeKind::Event { event_type: "Evt".into() })
+            .with_output(Pin::new_trigger("out_t", "Out", PinDirection::Output));
+        let n2 = Node::new("n2", "Target", Category::Progression, "", NodeKind::Action { action_type: "Act".into() })
+            .with_input(Pin::new_trigger("in_t", "In", PinDirection::Input));
+
+        graph.add_node(n1);
+        graph.add_node(n2);
+
+        assert!(!graph.is_pin_connected("n1", "out_t"));
+
+        // Connexion valide
+        let conn_res = graph.connect_pins("n1", "out_t", "n2", "in_t");
+        assert!(conn_res.is_ok());
+        assert_eq!(graph.connections.len(), 1);
+        assert!(graph.is_pin_connected("n1", "out_t"));
+        assert!(graph.is_pin_connected("n2", "in_t"));
+
+        // Tentative de doublon
+        assert!(graph.connect_pins("n1", "out_t", "n2", "in_t").is_err());
+
+        // Déconnexion
+        let removed = graph.disconnect_pin("n1", "out_t");
+        assert_eq!(removed, 1);
+        assert_eq!(graph.connections.len(), 0);
+        assert!(!graph.is_pin_connected("n1", "out_t"));
+    }
 }

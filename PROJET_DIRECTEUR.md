@@ -92,6 +92,21 @@
   * Fluidité maintenue : temps de frame CPU toujours < 1 ms en software rendering direct.
   * Confort visuel immédiat en jeu et dans l'inspecteur KVL.
 
+### Étape 7 : Câblage interactif de broches KVL & Programmation visuelle à la souris *(14 Octobre 2026)*
+* **Réalisations** :
+  * Implémentation du **câblage visuel complet de nœuds KVL** (Option C choisie par l'utilisateur).
+  * Algorithme de tracé de lignes de Bresenham déterministe (`draw_line`, `draw_thick_line`) et symboles typographiques enrichis (`>`, `<`, `[`, `]`, `X`).
+  * Méthodes de manipulation de graphe dans `kvl-core` : `connect_pins`, `disconnect_pin`, `remove_connection_by_id`, `is_pin_connected`.
+  * Rendu de boîtes de nœuds modulaires techniques avec connecteurs `[>]` colorés (vert si branché, cyan/or si libre).
+  * **Câblage interactif à la souris** : clic sur broche Output $\rightarrow$ fil élastique animé $\rightarrow$ clic sur broche Input réceptrice pour valider la liaison.
+  * **Coupure unitaire** : badge rouge `[X]` au centre de chaque fil pour sectionner une liaison en un clic.
+  * Répercussion en direct sur le gameplay en revenant au Mode Jeu (`TAB`) : prouve la réactivité du moteur KVL.
+* **Mesures & Benchmarks** :
+  * Temps de compilation : 0.81s.
+  * 100% des tests validés (5/5).
+  * Temps de frame CPU < 500 µs (consommation < 4% du budget 60 FPS).
+
+
 
 ---
 

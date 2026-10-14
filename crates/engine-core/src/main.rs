@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::time::Instant;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, Event, WindowEvent};
+use winit::event::{ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::WindowBuilder;
@@ -61,10 +61,18 @@ fn main() {
                 WindowEvent::CursorMoved { position, .. } => {
                     input.on_mouse_move(position.x as f32, position.y as f32);
                 }
-                WindowEvent::MouseInput { state, .. } => {
-                    match state {
-                        ElementState::Pressed => input.on_mouse_down(),
-                        ElementState::Released => input.on_mouse_up(),
+                WindowEvent::MouseInput { state, button, .. } => {
+                    match button {
+                        MouseButton::Left => match state {
+                            ElementState::Pressed => input.on_mouse_down(),
+                            ElementState::Released => input.on_mouse_up(),
+                        },
+                        MouseButton::Right => {
+                            if state == ElementState::Pressed {
+                                input.on_mouse_right_click();
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 WindowEvent::KeyboardInput { event: key_event, .. } => {

@@ -10,6 +10,7 @@ pub struct InputState {
     pub mouse_pressed: bool,
     pub mouse_just_clicked: bool,
     pub mouse_just_released: bool,
+    pub mouse_right_just_clicked: bool,
 }
 
 impl InputState {
@@ -47,10 +48,15 @@ impl InputState {
         self.mouse_pressed = false;
     }
 
+    pub fn on_mouse_right_click(&mut self) {
+        self.mouse_right_just_clicked = true;
+    }
+
     pub fn clear_transient(&mut self) {
         self.just_pressed_keys.clear();
         self.mouse_just_clicked = false;
         self.mouse_just_released = false;
+        self.mouse_right_just_clicked = false;
     }
 
     pub fn is_key_down(&self, key: KeyCode) -> bool {
