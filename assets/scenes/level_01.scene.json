@@ -1,0 +1,50 @@
+{
+  "name": "Niveau 1 : Salle des Émeraudes",
+  "description": "Scène de démonstration data-driven avec entités et liaisons KVL externes.",
+  "player": {
+    "x": 80.0,
+    "y": 240.0,
+    "speed": 220.0,
+    "size": 28.0
+  },
+  "coins": [
+    {
+      "id": "coin_1",
+      "x": 220.0,
+      "y": 240.0,
+      "radius": 12.0,
+      "script_path": "assets/scripts/coin_pickup.kvl.json"
+    },
+    {
+      "id": "coin_2",
+      "x": 340.0,
+      "y": 170.0,
+      "radius": 12.0,
+      "script_path": "assets/scripts/coin_pickup.kvl.json"
+    },
+    {
+      "id": "coin_3",
+      "x": 460.0,
+      "y": 290.0,
+      "radius": 12.0,
+      "script_path": "assets/scripts/coin_pickup.kvl.json"
+    },
+    {
+      "id": "coin_4",
+      "x": 580.0,
+      "y": 210.0,
+      "radius": 12.0,
+      "script_path": "assets/scripts/coin_pickup.kvl.json"
+    }
+  ],
+  "doors": [
+    {
+      "id": "door_main",
+      "x": 720.0,
+      "y": 190.0,
+      "w": 24.0,
+      "h": 80.0,
+      "script_path": "assets/scripts/door_interaction.kvl.json"
+    }
+  ]
+}

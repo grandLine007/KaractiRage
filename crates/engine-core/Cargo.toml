@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 kvl-core = { path = "../kvl-core" }
 kvl-runtime = { path = "../kvl-runtime" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 winit = { workspace = true }
 softbuffer = { workspace = true }
 tracing = { workspace = true }

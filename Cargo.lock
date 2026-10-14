@@ -364,6 +364,8 @@ version = "0.1.0"
 dependencies = [
  "kvl-core",
  "kvl-runtime",
+ "serde",
+ "serde_json",
  "softbuffer",
  "tracing",
  "tracing-subscriber",

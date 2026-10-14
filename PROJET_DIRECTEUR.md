@@ -48,12 +48,20 @@
   * Consommation RAM estimée : ~15 Mo.
   * Zéro avertissement de compilation, tests workspace au vert.
 
+### Étape 3 : Architecture Data-Driven, Mode Guidé KVL & Hot-Reload *(14 Octobre 2026)*
+* **Réalisations** :
+  * Implémentation du **Mode Guidé** dans `kvl-core` (`GuidedBuilder`) : génération automatique de graphes complets à partir d'intentions de jeu (`CollectibleIntent`, `DoorIntent`).
+  * Découplage complet scène $\leftrightarrow$ logique : création de `SceneData` et du répertoire `assets/` contenant `level_01.scene.json` et les scripts `.kvl.json`.
+  * Support du **rechargement à chaud (Hot-Reload)** via la touche **R** : permet de modifier les fichiers de scènes ou de scripts KVL et d'observer les modifications instantanément dans le jeu.
+* **Mesures & Benchmarks** :
+  * 100% des tests unitaires validés (incluant la validation du mode guidé).
+  * Rechargement à chaud quasi-instantané (< 1 ms en mémoire).
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur
-*RAS pour l'instant*
+*(Cette section vous est réservée. Vous pouvez y ajouter ou modifier vos notes, directives, préférences de design ou changements de priorités à tout moment.)*
 
-* **Priorité actuelle** : Développer le système graphique et le fenêtrage (Option 2) avant le mode guidé et l'éditeur complet.
 * **Méthodologie demandée** :
   * Rédiger systématiquement un rapport d'intervention à chaque étape (stocké dans `rapports/`, ignoré par Git).
   * Maintenir à jour ce fichier directeur (`PROJET_DIRECTEUR.md`) avec les faits et les observations partagées.

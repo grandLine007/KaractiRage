@@ -2,6 +2,7 @@ pub mod category;
 pub mod connection;
 pub mod error;
 pub mod graph;
+pub mod guided;
 pub mod node;
 pub mod pin;
 pub mod types;
@@ -11,6 +12,7 @@ pub use category::Category;
 pub use connection::Connection;
 pub use error::KvlError;
 pub use graph::{Graph, Variable};
+pub use guided::{CollectibleIntent, DoorConditionType, DoorIntent, DoorTriggerType, GuidedBuilder};
 pub use node::{Node, NodeKind};
 pub use pin::{Pin, PinDirection};
 pub use types::{DataType, Value};
@@ -115,5 +117,23 @@ mod tests {
 
         let diagnostics = Validator::validate(&graph);
         assert!(diagnostics.iter().any(|d| d.severity == ValidationSeverity::Error && d.message.contains("Incompatibilité de types")));
+    }
+
+    #[test]
+    fn test_guided_mode_builder() {
+        let intent = CollectibleIntent {
+            item_name: "Émeraude".into(),
+            score_points: 50,
+            destroy_on_pickup: true,
+            play_sound: Some("gem_ping.wav".into()),
+        };
+
+        let graph = GuidedBuilder::build_collectible(&intent);
+        let diagnostics = Validator::validate(&graph);
+        assert_eq!(diagnostics.len(), 0, "Le graphe généré par le mode guidé doit être valide");
+
+        let json = graph.to_json().unwrap();
+        assert!(json.contains("Émeraude"));
+        assert!(json.contains("gem_ping.wav"));
     }
 }

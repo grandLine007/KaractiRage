@@ -10,6 +10,7 @@ use winit::window::WindowBuilder;
 mod game;
 mod input;
 mod renderer;
+mod scene;
 
 use game::GameState;
 use input::InputState;
@@ -36,7 +37,8 @@ fn main() {
 
     let mut canvas = Canvas::new(WINDOW_WIDTH as usize, WINDOW_HEIGHT as usize);
     let mut input = InputState::new();
-    let mut game = GameState::new();
+    let mut game = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+        .expect("Erreur lors du chargement de la scène 'assets/scenes/level_01.scene.json'");
     let mut last_frame = Instant::now();
 
     event_loop.set_control_flow(ControlFlow::Poll);
