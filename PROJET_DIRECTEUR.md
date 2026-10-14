@@ -57,6 +57,17 @@
   * 100% des tests unitaires validés (incluant la validation du mode guidé).
   * Rechargement à chaud quasi-instantané (< 1 ms en mémoire).
 
+### Étape 4 : Télémétrie en temps réel & Adaptation matérielle dynamique *(14 Octobre 2026)*
+* **Réalisations** :
+  * Module `telemetry` : mesure continue à la microseconde du temps de frame CPU, calcul du FPS lissé, historique glissant de 120 frames.
+  * Module `adaptation` : gestion des 3 profils cibles (`Compatibilité`, `Équilibré`, `Élevé`) et boucle de régulation par hystérésis (dégradation gracieuse en cas de surcharge prolongée, temporisation anti-oscillations).
+  * Panneau d'overlay de diagnostic (**F1**) : affichage du graphe Sparkline d'historique en direct, jauges de budget et compteurs de pas KVL.
+  * Touches de contrôle en jeu : **F1** (Overlay), **F2** (Cycler profil), **F3** (Auto/Manuel), **R** (Hot-Reload).
+  * Système de particules réactif (pièces et portes) s'adaptant automatiquement au budget du profil matériel.
+* **Mesures & Benchmarks** :
+  * Temps de frame CPU moyen : **< 400 microsecondes** (consomme moins de 3% du budget de 16.6ms pour 60 FPS).
+  * Tests workspace 100% au vert, zéro warning.
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

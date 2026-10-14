@@ -7,10 +7,12 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::WindowBuilder;
 
+mod adaptation;
 mod game;
 mod input;
 mod renderer;
 mod scene;
+mod telemetry;
 
 use game::GameState;
 use input::InputState;
