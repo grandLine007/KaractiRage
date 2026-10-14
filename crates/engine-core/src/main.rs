@@ -10,6 +10,7 @@ use winit::window::WindowBuilder;
 mod adaptation;
 mod audio;
 mod editor;
+mod entity;
 mod game;
 mod input;
 mod renderer;

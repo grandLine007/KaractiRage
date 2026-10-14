@@ -7,11 +7,7 @@ pub enum EditorMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectedEntity {
     None,
-    Player,
-    Coin(usize),
-    Door(usize),
-    Wall(usize),
-    Enemy(usize),
+    Entity(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

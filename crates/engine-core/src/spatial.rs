@@ -1,9 +1,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpatialKind {
     Solid,
-    Coin(usize),
-    Door(usize),
-    Enemy(usize),
+    Trigger,
+    Entity(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -14,6 +13,31 @@ pub struct SpatialItem {
     pub y: f32,
     pub w: f32,
     pub h: f32,
+}
+
+#[allow(dead_code)]
+impl SpatialItem {
+    pub fn solid(id: usize, x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self { id, kind: SpatialKind::Solid, x, y, w, h }
+    }
+
+    pub fn trigger(id: usize, x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self { id, kind: SpatialKind::Trigger, x, y, w, h }
+    }
+
+    pub fn entity(id: usize, x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self { id, kind: SpatialKind::Entity(id), x, y, w, h }
+    }
+
+    #[inline]
+    pub fn is_solid(&self) -> bool {
+        self.kind == SpatialKind::Solid
+    }
+
+    #[inline]
+    pub fn is_trigger(&self) -> bool {
+        self.kind == SpatialKind::Trigger
+    }
 }
 
 pub struct SpatialHashGrid {
@@ -147,7 +171,7 @@ mod tests {
 
         let item2 = SpatialItem {
             id: 2,
-            kind: SpatialKind::Coin(0),
+            kind: SpatialKind::Trigger,
             x: 200.0,
             y: 200.0,
             w: 20.0,

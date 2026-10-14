@@ -229,10 +229,35 @@
     * `scripts/build_web.sh` : Script de compilation Wasm automatique avec `wasm-bindgen` (binaire optimisé `karactirage_wasm_bg.wasm` de seulement 535 Ko).
     * `scripts/serve_web.py` : Serveur de développement local Python avec types MIME conformes (`application/wasm`, `application/javascript`) et isolation cross-origin.
 * **Mesures & Benchmarks** :
-  * Taille finale du module WebAssembly : **535 Ko** (ultra-léger pour le web).
-  * Rendu 60 FPS constant sous navigateur moderne sans garbage collection ni réallocations.
-  * 100% des tests workspace validés (`cargo test`).
-  * Zéro avertissement de compilation.
+
+### Étape 15 : Architecture Moteur ECS & Découplage Total du Gameplay *(14 Octobre 2026)*
+* **Directive Majeure de l'Utilisateur** : *"Tâche de ne plus perdre de vue l'objectif : construire un moteur, pas seulement un jeu."*
+* **Réalisations** :
+  * **Élimination complète des concepts de jeu codés en dur** dans le noyau du moteur (`engine-core`) :
+    * Suppression de tous les champs spécifiques (`player_x`, `player_y`, `coins: Vec<CoinInstance>`, `doors: Vec<DoorInstance>`, `walls: Vec<WallInstance>`, `enemies: Vec<EnemyInstance>`).
+    * Implémentation du **modèle universel Entité-Composants (ECS)** dans `crates/engine-core/src/entity.rs` :
+      * `Entity` : Conteneur générique avec identifiant, nom, tag, transform 2D et composants optionnels.
+      * `Transform2D` : Coordonnées spatiales $X, Y$, dimensions $W, H$ et rotation.
+      * `Collider2D` : Boîte de collision AABB solide ou déclencheur (trigger) avec calque de collision.
+      * `Renderable2D` : Primitives de rendu vectoriel (`Rect`, `Circle`, `Text`), couleurs, bordures et ordre de profondeur $Z$-index.
+      * `Movement2D` : Propriétés cinématiques, contrôle joueur ou patrouille ping-pong configurable.
+      * `VisionSensing` : Cône de vision paramétrable avec gestion de l'alerte et minuteur de décroissance.
+      * `KVLScriptComponent` : Liaisons data-driven avec les scripts visuels KVL (événements `on_overlap`, `on_interact`, `on_seen`).
+  * **Systèmes Moteur Découplés & Agnostiques** :
+    * `SpatialPartitioningSystem` : Insertion universelle de tout composant `Collider2D` dans la grille spatiale `SpatialHashGrid` $\mathcal{O}(1)$.
+    * `MovementPhysicsSystem` : Déplacement générique avec glissement AABB sur $X$ et $Y$ sans collision pour toute entité contrôlée.
+    * `TriggerOverlapSystem` : Détection broadphase d'intersection pour toute entité marquée `is_trigger`, déclenchant automatiquement le script KVL associé (`on_overlap_event`).
+    * `InteractionSystem` : Déclenchement générique à distance (touche E / Espace) pour toute entité dotée d'`on_interact_event`.
+    * `VisionSystem` : Raycasting Line of Sight de Liang-Barsky générique entre l'entité observatrice et le joueur à travers les obstacles solides de la grille.
+    * `RenderSystem` : Rendu trié par $Z$-index avec support des formes `Rect`, `Circle`, `Text`, faisceaux de vision et sélection d'éditeur.
+    * `TacticalRadarSystem` : Projection générique sur minicarte basée sur les tags d'entités (`"player"`, `"wall"`, `"door"`, `"collectible"`, `"enemy"`).
+  * **Éditeur KVL Universel** :
+    * Sélection générique `SelectedEntity::Entity(usize)` permettant de cliquer, déplacer et inspecter à la souris n'importe quelle entité du monde.
+    * Rendu contextuel : graphe KVL pour les entités scriptées, inspecteur de composants pour les entités passives.
+* **Mesures & Benchmarks** :
+  * 100% des tests workspace validés (`cargo test` : 12/12 `engine-core`, 4/4 `kvl-core`, 2/2 `kvl-runtime`).
+  * 0 avertissement de compilation (`cargo check --all-targets`).
+  * Compilation WebAssembly 100% fonctionnelle en 1.90s (535 Ko).
 
 ---
 
