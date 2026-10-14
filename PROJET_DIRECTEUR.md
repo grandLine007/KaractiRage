@@ -275,6 +275,24 @@
   * 0 avertissement de compilation (`cargo check --all-targets`).
   * WebAssembly recompilé avec succès (535 Ko).
 
+### Étape 17 : Studio de Création d'Entités à Chaud & Authoring ECS *(14 Octobre 2026)*
+* **Réalisations** :
+  * **Palette de Création Universelle (Spawn Palette)** :
+    * Accessible via le bouton interactif `[+ SPAWN (P)]` ou la touche **P** en mode Édition.
+    * Gabarits préconfigurés prêts à l'emploi : `Mur Solide (AABB)`, `Objet Collectible (Pièce KVL)`, `Porte Interactive Sécurisée`, `Sentinelle Patrouilleuse (Vision/Raycast)`, `Portail Quantique (Téléporteur)`.
+  * **Duplication & Suppression Interactive** :
+    * Duplication instantanée (`Ctrl+D` / `Cmd+D` ou bouton dédié) : clonage profond de l'entité, génération d'ID unique sans collision, décalage spatial de confort (+24px) et désactivation du contrôle joueur sur les clones.
+    * Suppression sécurisée (`Suppr` / `Backspace` ou bouton dédié) : suppression propre de l'entité avec émission de particules de destruction et protection inviolable du joueur principal contre toute suppression accidentelle.
+  * **Composition Dynamique de Composants ECS à la Volée** :
+    * Inspecteur contextuel affichant les composants actifs et proposant l'ajout dynamique des composants manquants : `[+ Collider2D]`, `[+ Movement2D]`, `[+ VisionSensing]`, `[+ Script KVL]`.
+  * **Barre d'Outils Studio Unifiée & Ergonomie** :
+    * Bandeau supérieur transformé en véritable barre de commande de studio : boutons `SPAWN`, `SAUVER`, `DUPLIQUER`, `SUPPRIMER`, statut audio et raccourcis clavier affichés en bas d'écran.
+    * Re-partitionnement spatial automatique $\mathcal{O}(1)$ de toute entité créée ou déplacée sans réallocation mémoire.
+* **Mesures & Benchmarks** :
+  * 42/42 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+4 tests dédiés au spawning runtime, à la duplication, à la suppression protégée et à la composition dynamique de composants).
+  * 0 avertissement de compilation (`cargo check --all-targets`).
+  * WebAssembly recompilé avec succès (539 Ko).
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

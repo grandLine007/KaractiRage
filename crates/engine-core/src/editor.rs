@@ -64,8 +64,15 @@ pub struct EditorState {
     pub show_node_palette: bool,
     pub palette_hitboxes: Vec<PaletteItemHitbox>,
     pub save_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub top_save_btn_hitbox: Option<(i32, i32, u32, u32)>,
     pub add_node_btn_hitbox: Option<(i32, i32, u32, u32)>,
     pub view_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub show_spawn_palette: bool,
+    pub spawn_palette_hitboxes: Vec<PaletteItemHitbox>,
+    pub spawn_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub duplicate_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub delete_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub add_comp_hitboxes: Vec<(String, i32, i32, u32, u32)>,
 }
 
 impl EditorState {
@@ -85,8 +92,15 @@ impl EditorState {
             show_node_palette: false,
             palette_hitboxes: Vec::new(),
             save_btn_hitbox: None,
+            top_save_btn_hitbox: None,
             add_node_btn_hitbox: None,
             view_btn_hitbox: None,
+            show_spawn_palette: false,
+            spawn_palette_hitboxes: Vec::new(),
+            spawn_btn_hitbox: None,
+            duplicate_btn_hitbox: None,
+            delete_btn_hitbox: None,
+            add_comp_hitboxes: Vec::new(),
         }
     }
 
@@ -98,6 +112,7 @@ impl EditorState {
                 self.is_dragging = false;
                 self.active_wire = None;
                 self.show_node_palette = false;
+                self.show_spawn_palette = false;
                 EditorMode::Play
             }
         };
@@ -107,10 +122,21 @@ impl EditorState {
         self.is_detailed_view = !self.is_detailed_view;
         self.active_wire = None;
         self.show_node_palette = false;
+        self.show_spawn_palette = false;
     }
 
     pub fn toggle_palette(&mut self) {
         self.show_node_palette = !self.show_node_palette;
+        if self.show_node_palette {
+            self.show_spawn_palette = false;
+        }
+    }
+
+    pub fn toggle_spawn_palette(&mut self) {
+        self.show_spawn_palette = !self.show_spawn_palette;
+        if self.show_spawn_palette {
+            self.show_node_palette = false;
+        }
     }
 
     pub fn start_wire(&mut self, node_id: String, pin_id: String, start_x: i32, start_y: i32) {
@@ -147,12 +173,29 @@ impl EditorState {
         })
     }
 
+    pub fn find_spawn_palette_item_at(&self, mx: f32, my: f32) -> Option<&PaletteItemHitbox> {
+        self.spawn_palette_hitboxes.iter().find(|hit| {
+            mx >= hit.x as f32 && mx <= (hit.x + hit.w as i32) as f32
+                && my >= hit.y as f32 && my <= (hit.y + hit.h as i32) as f32
+        })
+    }
+
+    pub fn find_add_comp_at(&self, mx: f32, my: f32) -> Option<&str> {
+        self.add_comp_hitboxes.iter().find(|(_, bx, by, bw, bh)| {
+            mx >= *bx as f32 && mx <= (*bx + *bw as i32) as f32
+                && my >= *by as f32 && my <= (*by + *bh as i32) as f32
+        }).map(|(comp, _, _, _, _)| comp.as_str())
+    }
+
     pub fn is_save_btn_clicked(&self, mx: f32, my: f32) -> bool {
-        if let Some((bx, by, bw, bh)) = self.save_btn_hitbox {
-            mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
-        } else {
-            false
-        }
+        let in_box = |opt: Option<(i32, i32, u32, u32)>| {
+            if let Some((bx, by, bw, bh)) = opt {
+                mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
+            } else {
+                false
+            }
+        };
+        in_box(self.save_btn_hitbox) || in_box(self.top_save_btn_hitbox)
     }
 
     pub fn is_add_node_btn_clicked(&self, mx: f32, my: f32) -> bool {
@@ -165,6 +208,30 @@ impl EditorState {
 
     pub fn is_view_btn_clicked(&self, mx: f32, my: f32) -> bool {
         if let Some((bx, by, bw, bh)) = self.view_btn_hitbox {
+            mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_spawn_btn_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((bx, by, bw, bh)) = self.spawn_btn_hitbox {
+            mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_duplicate_btn_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((bx, by, bw, bh)) = self.duplicate_btn_hitbox {
+            mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_delete_btn_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((bx, by, bw, bh)) = self.delete_btn_hitbox {
             mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
         } else {
             false

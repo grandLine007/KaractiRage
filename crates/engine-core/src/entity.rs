@@ -132,6 +132,16 @@ pub struct Movement2D {
 }
 
 impl Movement2D {
+    pub fn new(speed: f32) -> Self {
+        Self {
+            vx: 0.0,
+            vy: 0.0,
+            speed,
+            is_player_controlled: false,
+            patrol: None,
+        }
+    }
+
     pub fn player(speed: f32) -> Self {
         Self {
             vx: 0.0,
@@ -258,5 +268,46 @@ impl Entity {
     pub fn with_script(mut self, s: KVLScriptComponent) -> Self {
         self.script = Some(s);
         self
+    }
+
+    /// Gabarit : Mur solide bloquant AABB
+    pub fn spawn_wall(id: usize, x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self::new(id, format!("wall_{}", id), "wall", Transform2D::new(x, y, w, h))
+            .with_renderable(Renderable2D::rect(0x001E293B, 1).with_outline(0x00475569, 2))
+            .with_collider(Collider2D::solid(w, h))
+    }
+
+    /// Gabarit : Objet collectible doré (pièce)
+    pub fn spawn_collectible(id: usize, x: f32, y: f32, radius: f32, script_path: &str) -> Self {
+        let size = radius * 2.0;
+        Self::new(id, format!("coin_{}", id), "collectible", Transform2D::new(x, y, size, size))
+            .with_renderable(Renderable2D::circle(radius, 0x00F59E0B, 5))
+            .with_collider(Collider2D::trigger(size, size))
+            .with_script(KVLScriptComponent::new(script_path).with_overlap("OnPlayerOverlap"))
+    }
+
+    /// Gabarit : Porte sécurisée interactive
+    pub fn spawn_door(id: usize, x: f32, y: f32, w: f32, h: f32, script_path: &str) -> Self {
+        Self::new(id, format!("door_{}", id), "door", Transform2D::new(x, y, w, h))
+            .with_renderable(Renderable2D::rect(0x00EF4444, 2))
+            .with_collider(Collider2D::solid(w, h))
+            .with_script(KVLScriptComponent::new(script_path).with_interact("OnDoorInteract"))
+    }
+
+    /// Gabarit : Sentinelle patrouilleuse avec cône de vision
+    pub fn spawn_enemy(id: usize, x: f32, y: f32, size: f32, speed: f32, min_y: f32, max_y: f32, script_path: &str) -> Self {
+        Self::new(id, format!("enemy_{}", id), "enemy", Transform2D::new(x, y, size, size))
+            .with_renderable(Renderable2D::rect(0x00DC2626, 8).with_outline(0x00F87171, 1))
+            .with_movement(Movement2D::patrol_vertical(speed, min_y, max_y))
+            .with_vision(VisionSensing::new(200.0))
+            .with_script(KVLScriptComponent::new(script_path).with_seen("OnPlayerSeen"))
+    }
+
+    /// Gabarit : Téléporteur quantique interactif
+    pub fn spawn_portal(id: usize, x: f32, y: f32, w: f32, h: f32, script_path: &str) -> Self {
+        Self::new(id, format!("portal_{}", id), "portal", Transform2D::new(x, y, w, h))
+            .with_renderable(Renderable2D::rect(0x0006B6D4, 3).with_outline(0x0038BDF8, 2))
+            .with_collider(Collider2D::trigger(w, h))
+            .with_script(KVLScriptComponent::new(script_path).with_overlap("OnPlayerOverlap"))
     }
 }

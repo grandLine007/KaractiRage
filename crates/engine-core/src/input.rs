@@ -63,6 +63,10 @@ impl InputState {
         self.pressed_keys.contains(&key)
     }
 
+    pub fn is_key_pressed(&self, key: KeyCode) -> bool {
+        self.is_key_down(key)
+    }
+
     pub fn is_key_just_pressed(&self, key: KeyCode) -> bool {
         self.just_pressed_keys.contains(&key)
     }

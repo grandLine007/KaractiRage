@@ -119,6 +119,138 @@ impl GameState {
         self.entities.iter_mut().find(|e| e.name == name)
     }
 
+    /// Calcule un nouvel identifiant unique d'entité (séquentiel et sans collision)
+    pub fn next_entity_id(&self) -> usize {
+        self.entities.iter().map(|e| e.id).max().unwrap_or(0) + 1
+    }
+
+    /// Crée et insère une nouvelle entité dans le monde à partir d'un gabarit de base
+    pub fn spawn_entity(&mut self, kind: &str, x: f32, y: f32) -> usize {
+        let id = self.next_entity_id();
+        let entity = match kind {
+            "wall" => Entity::spawn_wall(id, x, y, 32.0, 32.0),
+            "collectible" => Entity::spawn_collectible(id, x, y, 12.0, "assets/scripts/coin_pickup.kvl.json"),
+            "door" => Entity::spawn_door(id, x, y, 40.0, 56.0, "assets/scripts/door_interaction.kvl.json"),
+            "enemy" => Entity::spawn_enemy(id, x, y, 28.0, 80.0, (y - 100.0).max(80.0), (y + 100.0).min(560.0), "assets/scripts/guard_alert.kvl.json"),
+            "portal" => Entity::spawn_portal(id, x, y, 36.0, 48.0, "assets/scripts/coin_pickup.kvl.json"),
+            _ => Entity::spawn_wall(id, x, y, 32.0, 32.0),
+        };
+        self.entities.push(entity);
+        let new_idx = self.entities.len() - 1;
+        self.editor.selected = SelectedEntity::Entity(new_idx);
+        self.audio.play(SoundType::UiClick);
+        self.spawn_particles(x, y, 15, 0x0038BDF8);
+        self.status_message = format!("Entité '{}' (ID {}) créée avec succès !", kind, id);
+        new_idx
+    }
+
+    /// Duplique l'entité actuellement sélectionnée avec un décalage spatial de confort
+    pub fn duplicate_selected_entity(&mut self) -> Option<usize> {
+        let selected_idx = match self.editor.selected {
+            SelectedEntity::Entity(idx) if idx < self.entities.len() => idx,
+            _ => {
+                self.status_message = "Veuillez d'abord sélectionner une entité à dupliquer (Ctrl+D).".into();
+                return None;
+            }
+        };
+
+        let mut dup = self.entities[selected_idx].clone();
+        let new_id = self.next_entity_id();
+        dup.id = new_id;
+        dup.name = format!("{}_copy", dup.name);
+        dup.transform.x = (dup.transform.x + 24.0).min(1150.0);
+        dup.transform.y = (dup.transform.y + 24.0).min(580.0);
+
+        // Si c'est un clone de joueur, désactiver le contrôle direct pour éviter les conflits
+        if let Some(ref mut mov) = dup.movement {
+            mov.is_player_controlled = false;
+        }
+
+        self.entities.push(dup);
+        let new_idx = self.entities.len() - 1;
+        self.editor.selected = SelectedEntity::Entity(new_idx);
+        self.audio.play(SoundType::UiClick);
+        self.spawn_particles(self.entities[new_idx].transform.x, self.entities[new_idx].transform.y, 12, 0x00F59E0B);
+        self.status_message = format!("Entité dupliquée avec succès (Nouvel ID : {}) !", new_id);
+        Some(new_idx)
+    }
+
+    /// Supprime l'entité actuellement sélectionnée en protégeant le joueur principal
+    pub fn remove_selected_entity(&mut self) -> bool {
+        let selected_idx = match self.editor.selected {
+            SelectedEntity::Entity(idx) if idx < self.entities.len() => idx,
+            _ => {
+                self.status_message = "Aucune entité sélectionnée à supprimer (Suppr).".into();
+                return false;
+            }
+        };
+
+        // Sécurité : interdiction de supprimer l'avatar joueur
+        if self.entities[selected_idx].movement.as_ref().map_or(false, |m| m.is_player_controlled) {
+            self.status_message = "Suppression refusée : l'entité Joueur principale est protégée !".into();
+            self.audio.play(SoundType::AccessDenied);
+            return false;
+        }
+
+        let name = self.entities[selected_idx].name.clone();
+        let x = self.entities[selected_idx].transform.x;
+        let y = self.entities[selected_idx].transform.y;
+        self.entities.remove(selected_idx);
+        self.editor.selected = SelectedEntity::None;
+        self.audio.play(SoundType::WireCut);
+        self.spawn_particles(x, y, 16, 0x00EF4444);
+        self.status_message = format!("Entité '{}' supprimée de la scène.", name);
+        true
+    }
+
+    /// Ajoute dynamiquement un composant manquant à l'entité sélectionnée
+    pub fn add_component_to_selected(&mut self, comp_type: &str) -> bool {
+        let selected_idx = match self.editor.selected {
+            SelectedEntity::Entity(idx) if idx < self.entities.len() => idx,
+            _ => return false,
+        };
+
+        let ent = &mut self.entities[selected_idx];
+        match comp_type {
+            "Collider" => {
+                if ent.collider.is_none() {
+                    ent.collider = Some(crate::entity::Collider2D::solid(ent.transform.w, ent.transform.h));
+                    self.status_message = format!("Composant Collider2D (Solide) attaché à '{}'.", ent.name);
+                } else {
+                    return false;
+                }
+            }
+            "Movement" => {
+                if ent.movement.is_none() {
+                    ent.movement = Some(crate::entity::Movement2D::new(140.0));
+                    self.status_message = format!("Composant Movement2D (140 px/s) attaché à '{}'.", ent.name);
+                } else {
+                    return false;
+                }
+            }
+            "Vision" => {
+                if ent.vision.is_none() {
+                    ent.vision = Some(crate::entity::VisionSensing::new(200.0));
+                    self.status_message = format!("Composant VisionSensing (Portée 200) attaché à '{}'.", ent.name);
+                } else {
+                    return false;
+                }
+            }
+            "Script" => {
+                if ent.script.is_none() {
+                    let script_path = "assets/scripts/coin_pickup.kvl.json";
+                    ent.script = Some(crate::entity::KVLScriptComponent::new(script_path).with_overlap("OnPlayerOverlap"));
+                    self.status_message = format!("Composant KVLScript ({}) attaché à '{}'.", script_path, ent.name);
+                } else {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        self.audio.play(SoundType::UiClick);
+        true
+    }
+
     pub fn load_from_scene(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let scene_data = match SceneData::load_from_file(path) {
             Ok(s) => s,
@@ -316,6 +448,11 @@ impl GameState {
 
             // Annuler le câblage ou la palette avec Échap ou Clic droit
             if input.is_key_just_pressed(KeyCode::Escape) || input.mouse_right_just_clicked {
+                if self.editor.show_spawn_palette {
+                    self.editor.show_spawn_palette = false;
+                    self.status_message = "Palette de spawn fermée.".into();
+                    return;
+                }
                 if self.editor.show_node_palette {
                     self.editor.show_node_palette = false;
                     self.status_message = "Palette de création fermée.".into();
@@ -326,6 +463,41 @@ impl GameState {
                     self.status_message = "Câblage annulé.".into();
                     return;
                 }
+            }
+
+            // Raccourci P : Basculer la palette de spawn d'entités
+            if input.is_key_just_pressed(KeyCode::KeyP) {
+                self.editor.toggle_spawn_palette();
+                self.status_message = if self.editor.show_spawn_palette {
+                    "Palette de spawn d'entités ouverte (P). Choisissez un gabarit.".into()
+                } else {
+                    "Palette de spawn fermée.".into()
+                };
+                return;
+            }
+
+            // Raccourcis clavier studio avec touches Ctrl ou Cmd (Mac)
+            let ctrl_or_cmd = input.is_key_pressed(KeyCode::ControlLeft) || input.is_key_pressed(KeyCode::ControlRight)
+                || input.is_key_pressed(KeyCode::SuperLeft) || input.is_key_pressed(KeyCode::SuperRight);
+
+            // Ctrl+S : Sauvegarder la scène et scripts
+            if ctrl_or_cmd && input.is_key_just_pressed(KeyCode::KeyS) {
+                if let Err(e) = self.save_scene_and_scripts() {
+                    self.status_message = format!("Erreur lors de la sauvegarde : {}", e);
+                }
+                return;
+            }
+
+            // Ctrl+D : Dupliquer l'entité sélectionnée
+            if ctrl_or_cmd && input.is_key_just_pressed(KeyCode::KeyD) {
+                self.duplicate_selected_entity();
+                return;
+            }
+
+            // Suppr / Backspace : Supprimer l'entité sélectionnée
+            if input.is_key_just_pressed(KeyCode::Delete) || input.is_key_just_pressed(KeyCode::Backspace) {
+                self.remove_selected_entity();
+                return;
             }
 
             if input.is_key_just_pressed(KeyCode::Space) {
@@ -355,6 +527,54 @@ impl GameState {
                     if let Err(e) = self.save_scene_and_scripts() {
                         self.status_message = format!("Erreur lors de la sauvegarde : {}", e);
                     }
+                    return;
+                }
+
+                // 0b. Clic sur le bouton Spawn (+ SPAWN)
+                if self.editor.is_spawn_btn_clicked(mx, my) {
+                    self.editor.toggle_spawn_palette();
+                    self.status_message = if self.editor.show_spawn_palette {
+                        "Palette de spawn d'entités ouverte : choisissez un gabarit.".into()
+                    } else {
+                        "Palette de spawn fermée.".into()
+                    };
+                    return;
+                }
+
+                // 0c. Clic sur le bouton Dupliquer (Ctrl+D)
+                if self.editor.is_duplicate_btn_clicked(mx, my) {
+                    self.duplicate_selected_entity();
+                    return;
+                }
+
+                // 0d. Clic sur le bouton Supprimer (Suppr)
+                if self.editor.is_delete_btn_clicked(mx, my) {
+                    self.remove_selected_entity();
+                    return;
+                }
+
+                // 0e. Si la palette de spawn est ouverte : clic sur un gabarit
+                if self.editor.show_spawn_palette {
+                    if let Some(item) = self.editor.find_spawn_palette_item_at(mx, my) {
+                        let tpl_id = item.template_id.clone();
+                        self.editor.show_spawn_palette = false;
+                        if tpl_id != "cancel" {
+                            let spawn_x = (mx - 16.0).clamp(40.0, 700.0);
+                            let spawn_y = (my - 16.0).clamp(80.0, 560.0);
+                            self.spawn_entity(&tpl_id, spawn_x, spawn_y);
+                        } else {
+                            self.status_message = "Spawn annulé.".into();
+                        }
+                    } else {
+                        self.editor.show_spawn_palette = false;
+                    }
+                    return;
+                }
+
+                // 0f. Clic sur les boutons d'ajout de composants dans l'inspecteur
+                if let Some(comp_name) = self.editor.find_add_comp_at(mx, my) {
+                    let comp_name = comp_name.to_string();
+                    self.add_component_to_selected(&comp_name);
                     return;
                 }
 
@@ -1057,7 +1277,68 @@ impl GameState {
         canvas.draw_rect(0, 59, w as u32, 2, header_border);
 
         if is_edit_mode {
-            canvas.draw_text(20, 18, "KARACTIRAGE [MODE EDITION ECS] - TAB: JOUER | CLIC: DEPLACER", 0x00F8FAFC, 2);
+            self.editor.pin_hitboxes.clear();
+            self.editor.connection_hitboxes.clear();
+            self.editor.palette_hitboxes.clear();
+            self.editor.spawn_palette_hitboxes.clear();
+            self.editor.add_comp_hitboxes.clear();
+            self.editor.save_btn_hitbox = None;
+            self.editor.top_save_btn_hitbox = None;
+            self.editor.add_node_btn_hitbox = None;
+            self.editor.view_btn_hitbox = None;
+            self.editor.spawn_btn_hitbox = None;
+            self.editor.duplicate_btn_hitbox = None;
+            self.editor.delete_btn_hitbox = None;
+
+            canvas.draw_text(20, 20, "STUDIO ECS", 0x00F8FAFC, 2);
+
+            // Bouton 1 : [+ SPAWN (P)]
+            let spawn_x = 150;
+            let spawn_y = 14;
+            let spawn_w = 125;
+            let spawn_h = 32;
+            let spawn_bg = if self.editor.show_spawn_palette { 0x007C3AED } else { 0x004F46E5 };
+            canvas.draw_rect(spawn_x, spawn_y, spawn_w as u32, spawn_h as u32, spawn_bg);
+            canvas.draw_rect_outline(spawn_x, spawn_y, spawn_w as u32, spawn_h as u32, 0x00A78BFA, 1);
+            canvas.draw_text(spawn_x + 10, spawn_y + 8, "[+ SPAWN (P)]", 0x00FFFFFF, 2);
+            self.editor.spawn_btn_hitbox = Some((spawn_x, spawn_y, spawn_w as u32, spawn_h as u32));
+
+            // Bouton 2 : [SAUVER (CTRL+S)]
+            let save_x = 285;
+            let save_y = 14;
+            let save_w = 150;
+            let save_h = 32;
+            canvas.draw_rect(save_x, save_y, save_w as u32, save_h as u32, 0x00059669);
+            canvas.draw_rect_outline(save_x, save_y, save_w as u32, save_h as u32, 0x0010B981, 1);
+            canvas.draw_text(save_x + 8, save_y + 8, "[SAUVER (C+S)]", 0x00FFFFFF, 2);
+            self.editor.top_save_btn_hitbox = Some((save_x, save_y, save_w as u32, save_h as u32));
+
+            // Boutons contextuels si une entité est sélectionnée
+            if let SelectedEntity::Entity(idx) = self.editor.selected {
+                if idx < self.entities.len() {
+                    let dup_x = 445;
+                    let dup_y = 14;
+                    let dup_w = 160;
+                    let dup_h = 32;
+                    canvas.draw_rect(dup_x, dup_y, dup_w as u32, dup_h as u32, 0x00D97706);
+                    canvas.draw_rect_outline(dup_x, dup_y, dup_w as u32, dup_h as u32, 0x00F59E0B, 1);
+                    canvas.draw_text(dup_x + 8, dup_y + 8, "[DUPLIQUER (C+D)]", 0x00FFFFFF, 2);
+                    self.editor.duplicate_btn_hitbox = Some((dup_x, dup_y, dup_w as u32, dup_h as u32));
+
+                    let is_player = self.entities[idx].movement.as_ref().map_or(false, |m| m.is_player_controlled);
+                    if !is_player {
+                        let del_x = 615;
+                        let del_y = 14;
+                        let del_w = 140;
+                        let del_h = 32;
+                        canvas.draw_rect(del_x, del_y, del_w as u32, del_h as u32, 0x00DC2626);
+                        canvas.draw_rect_outline(del_x, del_y, del_w as u32, del_h as u32, 0x00EF4444, 1);
+                        canvas.draw_text(del_x + 8, del_y + 8, "[SUPPR (DEL)]", 0x00FFFFFF, 2);
+                        self.editor.delete_btn_hitbox = Some((del_x, del_y, del_w as u32, del_h as u32));
+                    }
+                }
+            }
+
             let (audio_txt, audio_col) = if !self.audio.is_available {
                 ("[AUDIO: N/D]", 0x0094A3B8)
             } else if self.audio.is_muted() {
@@ -1065,7 +1346,7 @@ impl GameState {
             } else {
                 ("[AUDIO: ACTIF]", 0x0010B981)
             };
-            canvas.draw_text(w - 220, 18, audio_txt, audio_col, 2);
+            canvas.draw_text(w - 200, 20, audio_txt, audio_col, 2);
         } else {
             let header_title = format!("KARACTIRAGE - {}", self.scene_name.to_uppercase());
             canvas.draw_text(20, 18, &header_title, 0x00FFFFFF, 2);
@@ -1327,14 +1608,97 @@ impl GameState {
                             canvas.draw_text(insp_x + 18, comp_y, mov_desc, 0x0038BDF8, 2);
                             comp_y += 28;
                         }
+                        if let Some(ref vis) = ent.vision {
+                            let vis_desc = format!("- VisionSensing (Portée: {:.0})", vis.range);
+                            canvas.draw_text(insp_x + 18, comp_y, &vis_desc, 0x00F87171, 2);
+                            comp_y += 28;
+                        }
                         if ent.renderable.is_some() {
                             canvas.draw_text(insp_x + 18, comp_y, "- Renderable2D (Rendu Graphique)", 0x00A78BFA, 2);
                             comp_y += 28;
                         }
-                        canvas.draw_text(insp_x + 18, comp_y + 15, "(Déplacement libre à la souris)", 0x0094A3B8, 2);
+
+                        // Boutons d'ajout de composants manquants
+                        comp_y += 12;
+                        canvas.draw_rect(insp_x + 18, comp_y, (insp_w - 36) as u32, 1, 0x00334155);
+                        comp_y += 12;
+                        canvas.draw_text(insp_x + 18, comp_y, "ATTACHER UN COMPOSANT :", 0x00FBBF24, 2);
+                        comp_y += 24;
+
+                        let btn_w = (insp_w - 36) as u32;
+                        let btn_h = 28;
+
+                        if ent.collider.is_none() {
+                            canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
+                            canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x0034D399, 1);
+                            canvas.draw_text(insp_x + 26, comp_y + 6, "[ + COLLIDER 2D (SOLIDE) ]", 0x0034D399, 2);
+                            self.editor.add_comp_hitboxes.push(("Collider".into(), insp_x + 18, comp_y, btn_w, btn_h));
+                            comp_y += 34;
+                        }
+                        if ent.movement.is_none() {
+                            canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
+                            canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x0038BDF8, 1);
+                            canvas.draw_text(insp_x + 26, comp_y + 6, "[ + MOVEMENT 2D (CINEMATIQUE) ]", 0x0038BDF8, 2);
+                            self.editor.add_comp_hitboxes.push(("Movement".into(), insp_x + 18, comp_y, btn_w, btn_h));
+                            comp_y += 34;
+                        }
+                        if ent.vision.is_none() {
+                            canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
+                            canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x00F87171, 1);
+                            canvas.draw_text(insp_x + 26, comp_y + 6, "[ + VISION SENSING (RADAR) ]", 0x00F87171, 2);
+                            self.editor.add_comp_hitboxes.push(("Vision".into(), insp_x + 18, comp_y, btn_w, btn_h));
+                            comp_y += 34;
+                        }
+                        if ent.script.is_none() {
+                            canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
+                            canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x00A78BFA, 1);
+                            canvas.draw_text(insp_x + 26, comp_y + 6, "[ + SCRIPT KVL (LOGIQUE) ]", 0x00A78BFA, 2);
+                            self.editor.add_comp_hitboxes.push(("Script".into(), insp_x + 18, comp_y, btn_w, btn_h));
+                        }
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // Overlay de la palette de spawn d'entités (Touche P ou Bouton [+ SPAWN])
+        if is_edit_mode && self.editor.show_spawn_palette {
+            let pal_w = 420;
+            let pal_h = 320;
+            let pal_x = 160;
+            let pal_y = 100;
+
+            canvas.draw_rect(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x000F172A);
+            canvas.draw_rect_outline(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x0038BDF8, 3);
+
+            canvas.draw_rect(pal_x, pal_y, pal_w as u32, 34, 0x000284C7);
+            canvas.draw_text(pal_x + 14, pal_y + 8, "STUDIO : CREER UNE NOUVELLE ENTITE", 0x00FFFFFF, 2);
+
+            let spawn_templates = [
+                ("wall", "+ Mur Solide AABB (Bloquant)", 0x0094A3B8),
+                ("collectible", "+ Objet Collectible (Piece KVL)", 0x00F59E0B),
+                ("door", "+ Porte Interactive Securisee", 0x00EF4444),
+                ("enemy", "+ Sentinelle Patrouilleuse (Vision)", 0x00DC2626),
+                ("portal", "+ Portail Quantique (Teleporteur)", 0x0006B6D4),
+                ("cancel", "[ Fermer la palette (Echap) ]", 0x0064748B),
+            ];
+
+            for (idx, (tpl_id, tpl_name, col)) in spawn_templates.iter().enumerate() {
+                let item_y = pal_y + 44 + (idx as i32 * 44);
+                let item_w = pal_w - 24;
+                let item_h = 34;
+
+                canvas.draw_rect(pal_x + 12, item_y, item_w as u32, item_h as u32, 0x001E293B);
+                canvas.draw_rect_outline(pal_x + 12, item_y, item_w as u32, item_h as u32, *col, 1);
+                canvas.draw_text(pal_x + 20, item_y + 8, tpl_name, *col, 2);
+
+                self.editor.spawn_palette_hitboxes.push(crate::editor::PaletteItemHitbox {
+                    template_id: tpl_id.to_string(),
+                    x: pal_x + 12,
+                    y: item_y,
+                    w: item_w as u32,
+                    h: item_h as u32,
+                });
             }
         }
 
@@ -1344,9 +1708,9 @@ impl GameState {
         canvas.draw_rect(0, bottom_y, w as u32, 2, 0x00334155);
 
         let info_line = if is_edit_mode {
-            "MODE EDITION ECS : Clic (Deplacer) | M (Son) | ESPACE (Deplier KVL) | TAB (Reprendre)"
+            "STUDIO ECS : P (Spawn) | Ctrl+D (Dupliquer) | Suppr (Effacer) | Ctrl+S (Sauver) | Espace (KVL) | TAB (Jouer)"
         } else {
-            "MODE JEU ECS : TAB (Editeur KVL) | N (Radar) | G (Grille) | M (Son) | F1 (Telemetrie) | F2 (Profil) | F3 (Auto) | R (Reload)"
+            "MODE JEU ECS : TAB (Studio ECS) | N (Radar) | G (Grille) | M (Son) | F1 (Telemetrie) | F2 (Profil) | F3 (Auto) | R (Reload)"
         };
         canvas.draw_text(20, bottom_y + 14, info_line, 0x0094A3B8, 2);
         canvas.draw_text(20, bottom_y + 40, &self.status_message, 0x0038BDF8, 2);
@@ -1945,4 +2309,92 @@ mod tests {
         assert!(state.status_message.contains("Téléportation quantique"));
         assert_eq!(state.kvl_context.get_var("teleport_target_x"), Some(&Value::Int(-1)), "Les flags de téléportation doivent être consommés");
     }
+
+    #[test]
+    fn test_spawn_entity_runtime() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        let initial_count = state.entities.len();
+        let wall_idx = state.spawn_entity("wall", 450.0, 320.0);
+        assert_eq!(state.entities.len(), initial_count + 1);
+        assert_eq!(state.entities[wall_idx].tag, "wall");
+        assert!(state.entities[wall_idx].collider.as_ref().unwrap().is_solid);
+
+        let coin_idx = state.spawn_entity("collectible", 480.0, 320.0);
+        assert_eq!(state.entities.len(), initial_count + 2);
+        assert_eq!(state.entities[coin_idx].tag, "collectible");
+        assert!(state.entities[coin_idx].script.is_some());
+
+        let portal_idx = state.spawn_entity("portal", 520.0, 320.0);
+        assert_eq!(state.entities.len(), initial_count + 3);
+        assert_eq!(state.entities[portal_idx].tag, "portal");
+        assert_eq!(state.editor.selected, SelectedEntity::Entity(portal_idx));
+    }
+
+    #[test]
+    fn test_duplicate_selected_entity() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        // Spawner une entité et la dupliquer
+        let spawned_idx = state.spawn_entity("wall", 200.0, 200.0);
+        state.editor.selected = SelectedEntity::Entity(spawned_idx);
+
+        let dup_idx = state.duplicate_selected_entity().expect("La duplication doit réussir");
+        assert_eq!(state.entities[dup_idx].name, format!("{}_copy", state.entities[spawned_idx].name));
+        assert_eq!(state.entities[dup_idx].transform.x, 224.0);
+        assert_eq!(state.entities[dup_idx].transform.y, 224.0);
+        assert_ne!(state.entities[dup_idx].id, state.entities[spawned_idx].id);
+        assert_eq!(state.editor.selected, SelectedEntity::Entity(dup_idx));
+    }
+
+    #[test]
+    fn test_remove_selected_entity_safeguard() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        // Tentative de suppression du joueur -> doit échouer
+        let p_idx = state.player_index().unwrap();
+        state.editor.selected = SelectedEntity::Entity(p_idx);
+        let removed_player = state.remove_selected_entity();
+        assert!(!removed_player, "Le joueur principal ne doit jamais être supprimable");
+        assert!(state.status_message.contains("refusée"));
+
+        // Suppression d'un mur -> doit réussir
+        let wall_idx = state.spawn_entity("wall", 300.0, 300.0);
+        state.editor.selected = SelectedEntity::Entity(wall_idx);
+        let initial_count = state.entities.len();
+        let removed_wall = state.remove_selected_entity();
+        assert!(removed_wall, "La suppression de l'entité personnalisée doit réussir");
+        assert_eq!(state.entities.len(), initial_count - 1);
+        assert_eq!(state.editor.selected, SelectedEntity::None);
+    }
+
+    #[test]
+    fn test_add_component_to_selected() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        // Créer une entité brute sans mouvement ni vision
+        let raw_wall_idx = state.spawn_entity("wall", 100.0, 100.0);
+        state.editor.selected = SelectedEntity::Entity(raw_wall_idx);
+        assert!(state.entities[raw_wall_idx].movement.is_none());
+        assert!(state.entities[raw_wall_idx].vision.is_none());
+
+        // Attacher dynamiquement Movement2D
+        let added_mov = state.add_component_to_selected("Movement");
+        assert!(added_mov);
+        assert!(state.entities[raw_wall_idx].movement.is_some());
+
+        // Attacher dynamiquement VisionSensing
+        let added_vis = state.add_component_to_selected("Vision");
+        assert!(added_vis);
+        assert!(state.entities[raw_wall_idx].vision.is_some());
+
+        // Attacher un composant déjà présent -> doit renvoyer false
+        let readded = state.add_component_to_selected("Movement");
+        assert!(!readded);
+    }
 }
+
