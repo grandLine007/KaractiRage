@@ -19,6 +19,8 @@
 # Logs / Temp / Rapports locaux
 *.log
 rapports/
+OBJECTIF_FINAL_KARACTIRAGE.md
+
 
 
 *.docx
