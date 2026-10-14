@@ -1,0 +1,18 @@
+[package]
+name = "kvl-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kvl"
+path = "src/main.rs"
+
+[dependencies]
+kvl-core = { path = "../kvl-core" }
+kvl-runtime = { path = "../kvl-runtime" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

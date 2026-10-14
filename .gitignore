@@ -1,0 +1,29 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Logs / Temp
+*.log
+
+
+*.docx
+*.rtf
+
+KaractiRage_et1.md
+KaractiRage_vision_technique_etude_2026.docx.md
+KaractiRage_et1-1.md
+KaractiRageet1-1.md
