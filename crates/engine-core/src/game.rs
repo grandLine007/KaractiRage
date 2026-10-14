@@ -73,10 +73,20 @@ impl GameState {
         let mut kvl_context = ExecutionContext::new();
         kvl_context.set_var("score", Value::Int(0));
 
+        let resolve_script_content = |path: &str| -> Option<String> {
+            if let Ok(c) = fs::read_to_string(path) {
+                Some(c)
+            } else if let Ok(c) = fs::read_to_string(format!("../../{}", path)) {
+                Some(c)
+            } else {
+                None
+            }
+        };
+
         // Charger les scripts KVL des pièces
         for coin in &scene_data.coins {
             if !kvl_graphs.contains_key(&coin.script_path) {
-                if let Ok(content) = fs::read_to_string(&coin.script_path) {
+                if let Some(content) = resolve_script_content(&coin.script_path) {
                     if let Ok(graph) = Graph::from_json(&content) {
                         for (k, v) in &graph.variables {
                             if kvl_context.get_var(k).is_none() {
@@ -92,7 +102,7 @@ impl GameState {
         // Charger les scripts KVL des portes
         for door in &scene_data.doors {
             if !kvl_graphs.contains_key(&door.script_path) {
-                if let Ok(content) = fs::read_to_string(&door.script_path) {
+                if let Some(content) = resolve_script_content(&door.script_path) {
                     if let Ok(graph) = Graph::from_json(&content) {
                         for (k, v) in &graph.variables {
                             if kvl_context.get_var(k).is_none() {
@@ -173,6 +183,63 @@ impl GameState {
         }
     }
 
+    pub fn save_scene_and_scripts(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // 1. Sauvegarder la scène JSON avec les positions actuelles des entités
+        let scene_data = SceneData {
+            name: self.scene_name.clone(),
+            description: "Scène de démonstration data-driven avec entités et liaisons KVL externes.".into(),
+            player: crate::scene::PlayerSpawn {
+                x: self.player_x,
+                y: self.player_y,
+                speed: self.player_speed,
+                size: self.player_size,
+            },
+            coins: self.coins.iter().map(|c| crate::scene::CoinEntity {
+                id: c.id.clone(),
+                x: c.x,
+                y: c.y,
+                radius: c.radius,
+                script_path: c.script_path.clone(),
+            }).collect(),
+            doors: self.doors.iter().map(|d| crate::scene::DoorEntity {
+                id: d.id.clone(),
+                x: d.x,
+                y: d.y,
+                w: d.w,
+                h: d.h,
+                script_path: d.script_path.clone(),
+            }).collect(),
+            walls: self.walls.iter().map(|w| crate::scene::WallEntity {
+                id: w.id.clone(),
+                x: w.x,
+                y: w.y,
+                w: w.w,
+                h: w.h,
+            }).collect(),
+        };
+
+        scene_data.save_to_file(&self.scene_path)?;
+
+        // 2. Sauvegarder chaque graphe KVL modifié sur le disque
+        for (path, graph) in &self.kvl_graphs {
+            let json = graph.to_json()?;
+            let target_path = if std::path::Path::new(path).exists() {
+                path.clone()
+            } else if std::path::Path::new(&format!("../../{}", path)).exists() {
+                format!("../../{}", path)
+            } else {
+                path.clone()
+            };
+            if let Some(parent) = std::path::Path::new(&target_path).parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(target_path, json)?;
+        }
+
+        self.status_message = "Scène et scripts KVL sauvegardés sur disque avec succès ! (Ctrl+S)".into();
+        Ok(())
+    }
+
     pub fn spawn_particles(&mut self, x: f32, y: f32, count: usize, color: u32) {
         let max_allowed = self.adaptation.current_profile.max_particles();
         let to_spawn = count.min(max_allowed.saturating_sub(self.particles.len()));
@@ -195,6 +262,19 @@ impl GameState {
         let frame_start = std::time::Instant::now();
         let mut kvl_steps_this_frame = 0;
 
+        let is_ctrl_or_cmd = input.is_key_down(KeyCode::ControlLeft)
+            || input.is_key_down(KeyCode::ControlRight)
+            || input.is_key_down(KeyCode::SuperLeft)
+            || input.is_key_down(KeyCode::SuperRight);
+
+        // Raccourci Sauvegarde Globale (Ctrl+S / Cmd+S)
+        if is_ctrl_or_cmd && input.is_key_just_pressed(KeyCode::KeyS) {
+            if let Err(e) = self.save_scene_and_scripts() {
+                self.status_message = format!("Erreur lors de la sauvegarde : {}", e);
+            }
+            return;
+        }
+
         // Bascule Mode Jeu / Mode Édition (TAB)
         if input.is_key_just_pressed(KeyCode::Tab) {
             self.editor.toggle_mode();
@@ -212,8 +292,13 @@ impl GameState {
             self.editor.mouse_x = input.mouse_x;
             self.editor.mouse_y = input.mouse_y;
 
-            // Annuler le câblage avec Échap ou Clic droit
+            // Annuler le câblage ou la palette avec Échap ou Clic droit
             if input.is_key_just_pressed(KeyCode::Escape) || input.mouse_right_just_clicked {
+                if self.editor.show_node_palette {
+                    self.editor.show_node_palette = false;
+                    self.status_message = "Palette de création fermée.".into();
+                    return;
+                }
                 if self.editor.active_wire.is_some() {
                     self.editor.cancel_wire();
                     self.status_message = "Câblage annulé.".into();
@@ -242,13 +327,91 @@ impl GameState {
                     _ => None,
                 };
 
-                // 1. Clic sur le bouton de bascule [Vue Détaillée / Vue Simplifiée] (haut du panneau droit)
-                if mx >= 740.0 && mx <= 1180.0 && my >= 170.0 && my <= 215.0 {
-                    self.editor.toggle_view_detail();
+                // 0. Clic sur le bouton Sauvegarder
+                if self.editor.is_save_btn_clicked(mx, my) {
+                    if let Err(e) = self.save_scene_and_scripts() {
+                        self.status_message = format!("Erreur lors de la sauvegarde : {}", e);
+                    }
                     return;
                 }
 
-                // 2. Si vue détaillée active : vérifier clic sur les éléments KVL
+                // 1. Clic sur le bouton [+ Nouveau Nœud] (Palette)
+                if self.editor.is_add_node_btn_clicked(mx, my) {
+                    if selected_script_path.is_some() {
+                        self.editor.toggle_palette();
+                        self.status_message = if self.editor.show_node_palette {
+                            "Palette de nœuds ouverte : choisissez une action KVL.".into()
+                        } else {
+                            "Palette fermée.".into()
+                        };
+                    } else {
+                        self.status_message = "Veuillez d'abord sélectionner une entité (pièce ou porte).".into();
+                    }
+                    return;
+                }
+
+                // 2. Si la palette est ouverte : gestion des clics sur la palette
+                if self.editor.show_node_palette {
+                    if let Some(item) = self.editor.find_palette_item_at(mx, my) {
+                        let template_id = item.template_id.clone();
+                        if template_id == "cancel" {
+                            self.editor.show_node_palette = false;
+                            self.status_message = "Ajout de nœud annulé.".into();
+                            return;
+                        }
+                        if let Some(ref script_path) = selected_script_path {
+                            if let Some(graph) = self.kvl_graphs.get_mut(script_path) {
+                                let count = graph.nodes.len() + 1;
+                                let (new_node, name) = match template_id.as_str() {
+                                    "BonusPoints" => {
+                                        let id = format!("bonus_pts_{}", count);
+                                        let n = Node::new(&id, "Bonus Majeur (+50)", Category::Progression, "Accorde +50 points bonus au score", NodeKind::Action { action_type: "BonusPoints".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+                                        (n, "Bonus Majeur (+50)")
+                                    }
+                                    "BoostSpeed" => {
+                                        let id = format!("boost_spd_{}", count);
+                                        let n = Node::new(&id, "Boost Vitesse (+120)", Category::Movement, "Augmente la vitesse de déplacement du joueur", NodeKind::Action { action_type: "BoostSpeed".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+                                        (n, "Boost Vitesse (+120)")
+                                    }
+                                    "SpawnSparkles" => {
+                                        let id = format!("sparkles_{}", count);
+                                        let n = Node::new(&id, "Pluie Etincelles", Category::World, "Déclenche une pluie de particules étincelantes", NodeKind::Action { action_type: "SpawnSparkles".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+                                        (n, "Pluie Etincelles")
+                                    }
+                                    _ => return,
+                                };
+                                let id_str = new_node.id.clone();
+                                graph.add_node(new_node);
+                                self.editor.show_node_palette = false;
+                                self.status_message = format!("Nœud '{}' ({}) créé ! Reliez ses pins à la souris.", id_str, name);
+                                return;
+                            }
+                        }
+                    } else {
+                        // Clic hors palette -> la fermer
+                        self.editor.show_node_palette = false;
+                        return;
+                    }
+                }
+
+                // 3. Clic sur le bouton de bascule [Vue Détaillée / Vue Simplifiée]
+                if self.editor.is_view_btn_clicked(mx, my) {
+                    self.editor.toggle_view_detail();
+                    self.status_message = if self.editor.is_detailed_view {
+                        "Inspecteur KVL : Vue détaillée technique dépliée (câblage actif)".into()
+                    } else {
+                        "Inspecteur KVL : Vue simplifiée (macro-blocs)".into()
+                    };
+                    return;
+                }
+
+                // 4. Si vue détaillée active : vérifier clic sur les éléments KVL
                 if self.editor.is_detailed_view {
                     if let Some(ref script_path) = selected_script_path {
                         // A. Clic sur le bouton [X] pour couper une liaison
@@ -465,7 +628,7 @@ impl GameState {
         if input.is_key_down(KeyCode::ArrowUp) || input.is_key_down(KeyCode::KeyW) || input.is_key_down(KeyCode::KeyZ) {
             move_y -= 1.0;
         }
-        if input.is_key_down(KeyCode::ArrowDown) || input.is_key_down(KeyCode::KeyS) {
+        if !is_ctrl_or_cmd && (input.is_key_down(KeyCode::ArrowDown) || input.is_key_down(KeyCode::KeyS)) {
             move_y += 1.0;
         }
 
@@ -474,6 +637,13 @@ impl GameState {
             move_x /= len;
             move_y /= len;
         }
+
+        // Vitesse effective incluant les modificateurs KVL (BoostSpeed)
+        let speed_boost = match self.kvl_context.get_var("speed_boost") {
+            Some(Value::Int(b)) => *b as f32,
+            _ => 0.0,
+        };
+        let effective_speed = self.player_speed + speed_boost;
 
         // ==========================================
         // PHYSIQUE 2D & GLISSEMENT AABB (AXE SÉPARÉ)
@@ -499,7 +669,7 @@ impl GameState {
 
         // 1. Déplacement et résolution sur l'axe X (glissement fluide le long des parois verticales)
         if move_x != 0.0 {
-            self.player_x += move_x * self.player_speed * dt;
+            self.player_x += move_x * effective_speed * dt;
             self.player_x = self.player_x.clamp(30.0 + half, 1160.0 - half);
 
             let p_min_x = self.player_x - half;
@@ -520,7 +690,7 @@ impl GameState {
 
         // 2. Déplacement et résolution sur l'axe Y (glissement fluide le long des parois horizontales)
         if move_y != 0.0 {
-            self.player_y += move_y * self.player_speed * dt;
+            self.player_y += move_y * effective_speed * dt;
             self.player_y = self.player_y.clamp(75.0 + half, 595.0 - half);
 
             let p_min_x = self.player_x - half;
@@ -606,6 +776,14 @@ impl GameState {
                 } else {
                     format!("Porte ({}) fermée.", door.id)
                 };
+            }
+        }
+
+        // Traitement des étincelles déclenchées par KVL (SpawnSparkles)
+        if let Some(Value::Int(sparkles)) = self.kvl_context.get_var("sparkle_burst") {
+            if *sparkles > 0 {
+                spawn_requests.push((self.player_x, self.player_y, (*sparkles as usize) * 35, 0x00FDE047));
+                self.kvl_context.set_var("sparkle_burst", Value::Int(0));
             }
         }
 
@@ -765,6 +943,10 @@ impl GameState {
 
             self.editor.pin_hitboxes.clear();
             self.editor.connection_hitboxes.clear();
+            self.editor.palette_hitboxes.clear();
+            self.editor.save_btn_hitbox = None;
+            self.editor.add_node_btn_hitbox = None;
+            self.editor.view_btn_hitbox = None;
 
             canvas.draw_rect(insp_x, insp_y, insp_w as u32, insp_h, 0x000F172A);
             canvas.draw_rect_outline(insp_x, insp_y, insp_w as u32, insp_h, 0x0038BDF8, 2);
@@ -911,23 +1093,44 @@ impl GameState {
         canvas.draw_text(insp_x + 18, insp_y + 55, title, title_color, 2);
         canvas.draw_text(insp_x + 18, insp_y + 78, pos_str, 0x00F8FAFC, 2);
 
-        // Bouton bascule de vue
-        let view_btn_bg = if self.editor.is_detailed_view { 0x00047857 } else { 0x001D4ED8 };
-        let btn_y = insp_y + 105;
+        // Boutons de contrôle supérieur de l'inspecteur
         let btn_w = (insp_w - 36) as u32;
-        canvas.draw_rect(insp_x + 18, btn_y, btn_w, 34, view_btn_bg);
-        canvas.draw_rect_outline(insp_x + 18, btn_y, btn_w, 34, 0x0038BDF8, 1);
+        let btn_half_w = (btn_w - 8) / 2;
+
+        // Ligne 1 : Bouton Sauvegarder (Ctrl+S) + Bouton [+ Nouveau Nœud]
+        let row1_y = insp_y + 105;
+        let save_x = insp_x + 18;
+        let add_x = save_x + btn_half_w as i32 + 8;
+
+        // Bouton Sauvegarder
+        canvas.draw_rect(save_x, row1_y, btn_half_w, 32, 0x00059669);
+        canvas.draw_rect_outline(save_x, row1_y, btn_half_w, 32, 0x0010B981, 1);
+        canvas.draw_text(save_x + 10, row1_y + 8, "[ SAUVER (CTRL+S) ]", 0x00FFFFFF, 2);
+        self.editor.save_btn_hitbox = Some((save_x, row1_y, btn_half_w, 32));
+
+        // Bouton + Nouveau Nœud
+        canvas.draw_rect(add_x, row1_y, btn_half_w, 32, 0x004F46E5);
+        canvas.draw_rect_outline(add_x, row1_y, btn_half_w, 32, 0x00818CF8, 1);
+        canvas.draw_text(add_x + 12, row1_y + 8, "[ + NOUVEAU NOEUD ]", 0x00FFFFFF, 2);
+        self.editor.add_node_btn_hitbox = Some((add_x, row1_y, btn_half_w, 32));
+
+        // Ligne 2 : Bouton bascule de vue
+        let view_btn_bg = if self.editor.is_detailed_view { 0x00047857 } else { 0x001D4ED8 };
+        let view_btn_y = insp_y + 144;
+        canvas.draw_rect(insp_x + 18, view_btn_y, btn_w, 32, view_btn_bg);
+        canvas.draw_rect_outline(insp_x + 18, view_btn_y, btn_w, 32, 0x0038BDF8, 1);
         let view_btn_txt = if self.editor.is_detailed_view {
             "[ VUE DETAILLEE : CABLAGE (ESPACE) ]"
         } else {
             "[ VUE SIMPLIFIEE : MACRO (ESPACE) ]"
         };
-        canvas.draw_text(insp_x + 28, btn_y + 10, view_btn_txt, 0x00FFFFFF, 2);
+        canvas.draw_text(insp_x + 28, view_btn_y + 8, view_btn_txt, 0x00FFFFFF, 2);
+        self.editor.view_btn_hitbox = Some((insp_x + 18, view_btn_y, btn_w, 32));
 
         let graph = match self.kvl_graphs.get(script_path) {
             Some(g) => g,
             None => {
-                canvas.draw_text(insp_x + 18, insp_y + 155, "Script KVL introuvable.", 0x00EF4444, 2);
+                canvas.draw_text(insp_x + 18, insp_y + 190, "Script KVL introuvable.", 0x00EF4444, 2);
                 return;
             }
         };
@@ -936,7 +1139,7 @@ impl GameState {
             // ==========================================
             // VUE SIMPLIFIÉE (MACRO-BLOCS)
             // ==========================================
-            canvas.draw_text(insp_x + 18, insp_y + 155, "CHAINE LOGIQUE VISUELLE :", 0x0038BDF8, 2);
+            canvas.draw_text(insp_x + 18, insp_y + 186, "CHAINE LOGIQUE VISUELLE :", 0x0038BDF8, 2);
 
             let mut sorted_nodes: Vec<&Node> = graph.nodes.values().collect();
             sorted_nodes.sort_by_key(|n| match n.kind {
@@ -946,28 +1149,31 @@ impl GameState {
             });
 
             for (idx, node) in sorted_nodes.iter().enumerate() {
-                let block_y = insp_y + 185 + (idx as i32 * 60);
+                let block_y = insp_y + 215 + (idx as i32 * 56);
                 let (box_col, badge) = match node.kind {
                     NodeKind::Event { .. } => (0x000284C7, "1. EVENT :"),
-                    _ if idx == 1 => (0x00059669, "2. ACTION :"),
-                    _ => (0x009333EA, "3. EFFET :"),
+                    NodeKind::Action { ref action_type } if action_type == "BonusPoints" => (0x00F59E0B, "BONUS :"),
+                    NodeKind::Action { ref action_type } if action_type == "BoostSpeed" => (0x0006B6D4, "SPEED :"),
+                    NodeKind::Action { ref action_type } if action_type == "SpawnSparkles" => (0x00EC4899, "FX :"),
+                    _ if idx == 1 => (0x00059669, "ACTION :"),
+                    _ => (0x009333EA, "EFFET :"),
                 };
 
-                canvas.draw_rect(insp_x + 18, block_y, btn_w, 40, 0x001E293B);
-                canvas.draw_rect_outline(insp_x + 18, block_y, btn_w, 40, box_col, 2);
+                canvas.draw_rect(insp_x + 18, block_y, btn_w, 38, 0x001E293B);
+                canvas.draw_rect_outline(insp_x + 18, block_y, btn_w, 38, box_col, 2);
 
                 let label = format!("{} {}", badge, node.name);
-                canvas.draw_text(insp_x + 28, block_y + 12, &label, 0x00F8FAFC, 2);
+                canvas.draw_text(insp_x + 28, block_y + 10, &label, 0x00F8FAFC, 2);
 
                 if idx + 1 < sorted_nodes.len() {
-                    canvas.draw_text(insp_x + (btn_w as i32 / 2) - 4, block_y + 44, "V", 0x00FBBF24, 2);
+                    canvas.draw_text(insp_x + (btn_w as i32 / 2) - 4, block_y + 40, "V", 0x00FBBF24, 2);
                 }
             }
         } else {
             // ==========================================
             // VUE DÉTAILLÉE : CÂBLAGE VISUEL DE PINS
             // ==========================================
-            canvas.draw_text(insp_x + 18, insp_y + 150, "CABLAGE DE NOEUDS & PINS :", 0x0010B981, 2);
+            canvas.draw_text(insp_x + 18, insp_y + 186, "CABLAGE DE NOEUDS & PINS :", 0x0010B981, 2);
 
             let mut sorted_nodes: Vec<&Node> = graph.nodes.values().collect();
             sorted_nodes.sort_by_key(|n| match n.kind {
@@ -977,7 +1183,7 @@ impl GameState {
             });
 
             let mut pin_sockets: HashMap<(String, String), (i32, i32)> = HashMap::new();
-            let mut cur_y = insp_y + 175;
+            let mut cur_y = insp_y + 212;
 
             for node in &sorted_nodes {
                 let max_pins = node.inputs.len().max(node.outputs.len()).max(1);
@@ -1103,6 +1309,49 @@ impl GameState {
                 canvas.draw_text(mx + 12, my - 10, "RELIER A L'ENTREE", 0x00FDE047, 1);
             }
         }
+
+        // ==========================================
+        // PALETTE OVERLAY : AJOUTER UN NOUVEAU NŒUD KVL
+        // ==========================================
+        if self.editor.show_node_palette {
+            let pal_x = insp_x + 12;
+            let pal_y = insp_y + 90;
+            let pal_w = btn_w + 12;
+            let pal_h = 240;
+
+            // Fond sombre avec bordure violette néon
+            canvas.draw_rect(pal_x, pal_y, pal_w, pal_h, 0x000B0F19);
+            canvas.draw_rect_outline(pal_x, pal_y, pal_w, pal_h, 0x00A855F7, 3);
+
+            // Barre de titre
+            canvas.draw_rect(pal_x, pal_y, pal_w, 32, 0x006B21A8);
+            canvas.draw_text(pal_x + 12, pal_y + 8, "PALETTE KVL : CHOISIR UN NOEUD", 0x00FFFFFF, 2);
+
+            let templates = [
+                ("BonusPoints", "+ Bonus Majeur (+50 pts)", 0x00F59E0B),
+                ("BoostSpeed", "+ Boost Vitesse (+120 px/s)", 0x0006B6D4),
+                ("SpawnSparkles", "+ Pluie d'Etincelles Dorees", 0x00EC4899),
+                ("cancel", "[ Fermer la palette ]", 0x0064748B),
+            ];
+
+            for (idx, (tpl_id, tpl_name, col)) in templates.iter().enumerate() {
+                let item_y = pal_y + 44 + (idx as i32 * 46);
+                let item_w = pal_w - 24;
+                let item_h = 36;
+
+                canvas.draw_rect(pal_x + 12, item_y, item_w, item_h, 0x001E293B);
+                canvas.draw_rect_outline(pal_x + 12, item_y, item_w, item_h, *col, 1);
+                canvas.draw_text(pal_x + 20, item_y + 10, tpl_name, *col, 2);
+
+                self.editor.palette_hitboxes.push(crate::editor::PaletteItemHitbox {
+                    template_id: tpl_id.to_string(),
+                    x: pal_x + 12,
+                    y: item_y,
+                    w: item_w,
+                    h: item_h,
+                });
+            }
+        }
     }
 }
 
@@ -1190,5 +1439,86 @@ mod tests {
             state.player_x > door_x - half,
             "La porte ouverte doit laisser passer le joueur"
         );
+    }
+
+    #[test]
+    fn test_palette_node_creation_and_execution() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        state.editor.mode = EditorMode::Edit;
+        state.editor.selected = SelectedEntity::Coin(0);
+        let script_path = state.coins[0].script_path.clone();
+
+        // 1. Simuler l'ouverture de la palette
+        state.editor.toggle_palette();
+        assert!(state.editor.show_node_palette);
+
+        // 2. Instancier le nœud BonusPoints (+50 pts) dans le graphe
+        let graph = state.kvl_graphs.get_mut(&script_path).expect("Graphe de la pièce présent");
+        let initial_node_count = graph.nodes.len();
+
+        let new_id = format!("bonus_pts_{}", initial_node_count + 1);
+        let bonus_node = Node::new(
+            &new_id,
+            "Bonus Majeur (+50)",
+            Category::Progression,
+            "Accorde +50 points",
+            NodeKind::Action { action_type: "BonusPoints".into() },
+        )
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        graph.add_node(bonus_node);
+        assert_eq!(graph.nodes.len(), initial_node_count + 1);
+
+        // 3. Relier la sortie de l'action existante vers l'entrée du nouveau nœud
+        // Ex: act_add_score:out_trigger -> bonus_pts_x:in_trigger
+        let conn_res = graph.connect_pins("act_add_score", "out_trigger", &new_id, "in_trigger");
+        assert!(conn_res.is_ok(), "Connexion valide entre act_add_score et bonus_node");
+
+        // 4. Exécuter l'événement OnPlayerOverlap et vérifier l'effet cumulé (score initial 0 + 1 normal + 50 bonus = 51)
+        state.kvl_context.set_var("score", Value::Int(0));
+        let steps = Interpreter::trigger_event(graph, &mut state.kvl_context, "OnPlayerOverlap")
+            .expect("Exécution KVL");
+
+        assert!(steps >= 3, "Au moins 3 étapes exécutées");
+        assert_eq!(
+            state.kvl_context.get_var("score"),
+            Some(&Value::Int(51)),
+            "Le score doit refléter l'effet du nouveau nœud Bonus (+50)"
+        );
+    }
+
+    #[test]
+    fn test_save_scene_persistence() {
+        let temp_dir = std::env::temp_dir().join("karactirage_test_save");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).expect("Création dossier temp");
+
+        let test_scene_content = fs::read_to_string(get_test_scene_path()).expect("Lecture scène");
+        let temp_scene_path = temp_dir.join("test.scene.json");
+        fs::write(&temp_scene_path, &test_scene_content).expect("Écriture scène temp");
+
+        let mut state = GameState::load_from_scene(temp_scene_path.to_str().unwrap())
+            .expect("Chargement scène temp");
+
+        // Modifier les coordonnées du joueur et d'une pièce
+        state.player_x = 422.0;
+        state.player_y = 311.0;
+        state.coins[0].x = 555.0;
+
+        // Sauvegarder sur disque
+        state.save_scene_and_scripts().expect("Sauvegarde de la scène");
+
+        // Recharger depuis le fichier sauvegardé
+        let reloaded = GameState::load_from_scene(temp_scene_path.to_str().unwrap())
+            .expect("Rechargement de la scène sauvegardée");
+
+        assert_eq!(reloaded.player_x, 422.0, "Position X du joueur persistée");
+        assert_eq!(reloaded.player_y, 311.0, "Position Y du joueur persistée");
+        assert_eq!(reloaded.coins[0].x, 555.0, "Position X de la pièce persistée");
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

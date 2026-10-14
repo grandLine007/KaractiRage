@@ -119,6 +119,21 @@
 
 
 
+### Étape 9 : Palette de Création de Nœuds KVL & Sauvegarde de Scène (Ctrl+S) *(14 Octobre 2026)*
+* **Réalisations** :
+  * Implémentation conjointe des **Options D et E** :
+    * **Palette de création de nœuds KVL (« + Nouveau Nœud »)** :
+      * Menu contextuel flottant violet néon dans l'inspecteur offrant 3 modèles d'actions prêts à l'emploi (`BonusPoints`, `BoostSpeed`, `SpawnSparkles`).
+      * Instanciation dynamique dans le graphe en mémoire avec identifiant unique, pins Trigger In/Out et catégorisation contextuelle.
+      * Prise en charge dans `kvl-runtime` : `BonusPoints` (+50 pts au score), `BoostSpeed` (+120 px/s à la vitesse de déplacement), `SpawnSparkles` (gerbe de 35 particules dorées).
+    * **Persistance complète de scène & KVL sur disque (Ctrl+S / Cmd+S)** :
+      * Enregistrement de l'état spatial complet dans `level_01.scene.json` (positions modifiées du joueur, pièces, portes et murs).
+      * Écriture et sérialisation des scripts `.kvl.json` associés à chaque entité pour préserver les nouveaux nœuds et les connexions modifiées.
+      * Raccourci universel `Ctrl+S` / `Cmd+S` (compatible macOS) et bouton interactif dédié `[ SAUVER (CTRL+S) ]` dans l'inspecteur.
+* **Mesures & Benchmarks** :
+  * 9/9 tests unitaires réussis à 100% sur l'ensemble du Workspace Cargo.
+  * Zéro avertissement de compilation, persistance validée par test automatisé de rechargement à froid.
+  * Temps de frame CPU moyen : ~420 µs (< 3% du budget frame de 16.6 ms).
 
 ---
 

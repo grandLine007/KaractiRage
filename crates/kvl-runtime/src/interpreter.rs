@@ -103,6 +103,30 @@ impl Interpreter {
                             };
                             ctx.set_var("score", Value::Int(current_score + 1));
                         }
+                        "BonusPoints" => {
+                            let current_score = match ctx.get_var("score") {
+                                Some(Value::Int(s)) => *s,
+                                _ => 0,
+                            };
+                            ctx.set_var("score", Value::Int(current_score + 50));
+                            ctx.record_step(&next_node.id, &next_node.name, "Bonus majeur de +50 points appliqué !");
+                        }
+                        "BoostSpeed" => {
+                            let current_boost = match ctx.get_var("speed_boost") {
+                                Some(Value::Int(b)) => *b,
+                                _ => 0,
+                            };
+                            ctx.set_var("speed_boost", Value::Int(current_boost + 120));
+                            ctx.record_step(&next_node.id, &next_node.name, "Accélération du joueur (+120 px/s) !");
+                        }
+                        "SpawnSparkles" => {
+                            let count = match ctx.get_var("sparkle_burst") {
+                                Some(Value::Int(c)) => *c,
+                                _ => 0,
+                            };
+                            ctx.set_var("sparkle_burst", Value::Int(count + 1));
+                            ctx.record_step(&next_node.id, &next_node.name, "Pluie d'étincelles dorées déclenchée !");
+                        }
                         "DestroySelf" => {
                             ctx.record_step(&next_node.id, &next_node.name, "Objet marqué pour destruction");
                         }

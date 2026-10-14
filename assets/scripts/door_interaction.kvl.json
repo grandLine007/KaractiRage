@@ -14,32 +14,6 @@
     }
   },
   "nodes": {
-    "evt_door_interact": {
-      "id": "evt_door_interact",
-      "name": "Interaction avec la porte",
-      "category": "Interactions",
-      "description": "Déclenché lors de l'appui sur E ou Espace près de la porte.",
-      "kind": {
-        "Event": {
-          "event_type": "OnDoorInteract"
-        }
-      },
-      "inputs": [],
-      "outputs": [
-        {
-          "id": "out_trigger",
-          "name": "Exécution",
-          "direction": "Output",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "ui": {
-        "position_x": 0.0,
-        "position_y": 0.0,
-        "color_tag": null
-      }
-    },
     "act_toggle_door": {
       "id": "act_toggle_door",
       "name": "Basculer état de la porte",
@@ -62,6 +36,32 @@
       "outputs": [],
       "ui": {
         "position_x": 200.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "evt_door_interact": {
+      "id": "evt_door_interact",
+      "name": "Interaction avec la porte",
+      "category": "Interactions",
+      "description": "Déclenché lors de l'appui sur E ou Espace près de la porte.",
+      "kind": {
+        "Event": {
+          "event_type": "OnDoorInteract"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
         "position_y": 0.0,
         "color_tag": null
       }

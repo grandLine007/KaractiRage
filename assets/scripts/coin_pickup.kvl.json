@@ -14,28 +14,28 @@
     }
   },
   "nodes": {
-    "evt_overlap": {
-      "id": "evt_overlap",
-      "name": "Quand le joueur touche la pièce",
-      "category": "Interactions",
-      "description": "Détecte la collision entre le joueur et l'objet.",
+    "act_destroy": {
+      "id": "act_destroy",
+      "name": "Faire disparaître la pièce",
+      "category": "World",
+      "description": "Supprime l'objet du monde de jeu.",
       "kind": {
-        "Event": {
-          "event_type": "OnPlayerOverlap"
+        "Action": {
+          "action_type": "DestroySelf"
         }
       },
-      "inputs": [],
-      "outputs": [
+      "inputs": [
         {
-          "id": "out_trigger",
+          "id": "in_trigger",
           "name": "Exécution",
-          "direction": "Output",
+          "direction": "Input",
           "data_type": "Trigger",
           "default_value": null
         }
       ],
+      "outputs": [],
       "ui": {
-        "position_x": 0.0,
+        "position_x": 360.0,
         "position_y": 0.0,
         "color_tag": null
       }
@@ -74,28 +74,28 @@
         "color_tag": null
       }
     },
-    "act_destroy": {
-      "id": "act_destroy",
-      "name": "Faire disparaître la pièce",
-      "category": "World",
-      "description": "Supprime l'objet du monde de jeu.",
+    "evt_overlap": {
+      "id": "evt_overlap",
+      "name": "Quand le joueur touche la pièce",
+      "category": "Interactions",
+      "description": "Détecte la collision entre le joueur et l'objet.",
       "kind": {
-        "Action": {
-          "action_type": "DestroySelf"
+        "Event": {
+          "event_type": "OnPlayerOverlap"
         }
       },
-      "inputs": [
+      "inputs": [],
+      "outputs": [
         {
-          "id": "in_trigger",
+          "id": "out_trigger",
           "name": "Exécution",
-          "direction": "Input",
+          "direction": "Output",
           "data_type": "Trigger",
           "default_value": null
         }
       ],
-      "outputs": [],
       "ui": {
-        "position_x": 360.0,
+        "position_x": 0.0,
         "position_y": 0.0,
         "color_tag": null
       }
