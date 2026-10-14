@@ -436,6 +436,35 @@ impl GameState {
                                             .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
                                         (n, "Verrouiller Portes")
                                     }
+                                    "TeleportPlayer" => {
+                                        let id = format!("act_teleport_{}", count);
+                                        let n = Node::new(&id, "Téléportation (120, 480)", Category::Movement, "Téléporte instantanément l'entité", NodeKind::Action { action_type: "TeleportPlayer".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+                                        (n, "Téléportation")
+                                    }
+                                    "SlowSpeed" => {
+                                        let id = format!("act_slow_{}", count);
+                                        let n = Node::new(&id, "Ralentir Vitesse (-80)", Category::Movement, "Réduit la vitesse de déplacement", NodeKind::Action { action_type: "SlowSpeed".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+                                        (n, "Ralentir Vitesse")
+                                    }
+                                    "IncrementKeys" => {
+                                        let id = format!("act_inc_keys_{}", count);
+                                        let n = Node::new(&id, "Incrémenter Clés (+1)", Category::Progression, "Ajoute 1 au compteur de clés", NodeKind::Action { action_type: "IncrementCounter:keys".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+                                        (n, "Incrémenter Clés")
+                                    }
+                                    "ConditionKeys3" => {
+                                        let id = format!("cond_keys_{}", count);
+                                        let n = Node::new(&id, "Si Clés >= 3", Category::MathLogic, "Vérifie si 3 clés ont été réunies", NodeKind::Condition { operator: "CounterAtLeast:keys:3".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_true", "Vrai", PinDirection::Output))
+                                            .with_output(Pin::new_trigger("out_false", "Faux", PinDirection::Output));
+                                        (n, "Condition (Clés >= 3)")
+                                    }
                                     _ => return,
                                 };
                                 let id_str = new_node.id.clone();
@@ -898,6 +927,24 @@ impl GameState {
                     spawn_requests.push((px + pw * 0.5, py + ph * 0.5, (*sparkles as usize) * 35, 0x00FDE047));
                 }
                 self.kvl_context.set_var("sparkle_burst", Value::Int(0));
+            }
+        }
+
+        // Traitement de la téléportation déclenchée par KVL (TeleportPlayer / TeleportTo)
+        if let (Some(Value::Int(tx)), Some(Value::Int(ty))) = (
+            self.kvl_context.get_var("teleport_target_x").cloned(),
+            self.kvl_context.get_var("teleport_target_y").cloned(),
+        ) {
+            if tx >= 0 && ty >= 0 {
+                if let Some(p_idx) = self.player_index() {
+                    self.entities[p_idx].transform.x = tx as f32;
+                    self.entities[p_idx].transform.y = ty as f32;
+                    self.audio.play(SoundType::Teleport);
+                    spawn_requests.push((tx as f32 + 15.0, ty as f32 + 15.0, 35, 0x0038BDF8));
+                    self.status_message = format!("Téléportation quantique de l'entité vers ({}, {}) !", tx, ty);
+                }
+                self.kvl_context.set_var("teleport_target_x", Value::Int(-1));
+                self.kvl_context.set_var("teleport_target_y", Value::Int(-1));
             }
         }
 
@@ -1606,7 +1653,7 @@ impl GameState {
             let pal_x = insp_x + 12;
             let pal_y = insp_y + 80;
             let pal_w = btn_w + 12;
-            let pal_h = 410;
+            let pal_h = 570;
 
             canvas.draw_rect(pal_x, pal_y, pal_w, pal_h, 0x000B0F19);
             canvas.draw_rect_outline(pal_x, pal_y, pal_w, pal_h, 0x00A855F7, 3);
@@ -1617,6 +1664,10 @@ impl GameState {
             let templates = [
                 ("BonusPoints", "+ Bonus Majeur (+50 pts)", 0x00F59E0B),
                 ("BoostSpeed", "+ Boost Vitesse (+120 px/s)", 0x0006B6D4),
+                ("SlowSpeed", "- Ralentir Vitesse (-80 px/s)", 0x00A855F7),
+                ("TeleportPlayer", "@ Teleportation (120, 480)", 0x0038BDF8),
+                ("IncrementKeys", "+ Compteur Cles (+1)", 0x0010B981),
+                ("ConditionKeys3", "? Condition: Cles >= 3", 0x00FBBF24),
                 ("SpawnSparkles", "+ Pluie d'Etincelles Dorees", 0x00EC4899),
                 ("ConditionScore50", "? Condition: Si Score >= 50", 0x00F97316),
                 ("DenyAccess", "! Action: Alerte Refus", 0x00EF4444),
@@ -1870,5 +1921,28 @@ mod tests {
         state.update(0.016, &input);
 
         assert!(state.spatial_grid.stats_queries > 0);
+    }
+
+    #[test]
+    fn test_teleport_action_dispatches_player_movement() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        let p_idx = state.player_index().unwrap();
+        state.entities[p_idx].transform.x = 100.0;
+        state.entities[p_idx].transform.y = 100.0;
+
+        // Déclencher une instruction de téléportation KVL
+        state.kvl_context.set_var("teleport_target_x", Value::Int(340));
+        state.kvl_context.set_var("teleport_target_y", Value::Int(420));
+
+        let input = InputState::new();
+        state.update(0.016, &input);
+
+        let p = &state.entities[p_idx];
+        assert_eq!(p.transform.x, 340.0, "Le joueur doit être instantanément téléporté en X");
+        assert_eq!(p.transform.y, 420.0, "Le joueur doit être instantanément téléporté en Y");
+        assert!(state.status_message.contains("Téléportation quantique"));
+        assert_eq!(state.kvl_context.get_var("teleport_target_x"), Some(&Value::Int(-1)), "Les flags de téléportation doivent être consommés");
     }
 }

@@ -159,6 +159,68 @@ impl Interpreter {
                             ctx.set_var("score", Value::Int(0));
                             ctx.record_step(&next_node.id, &next_node.name, "Score réinitialisé à 0 !");
                         }
+                        "TeleportPlayer" => {
+                            ctx.set_var("teleport_target_x", Value::Int(120));
+                            ctx.set_var("teleport_target_y", Value::Int(480));
+                            ctx.record_step(&next_node.id, &next_node.name, "Téléportation du joueur vers (120, 480) !");
+                        }
+                        op if op.starts_with("TeleportTo:") => {
+                            let coords = op.trim_start_matches("TeleportTo:");
+                            let mut parts = coords.split(',');
+                            let tx = parts.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(120);
+                            let ty = parts.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(480);
+                            ctx.set_var("teleport_target_x", Value::Int(tx));
+                            ctx.set_var("teleport_target_y", Value::Int(ty));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Téléportation de l'entité vers ({}, {}) !", tx, ty));
+                        }
+                        "SlowSpeed" => {
+                            let current_boost = match ctx.get_var("speed_boost") {
+                                Some(Value::Int(b)) => *b,
+                                _ => 0,
+                            };
+                            ctx.set_var("speed_boost", Value::Int(current_boost - 80));
+                            ctx.record_step(&next_node.id, &next_node.name, "Ralentissement de l'entité (-80 px/s) !");
+                        }
+                        op if op.starts_with("ModifySpeed:") => {
+                            let delta = op.trim_start_matches("ModifySpeed:").parse::<i64>().unwrap_or(0);
+                            let current_boost = match ctx.get_var("speed_boost") {
+                                Some(Value::Int(b)) => *b,
+                                _ => 0,
+                            };
+                            ctx.set_var("speed_boost", Value::Int(current_boost + delta));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Vitesse modifiée ({:+} px/s) !", delta));
+                        }
+                        op if op.starts_with("IncrementCounter:") => {
+                            let counter_name = op.trim_start_matches("IncrementCounter:");
+                            let current_count = match ctx.get_var(counter_name) {
+                                Some(Value::Int(c)) => *c,
+                                _ => 0,
+                            };
+                            ctx.set_var(counter_name, Value::Int(current_count + 1));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Compteur '{}' incrémenté : {}", counter_name, current_count + 1));
+                        }
+                        op if op.starts_with("AddVar:") => {
+                            let rest = op.trim_start_matches("AddVar:");
+                            let mut parts = rest.split(':');
+                            if let (Some(var_name), Some(delta_str)) = (parts.next(), parts.next()) {
+                                let delta = delta_str.parse::<i64>().unwrap_or(0);
+                                let current_val = match ctx.get_var(var_name) {
+                                    Some(Value::Int(v)) => *v,
+                                    _ => 0,
+                                };
+                                ctx.set_var(var_name, Value::Int(current_val + delta));
+                                ctx.record_step(&next_node.id, &next_node.name, format!("Variable '{}' ajustée de {} -> {}", var_name, delta, current_val + delta));
+                            }
+                        }
+                        op if op.starts_with("SetVar:") => {
+                            let rest = op.trim_start_matches("SetVar:");
+                            let mut parts = rest.split(':');
+                            if let (Some(var_name), Some(val_str)) = (parts.next(), parts.next()) {
+                                let val = val_str.parse::<i64>().unwrap_or(0);
+                                ctx.set_var(var_name, Value::Int(val));
+                                ctx.record_step(&next_node.id, &next_node.name, format!("Variable '{}' fixée à {}", var_name, val));
+                            }
+                        }
                         "DestroySelf" => {
                             ctx.record_step(&next_node.id, &next_node.name, "Objet marqué pour destruction");
                         }
@@ -185,6 +247,51 @@ impl Interpreter {
                             let threshold = op.split(':').nth(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(50);
                             current_score >= threshold
                         }
+                        op if op.starts_with("CounterAtLeast:") || op.starts_with("CounterGte:") => {
+                            let rest = if op.starts_with("CounterAtLeast:") {
+                                op.trim_start_matches("CounterAtLeast:")
+                            } else {
+                                op.trim_start_matches("CounterGte:")
+                            };
+                            let mut parts = rest.split(':');
+                            if let (Some(counter_name), Some(threshold_str)) = (parts.next(), parts.next()) {
+                                let threshold = threshold_str.parse::<i64>().unwrap_or(1);
+                                let count = match ctx.get_var(counter_name) {
+                                    Some(Value::Int(c)) => *c,
+                                    _ => 0,
+                                };
+                                count >= threshold
+                            } else {
+                                false
+                            }
+                        }
+                        op if op.starts_with("VarGte:") => {
+                            let rest = op.trim_start_matches("VarGte:");
+                            let mut parts = rest.split(':');
+                            if let (Some(var_name), Some(threshold_str)) = (parts.next(), parts.next()) {
+                                let threshold = threshold_str.parse::<i64>().unwrap_or(0);
+                                let val = match ctx.get_var(var_name) {
+                                    Some(Value::Int(v)) => *v,
+                                    _ => 0,
+                                };
+                                val >= threshold
+                            } else {
+                                false
+                            }
+                        }
+                        op if op.starts_with("VarEqBool:") => {
+                            let rest = op.trim_start_matches("VarEqBool:");
+                            let mut parts = rest.split(':');
+                            if let (Some(var_name), Some(bool_str)) = (parts.next(), parts.next()) {
+                                let target_b = bool_str == "true";
+                                match ctx.get_var(var_name) {
+                                    Some(Value::Bool(b)) => *b == target_b,
+                                    _ => false,
+                                }
+                            } else {
+                                false
+                            }
+                        }
                         op if op.starts_with("CheckVarBool:") => {
                             let var_name = op.split(':').nth(1).unwrap_or("");
                             match ctx.get_var(var_name) {
@@ -193,7 +300,6 @@ impl Interpreter {
                             }
                         }
                         _ => {
-                            // Par défaut si non spécifié, tester si le score est positif
                             current_score > 0
                         }
                     };

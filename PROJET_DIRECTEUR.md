@@ -254,10 +254,26 @@
   * **Éditeur KVL Universel** :
     * Sélection générique `SelectedEntity::Entity(usize)` permettant de cliquer, déplacer et inspecter à la souris n'importe quelle entité du monde.
     * Rendu contextuel : graphe KVL pour les entités scriptées, inspecteur de composants pour les entités passives.
+
+### Étape 16 : Extension de la Palette KVL (Téléporteurs, Altérateurs de Vitesse & Compteurs) *(14 Octobre 2026)*
+* **Réalisations** :
+  * **Nouveaux Nœuds & Actions KVL** :
+    * `TeleportPlayer` & `TeleportTo:x,y` : Téléportation spatiale instantanée de l'entité vers des coordonnées absolues ou relatives avec émission d'effets de particules cyan et signal sonore dédié.
+    * `SlowSpeed` & `ModifySpeed:delta` : Ajustement dynamique de la vitesse (zones de boue, glace, ralentisseurs, hyper-propulseurs).
+    * `IncrementCounter:name` : Incrémentation universelle de compteurs numériques dans l'`ExecutionContext`.
+    * `SetVar:name:val` & `AddVar:name:delta` : Manipulation data-driven de variables arbitraires de jeu (`keys`, `health`, `mana`, `level`).
+  * **Nouveaux Opérateurs Conditionnels KVL** :
+    * `CounterAtLeast:name:threshold` & `CounterGte:name:threshold` : Vérification de seuils sur compteurs (ex: clés réunies, interrupteurs activés).
+    * `VarGte:name:threshold` & `VarEqBool:name:val` : Branchements logiques `out_true` / `out_false` sur toute variable d'exécution.
+  * **Synthèse Sonore Procédurale FM Rétro** :
+    * Ajout de `SoundType::Teleport` dans `AudioEngine` (`crates/engine-core/src/audio.rs`) : balayage ascendant 250 Hz $\rightarrow$ 1050 Hz avec modulation de fréquence (FM) 30 Hz et décroissance exponentielle.
+  * **Palette Visuelle de l'Éditeur & Hitboxes** :
+    * Élargissement de la palette overlay contextuelle `[+ NOUVEAU NŒUD]` (12 modèles de nœuds KVL disponibles).
+    * Câblage direct de pins et déclenchement réactif dans la boucle de frame.
 * **Mesures & Benchmarks** :
-  * 100% des tests workspace validés (`cargo test` : 12/12 `engine-core`, 4/4 `kvl-core`, 2/2 `kvl-runtime`).
+  * 34/34 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+4 tests dédiés aux nouvelles actions, téléportation et compteurs).
   * 0 avertissement de compilation (`cargo check --all-targets`).
-  * Compilation WebAssembly 100% fonctionnelle en 1.90s (535 Ko).
+  * WebAssembly recompilé avec succès (535 Ko).
 
 ---
 

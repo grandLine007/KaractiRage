@@ -14,6 +14,7 @@ pub enum SoundType {
     WireCut,
     Alarm,
     RadarPing,
+    Teleport,
 }
 
 struct ActiveVoice {
@@ -37,6 +38,7 @@ impl ActiveVoice {
             SoundType::Sparkles => 0.35,
             SoundType::Alarm => 0.45,
             SoundType::RadarPing => 0.12,
+            SoundType::Teleport => 0.35,
         };
 
         let duration_samples = (duration_secs * sample_rate as f32) as usize;
@@ -161,6 +163,18 @@ impl ActiveVoice {
                 let decay = (1.0 - progress).powf(3.0);
                 let sine = (t * freq * std::f32::consts::TAU).sin();
                 sine * decay * 0.5
+            }
+
+            SoundType::Teleport => {
+                // Balayage ascendant avec modulation FM rétro (téléportation sci-fi)
+                let base_freq = 250.0 + progress * 800.0;
+                let mod_freq = 30.0;
+                let mod_idx = 100.0 * (1.0 - progress);
+                let inst_freq = base_freq + mod_idx * (t * mod_freq * std::f32::consts::TAU).sin();
+                let phase = t * inst_freq * std::f32::consts::TAU;
+                let wave = phase.sin();
+                let env = (1.0 - progress).powf(1.5);
+                wave * env * 0.6
             }
         };
 
@@ -292,6 +306,7 @@ mod tests {
             SoundType::WireCut,
             SoundType::Alarm,
             SoundType::RadarPing,
+            SoundType::Teleport,
         ];
 
         let sample_rate = 44100.0;

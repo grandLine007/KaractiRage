@@ -139,4 +139,75 @@ mod tests {
         assert_eq!(ctx.get_var("door_is_open"), Some(&Value::Bool(true)), "Porte doit être ouverte");
         assert_eq!(ctx.get_var("access_denied"), Some(&Value::Bool(false)), "Pas de refus d'accès");
     }
+
+    #[test]
+    fn test_teleport_and_speed_alteration_actions() {
+        let mut graph = Graph::new("test_teleport_speed", "Test Teleport & Speed", "");
+        let evt = Node::new("evt", "Event", Category::Interactions, "", NodeKind::Event { event_type: "OnPortal".into() })
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let act_teleport = Node::new("act_tp", "Teleport", Category::Movement, "", NodeKind::Action { action_type: "TeleportTo:350,220".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let act_speed = Node::new("act_spd", "Slow", Category::Movement, "", NodeKind::Action { action_type: "ModifySpeed:-50".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph.add_node(evt);
+        graph.add_node(act_teleport);
+        graph.add_node(act_speed);
+
+        graph.connect_pins("evt", "out_trigger", "act_tp", "in_trigger").unwrap();
+        graph.connect_pins("act_tp", "out_trigger", "act_spd", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        ctx.set_var("speed_boost", Value::Int(100));
+
+        let steps = Interpreter::trigger_event(&graph, &mut ctx, "OnPortal").unwrap();
+        assert_eq!(steps, 3);
+        assert_eq!(ctx.get_var("teleport_target_x"), Some(&Value::Int(350)));
+        assert_eq!(ctx.get_var("teleport_target_y"), Some(&Value::Int(220)));
+        assert_eq!(ctx.get_var("speed_boost"), Some(&Value::Int(50))); // 100 - 50 = 50
+    }
+
+    #[test]
+    fn test_counter_gate_and_variable_conditions() {
+        let mut graph = Graph::new("test_counter", "Test Counter & Var", "");
+        let evt = Node::new("evt", "Key Collect", Category::Interactions, "", NodeKind::Event { event_type: "OnKeyFound".into() })
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let act_inc = Node::new("act_inc", "Inc Keys", Category::Progression, "", NodeKind::Action { action_type: "IncrementCounter:keys".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let cond_keys = Node::new("cond_keys", "Condition Keys >= 3", Category::MathLogic, "", NodeKind::Condition { operator: "CounterAtLeast:keys:3".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+            .with_output(Pin::new_trigger("out_true", "Vrai", PinDirection::Output))
+            .with_output(Pin::new_trigger("out_false", "Faux", PinDirection::Output));
+        let act_win = Node::new("act_win", "Unlock Safe", Category::Progression, "", NodeKind::Action { action_type: "SetVar:vault_open:1".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph.add_node(evt);
+        graph.add_node(act_inc);
+        graph.add_node(cond_keys);
+        graph.add_node(act_win);
+
+        graph.connect_pins("evt", "out_trigger", "act_inc", "in_trigger").unwrap();
+        graph.connect_pins("act_inc", "out_trigger", "cond_keys", "in_trigger").unwrap();
+        graph.connect_pins("cond_keys", "out_true", "act_win", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        ctx.set_var("keys", Value::Int(0));
+
+        // Clé 1
+        Interpreter::trigger_event(&graph, &mut ctx, "OnKeyFound").unwrap();
+        assert_eq!(ctx.get_var("keys"), Some(&Value::Int(1)));
+        assert!(ctx.get_var("vault_open").is_none());
+
+        // Clé 2
+        Interpreter::trigger_event(&graph, &mut ctx, "OnKeyFound").unwrap();
+        assert_eq!(ctx.get_var("keys"), Some(&Value::Int(2)));
+        assert!(ctx.get_var("vault_open").is_none());
+
+        // Clé 3 -> Déverrouillage coffre !
+        Interpreter::trigger_event(&graph, &mut ctx, "OnKeyFound").unwrap();
+        assert_eq!(ctx.get_var("keys"), Some(&Value::Int(3)));
+        assert_eq!(ctx.get_var("vault_open"), Some(&Value::Int(1)));
+    }
 }
