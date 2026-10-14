@@ -12,6 +12,8 @@ pub enum SoundType {
     Sparkles,
     UiClick,
     WireCut,
+    Alarm,
+    RadarPing,
 }
 
 struct ActiveVoice {
@@ -33,6 +35,8 @@ impl ActiveVoice {
             SoundType::BonusFanfare => 0.55,
             SoundType::SpeedBoost => 0.40,
             SoundType::Sparkles => 0.35,
+            SoundType::Alarm => 0.45,
+            SoundType::RadarPing => 0.12,
         };
 
         let duration_samples = (duration_secs * sample_rate as f32) as usize;
@@ -140,6 +144,23 @@ impl ActiveVoice {
                 let pseudo_noise = (((self.cursor * 1103515245 + 12345) % 100) as f32 / 50.0) - 1.0;
                 let decay = (1.0 - progress).powf(3.0);
                 pseudo_noise * decay * 0.6
+            }
+
+            SoundType::Alarm => {
+                // Sirène d'alarme arcade 2 tons (600 Hz et 880 Hz)
+                let phase = ((t * 8.0) as i32) % 2;
+                let freq = if phase == 0 { 600.0 } else { 880.0 };
+                let square = if (t * freq).fract() < 0.5 { 0.7 } else { -0.7 };
+                let decay = 1.0 - progress * 0.3; // Maintien soutenu
+                square * decay * 0.5
+            }
+
+            SoundType::RadarPing => {
+                // Bip radar court futuriste (1500 Hz avec chute rapide)
+                let freq = 1500.0;
+                let decay = (1.0 - progress).powf(3.0);
+                let sine = (t * freq * std::f32::consts::TAU).sin();
+                sine * decay * 0.5
             }
         };
 
@@ -269,6 +290,8 @@ mod tests {
             SoundType::Sparkles,
             SoundType::UiClick,
             SoundType::WireCut,
+            SoundType::Alarm,
+            SoundType::RadarPing,
         ];
 
         let sample_rate = 44100.0;

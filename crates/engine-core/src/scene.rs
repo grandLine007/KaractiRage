@@ -39,6 +39,32 @@ pub struct WallEntity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnemyEntity {
+    pub id: String,
+    pub x: f32,
+    pub y: f32,
+    #[serde(default = "default_enemy_size")]
+    pub size: f32,
+    pub patrol_min_y: f32,
+    pub patrol_max_y: f32,
+    #[serde(default = "default_enemy_speed")]
+    pub speed: f32,
+    #[serde(default = "default_vision_range")]
+    pub vision_range: f32,
+    pub script_path: String,
+}
+
+fn default_enemy_size() -> f32 {
+    40.0
+}
+fn default_enemy_speed() -> f32 {
+    100.0
+}
+fn default_vision_range() -> f32 {
+    200.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SceneData {
     pub name: String,
     pub description: String,
@@ -47,6 +73,8 @@ pub struct SceneData {
     pub doors: Vec<DoorEntity>,
     #[serde(default)]
     pub walls: Vec<WallEntity>,
+    #[serde(default)]
+    pub enemies: Vec<EnemyEntity>,
 }
 
 impl SceneData {

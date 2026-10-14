@@ -143,6 +143,18 @@ impl Interpreter {
                             ctx.set_var("access_denied", Value::Bool(true));
                             ctx.record_step(&next_node.id, &next_node.name, "Accès refusé ! Condition non remplie.");
                         }
+                        "TriggerAlarm" => {
+                            ctx.set_var("alarm_active", Value::Bool(true));
+                            ctx.record_step(&next_node.id, &next_node.name, "Alerte de patrouille déclenchée : intrus repéré !");
+                        }
+                        "ClearAlarm" => {
+                            ctx.set_var("alarm_active", Value::Bool(false));
+                            ctx.record_step(&next_node.id, &next_node.name, "Alerte levée : retour à la patrouille normale.");
+                        }
+                        "LockAllDoors" => {
+                            ctx.set_var("door_is_open", Value::Bool(false));
+                            ctx.record_step(&next_node.id, &next_node.name, "Verrouillage de sécurité d'urgence des portes !");
+                        }
                         "ResetScore" => {
                             ctx.set_var("score", Value::Int(0));
                             ctx.record_step(&next_node.id, &next_node.name, "Score réinitialisé à 0 !");

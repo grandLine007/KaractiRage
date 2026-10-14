@@ -11,6 +11,7 @@ pub enum SelectedEntity {
     Coin(usize),
     Door(usize),
     Wall(usize),
+    Enemy(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

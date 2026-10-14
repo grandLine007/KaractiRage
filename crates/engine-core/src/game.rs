@@ -47,6 +47,63 @@ pub struct WallInstance {
     pub h: f32,
 }
 
+pub struct EnemyInstance {
+    pub id: String,
+    pub x: f32,
+    pub y: f32,
+    pub size: f32,
+    pub patrol_min_y: f32,
+    pub patrol_max_y: f32,
+    pub speed: f32,
+    pub patrol_dir: f32,
+    pub vision_range: f32,
+    pub is_alerted: bool,
+    pub alert_timer: f32,
+    pub script_path: String,
+}
+
+/// Algorithme de Liang-Barsky ultra-rapide et déterministe pour l'intersection segment de vue / AABB
+fn segment_intersects_aabb(x1: f32, y1: f32, x2: f32, y2: f32, bx: f32, by: f32, bw: f32, bh: f32) -> bool {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let p = [-dx, dx, -dy, dy];
+    let q = [
+        x1 - bx,
+        (bx + bw) - x1,
+        y1 - by,
+        (by + bh) - y1,
+    ];
+
+    let mut u1 = 0.0f32;
+    let mut u2 = 1.0f32;
+
+    for i in 0..4 {
+        if p[i] == 0.0 {
+            if q[i] < 0.0 {
+                return false;
+            }
+        } else {
+            let t = q[i] / p[i];
+            if p[i] < 0.0 {
+                if t > u2 {
+                    return false;
+                }
+                if t > u1 {
+                    u1 = t;
+                }
+            } else {
+                if t < u1 {
+                    return false;
+                }
+                if t < u2 {
+                    u2 = t;
+                }
+            }
+        }
+    }
+    u1 <= u2
+}
+
 pub struct GameState {
     pub scene_path: String,
     pub scene_name: String,
@@ -57,6 +114,7 @@ pub struct GameState {
     pub coins: Vec<CoinInstance>,
     pub doors: Vec<DoorInstance>,
     pub walls: Vec<WallInstance>,
+    pub enemies: Vec<EnemyInstance>,
     pub particles: Vec<Particle>,
     pub kvl_graphs: HashMap<String, Graph>,
     pub kvl_context: ExecutionContext,
@@ -65,6 +123,7 @@ pub struct GameState {
     pub adaptation: AdaptationManager,
     pub editor: EditorState,
     pub audio: AudioEngine,
+    pub show_minimap: bool,
 }
 
 impl GameState {
@@ -117,6 +176,22 @@ impl GameState {
             }
         }
 
+        // Charger les scripts KVL des ennemis
+        for enemy in &scene_data.enemies {
+            if !kvl_graphs.contains_key(&enemy.script_path) {
+                if let Some(content) = resolve_script_content(&enemy.script_path) {
+                    if let Ok(graph) = Graph::from_json(&content) {
+                        for (k, v) in &graph.variables {
+                            if kvl_context.get_var(k).is_none() {
+                                kvl_context.set_var(k.clone(), v.initial_value.clone());
+                            }
+                        }
+                        kvl_graphs.insert(enemy.script_path.clone(), graph);
+                    }
+                }
+            }
+        }
+
         let coins = scene_data
             .coins
             .into_iter()
@@ -156,6 +231,25 @@ impl GameState {
             })
             .collect();
 
+        let enemies = scene_data
+            .enemies
+            .into_iter()
+            .map(|e| EnemyInstance {
+                id: e.id,
+                x: e.x,
+                y: e.y,
+                size: e.size,
+                patrol_min_y: e.patrol_min_y,
+                patrol_max_y: e.patrol_max_y,
+                speed: e.speed,
+                patrol_dir: 1.0,
+                vision_range: e.vision_range,
+                is_alerted: false,
+                alert_timer: 0.0,
+                script_path: e.script_path,
+            })
+            .collect();
+
         Ok(Self {
             scene_path: path.to_string(),
             scene_name: scene_data.name,
@@ -166,14 +260,16 @@ impl GameState {
             coins,
             doors,
             walls,
+            enemies,
             particles: Vec::new(),
             kvl_graphs,
             kvl_context,
-            status_message: "Prêt ! TAB: Mode Éditeur | M: Son | F1: Télémétrie | R: Reload".into(),
+            status_message: "Prêt ! TAB: Mode Éditeur | N: Radar | M: Son | F1: Télémétrie".into(),
             telemetry: Telemetry::new(),
             adaptation: AdaptationManager::new(),
             editor: EditorState::new(),
             audio: AudioEngine::new(),
+            show_minimap: true,
         })
     }
 
@@ -218,6 +314,17 @@ impl GameState {
                 y: w.y,
                 w: w.w,
                 h: w.h,
+            }).collect(),
+            enemies: self.enemies.iter().map(|e| crate::scene::EnemyEntity {
+                id: e.id.clone(),
+                x: e.x,
+                y: e.y,
+                size: e.size,
+                patrol_min_y: e.patrol_min_y,
+                patrol_max_y: e.patrol_max_y,
+                speed: e.speed,
+                vision_range: e.vision_range,
+                script_path: e.script_path.clone(),
             }).collect(),
         };
 
@@ -289,6 +396,17 @@ impl GameState {
             };
         }
 
+        // Bascule Radar Tactique / Minimap (Touche N)
+        if input.is_key_just_pressed(KeyCode::KeyN) {
+            self.show_minimap = !self.show_minimap;
+            self.audio.play(SoundType::RadarPing);
+            self.status_message = if self.show_minimap {
+                "Radar Tactique (Minimap) : ACTIVÉ".into()
+            } else {
+                "Radar Tactique (Minimap) : MASQUÉ".into()
+            };
+        }
+
         // Bascule Mode Jeu / Mode Édition (TAB)
         if input.is_key_just_pressed(KeyCode::Tab) {
             self.editor.toggle_mode();
@@ -338,6 +456,7 @@ impl GameState {
                 let selected_script_path = match self.editor.selected {
                     SelectedEntity::Coin(idx) if idx < self.coins.len() => Some(self.coins[idx].script_path.clone()),
                     SelectedEntity::Door(idx) if idx < self.doors.len() => Some(self.doors[idx].script_path.clone()),
+                    SelectedEntity::Enemy(idx) if idx < self.enemies.len() => Some(self.enemies[idx].script_path.clone()),
                     _ => None,
                 };
 
@@ -412,6 +531,20 @@ impl GameState {
                                             .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
                                             .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
                                         (n, "Alerte Refus")
+                                    }
+                                    "TriggerAlarm" => {
+                                        let id = format!("act_alarm_{}", count);
+                                        let n = Node::new(&id, "Déclencher Alerte", Category::World, "Active l'état d'alerte et la sirène", NodeKind::Action { action_type: "TriggerAlarm".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+                                        (n, "Déclencher Alerte")
+                                    }
+                                    "LockAllDoors" => {
+                                        let id = format!("act_lock_{}", count);
+                                        let n = Node::new(&id, "Verrouiller Portes", Category::World, "Verrouille d'urgence les portes du complexe", NodeKind::Action { action_type: "LockAllDoors".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+                                        (n, "Verrouiller Portes")
                                     }
                                     _ => return,
                                 };
@@ -580,6 +713,26 @@ impl GameState {
                     return;
                 }
 
+                // 7. Clic sur un Ennemi
+                let mut found_enemy = None;
+                for (idx, enemy) in self.enemies.iter().enumerate() {
+                    let half_e = enemy.size / 2.0;
+                    if mx >= enemy.x - half_e - 10.0 && mx <= enemy.x + half_e + 10.0
+                        && my >= enemy.y - half_e - 10.0 && my <= enemy.y + half_e + 10.0
+                    {
+                        found_enemy = Some(idx);
+                        break;
+                    }
+                }
+                if let Some(idx) = found_enemy {
+                    self.editor.selected = SelectedEntity::Enemy(idx);
+                    self.editor.is_dragging = true;
+                    self.editor.drag_offset_x = self.enemies[idx].x - mx;
+                    self.editor.drag_offset_y = self.enemies[idx].y - my;
+                    self.status_message = format!("Garde '{}' sélectionné. Blocs KVL d'IA affichés à droite.", self.enemies[idx].id);
+                    return;
+                }
+
                 // Clic dans la zone de jeu vide -> désélectionner
                 if mx < 720.0 && my >= 65.0 && my <= 620.0 {
                     self.editor.selected = SelectedEntity::None;
@@ -616,6 +769,12 @@ impl GameState {
                         if idx < self.walls.len() {
                             self.walls[idx].x = new_x;
                             self.walls[idx].y = new_y;
+                        }
+                    }
+                    SelectedEntity::Enemy(idx) => {
+                        if idx < self.enemies.len() {
+                            self.enemies[idx].x = new_x;
+                            self.enemies[idx].y = new_y;
                         }
                     }
                     SelectedEntity::None => {}
@@ -871,6 +1030,78 @@ impl GameState {
             }
         }
 
+        // ==========================================
+        // PATROUILLE ENNEMIE & IA KVL (RAYCASTING)
+        // ==========================================
+        for enemy in &mut self.enemies {
+            // 1. Déplacement de patrouille ping-pong sur l'axe Y
+            enemy.y += enemy.speed * enemy.patrol_dir * dt;
+            if enemy.y >= enemy.patrol_max_y {
+                enemy.y = enemy.patrol_max_y;
+                enemy.patrol_dir = -1.0;
+            } else if enemy.y <= enemy.patrol_min_y {
+                enemy.y = enemy.patrol_min_y;
+                enemy.patrol_dir = 1.0;
+            }
+
+            // 2. Détection par cône de vision et Raycasting Line of Sight
+            let dx = self.player_x - enemy.x;
+            let dy = self.player_y - enemy.y;
+            let dist_sq = dx * dx + dy * dy;
+            let range_sq = enemy.vision_range * enemy.vision_range;
+
+            // Le garde surveille vers la gauche (approche du joueur)
+            let in_cone = dist_sq < range_sq && dx < 25.0 && dy.abs() < (enemy.vision_range * 0.70);
+
+            if in_cone {
+                // Raycast pour vérifier si un mur ou une porte solide bloque la vue
+                let mut sight_blocked = false;
+                for obs in &solid_boxes {
+                    if segment_intersects_aabb(enemy.x, enemy.y, self.player_x, self.player_y, obs.x, obs.y, obs.w, obs.h) {
+                        sight_blocked = true;
+                        break;
+                    }
+                }
+
+                if !sight_blocked {
+                    if !enemy.is_alerted {
+                        enemy.is_alerted = true;
+                        self.audio.play(SoundType::Alarm);
+                        spawn_requests.push((enemy.x, enemy.y - 25.0, 30, 0x00EF4444));
+                        self.status_message = format!("ALERTE ROUGE ! Le garde '{}' vous a repéré !", enemy.id);
+
+                        if let Some(graph) = self.kvl_graphs.get(&enemy.script_path) {
+                            if let Ok(steps) = Interpreter::trigger_event(
+                                graph,
+                                &mut self.kvl_context,
+                                "OnPlayerSeen",
+                            ) {
+                                kvl_steps_this_frame += steps;
+                            }
+                        }
+                    }
+                    enemy.alert_timer = 2.5;
+                }
+            }
+
+            // Gestion de l'extinction de l'alerte
+            if enemy.is_alerted {
+                enemy.alert_timer -= dt;
+                if enemy.alert_timer <= 0.0 {
+                    enemy.is_alerted = false;
+                    self.kvl_context.set_var("alarm_active", Value::Bool(false));
+                    self.status_message = format!("Le garde '{}' a perdu votre trace. Alerte levée.", enemy.id);
+                }
+            }
+        }
+
+        // Si l'action LockAllDoors a été déclenchée par KVL, verrouiller les portes
+        if let Some(Value::Bool(open)) = self.kvl_context.get_var("door_is_open") {
+            for door in &mut self.doors {
+                door.is_open = *open;
+            }
+        }
+
         for (px, py, count, col) in spawn_requests {
             self.spawn_particles(px, py, count, col);
         }
@@ -1033,6 +1264,113 @@ impl GameState {
         }
         canvas.draw_text((self.player_x as i32) - 26, (self.player_y as i32) - half - 24, "JOUEUR", 0x0093C5FD, 2);
 
+        // Rendu des ennemis et de leurs cônes de vision
+        for (idx, enemy) in self.enemies.iter().enumerate() {
+            let ex = enemy.x as i32;
+            let ey = enemy.y as i32;
+            let es = enemy.size as i32;
+            let half_e = es / 2;
+
+            // 1. Cône de vision en éventail vers la gauche
+            let cone_len = enemy.vision_range;
+            let cone_col = if enemy.is_alerted { 0x00EF4444 } else { 0x0038BDF8 };
+            let steps = 7;
+            for s in 0..=steps {
+                let factor = (s as f32 / steps as f32) - 0.5;
+                let target_x = ex - cone_len as i32;
+                let target_y = ey + (factor * cone_len * 1.3) as i32;
+                canvas.draw_line(ex - half_e, ey, target_x, target_y, cone_col);
+            }
+
+            // 2. Corps de la sentinelle (violet tech si calme, rouge néon si alerté)
+            let body_col = if enemy.is_alerted { 0x00DC2626 } else { 0x007C3AED };
+            canvas.draw_rect(ex - half_e, ey - half_e, es as u32, es as u32, body_col);
+            canvas.draw_rect_outline(ex - half_e, ey - half_e, es as u32, es as u32, 0x00F8FAFC, 2);
+
+            // Visière robotique
+            let eye_col = if enemy.is_alerted { 0x00FBBF24 } else { 0x0006B6D4 };
+            canvas.draw_rect(ex - half_e + 4, ey - 5, 8, 10, eye_col);
+
+            // Badge d'alerte [!] au-dessus du garde
+            if enemy.is_alerted {
+                canvas.draw_text(ex - 12, ey - half_e - 26, "(!)", 0x00EF4444, 2);
+            }
+
+            // Sélection en mode édition
+            if is_edit_mode && self.editor.selected == SelectedEntity::Enemy(idx) {
+                canvas.draw_rect_outline(ex - half_e - 6, ey - half_e - 6, (es + 12) as u32, (es + 12) as u32, 0x00FBBF24, 3);
+                canvas.draw_line(ex, enemy.patrol_min_y as i32, ex, enemy.patrol_max_y as i32, 0x00FBBF24);
+                canvas.draw_text(ex + 12, ey - 20, &format!("GARDE: {}", enemy.id), 0x00FBBF24, 2);
+            }
+        }
+
+        // 4. Rendu du Radar Tactique 2D (Minimap)
+        if self.show_minimap {
+            let mm_w = 170;
+            let mm_h = 100;
+            let mm_x = if is_edit_mode { w - 460 - mm_w - 20 } else { w - mm_w - 30 };
+            let mm_y = 75;
+
+            // Fond radar bleu nuit tech avec bordure néon cyan
+            canvas.draw_rect(mm_x, mm_y, mm_w as u32, mm_h as u32, 0x0008101E);
+            canvas.draw_rect_outline(mm_x, mm_y, mm_w as u32, mm_h as u32, 0x000284C7, 2);
+
+            // Bandeau de titre radar
+            canvas.draw_rect(mm_x, mm_y, mm_w as u32, 16, 0x000369A1);
+            canvas.draw_text(mm_x + 6, mm_y + 3, "RADAR TACTIQUE (N)", 0x00E0F2FE, 1);
+
+            // Grille radar interne
+            canvas.draw_line(mm_x, mm_y + 55, mm_x + mm_w, mm_y + 55, 0x000E2A47);
+            canvas.draw_line(mm_x + (mm_w / 2), mm_y + 16, mm_x + (mm_w / 2), mm_y + mm_h, 0x000E2A47);
+
+            // Échelle de conversion : aire de jeu 1130 x 520
+            let scale_x = (mm_w - 14) as f32 / 1130.0;
+            let scale_y = (mm_h - 28) as f32 / 520.0;
+
+            let map_to_radar = |rx: f32, ry: f32| -> (i32, i32) {
+                let px = mm_x + 7 + ((rx - 30.0) * scale_x) as i32;
+                let py = mm_y + 22 + ((ry - 75.0) * scale_y) as i32;
+                (px, py)
+            };
+
+            // Murs sur le radar
+            for wall in &self.walls {
+                let (wx, wy) = map_to_radar(wall.x, wall.y);
+                let ww = ((wall.w * scale_x) as u32).max(2);
+                let wh = ((wall.h * scale_y) as u32).max(2);
+                canvas.draw_rect(wx, wy, ww, wh, 0x00475569);
+            }
+
+            // Portes sur le radar
+            for door in &self.doors {
+                let (dx, dy) = map_to_radar(door.x, door.y);
+                let col = if door.is_open { 0x0010B981 } else { 0x00EF4444 };
+                canvas.draw_rect(dx, dy, 4, 8, col);
+            }
+
+            // Pièces dorées
+            for coin in &self.coins {
+                if !coin.collected {
+                    let (cx, cy) = map_to_radar(coin.x, coin.y);
+                    canvas.draw_rect(cx - 1, cy - 1, 3, 3, 0x00FDE047);
+                }
+            }
+
+            // Ennemis
+            for enemy in &self.enemies {
+                let (ex, ey) = map_to_radar(enemy.x, enemy.y);
+                let ecol = if enemy.is_alerted { 0x00EF4444 } else { 0x00A855F7 };
+                canvas.draw_rect(ex - 2, ey - 2, 5, 5, ecol);
+                // Viseur de regard radar
+                canvas.draw_line(ex, ey, ex - 10, ey, ecol);
+            }
+
+            // Joueur (cyan avec halo blanc)
+            let (px, py) = map_to_radar(self.player_x, self.player_y);
+            canvas.draw_rect(px - 2, py - 2, 5, 5, 0x0038BDF8);
+            canvas.draw_rect_outline(px - 4, py - 4, 9, 9, 0x00FFFFFF, 1);
+        }
+
         // ========================================================
         // PANNEAU INSPECTEUR KVL (EN MODE ÉDITION) : Largeur 450px
         // ========================================================
@@ -1105,6 +1443,14 @@ impl GameState {
                     canvas.draw_text(insp_x + 18, insp_y + 255, "- Bloque passage joueur", 0x0034D399, 2);
                     canvas.draw_text(insp_x + 18, insp_y + 295, "(Deplacement libre souris)", 0x0094A3B8, 2);
                 }
+                SelectedEntity::Enemy(idx) => {
+                    let enemy = &self.enemies[idx];
+                    let script_path = enemy.script_path.clone();
+                    let ent_title = format!("ENTITE : GARDE ({})", enemy.id);
+                    let pos_str = format!("Pos: X:{:.0} Y:{:.0} (Patrouille Y: {:.0}-{:.0})", enemy.x, enemy.y, enemy.patrol_min_y, enemy.patrol_max_y);
+
+                    self.render_entity_inspector(canvas, insp_x, insp_y, insp_w, &ent_title, 0x00DC2626, &pos_str, &script_path);
+                }
             }
         }
 
@@ -1116,7 +1462,7 @@ impl GameState {
         let info_line = if is_edit_mode {
             "MODE EDITION : Clic (Deplacer) | M (Son) | ESPACE (Deplier KVL) | TAB (Reprendre)"
         } else {
-            "MODE JEU : TAB (Editeur KVL) | M (Son On/Off) | F1 (Telemetrie) | F2 (Profil) | F3 (Auto) | R (Reload)"
+            "MODE JEU : TAB (Editeur KVL) | N (Radar) | M (Son) | F1 (Telemetrie) | F2 (Profil) | F3 (Auto) | R (Reload)"
         };
         canvas.draw_text(20, bottom_y + 14, info_line, 0x0094A3B8, 2);
         canvas.draw_text(20, bottom_y + 40, &self.status_message, 0x0038BDF8, 2);
@@ -1443,7 +1789,7 @@ impl GameState {
             let pal_x = insp_x + 12;
             let pal_y = insp_y + 80;
             let pal_w = btn_w + 12;
-            let pal_h = 320;
+            let pal_h = 410;
 
             // Fond sombre avec bordure violette néon
             canvas.draw_rect(pal_x, pal_y, pal_w, pal_h, 0x000B0F19);
@@ -1459,6 +1805,8 @@ impl GameState {
                 ("SpawnSparkles", "+ Pluie d'Etincelles Dorees", 0x00EC4899),
                 ("ConditionScore50", "? Condition: Si Score >= 50", 0x00F97316),
                 ("DenyAccess", "! Action: Alerte Refus", 0x00EF4444),
+                ("TriggerAlarm", "! Action: Declencher Alerte", 0x00DC2626),
+                ("LockAllDoors", "# Action: Verrouiller Portes", 0x009333EA),
                 ("cancel", "[ Fermer la palette ]", 0x0064748B),
             ];
 
@@ -1716,5 +2064,80 @@ mod tests {
         state.audio.play(SoundType::Sparkles);
         state.audio.play(SoundType::UiClick);
         state.audio.play(SoundType::WireCut);
+        state.audio.play(SoundType::Alarm);
+        state.audio.play(SoundType::RadarPing);
+    }
+
+    #[test]
+    fn test_enemy_patrol_and_vision_raycast_alert() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        assert!(!state.enemies.is_empty(), "Au moins un garde patrouilleur doit exister");
+        let initial_y = state.enemies[0].y;
+
+        let input = InputState::new();
+
+        // 1. Positionner le joueur loin hors de portée de vision
+        state.player_x = 100.0;
+        state.player_y = 100.0;
+
+        state.update(0.1, &input);
+
+        // Le garde doit s'être déplacé (patrouille active)
+        assert_ne!(state.enemies[0].y, initial_y, "Le garde doit patrouiller sur l'axe Y");
+        assert!(!state.enemies[0].is_alerted, "Le garde ne doit pas être alerté si le joueur est hors de portée");
+
+        // 2. Positionner le joueur directement dans le cône de vision dégagé du garde
+        // Le garde est en X ~760, regarde vers la gauche (X décroissant)
+        state.player_x = state.enemies[0].x - 80.0;
+        state.player_y = state.enemies[0].y;
+
+        state.update(0.016, &input);
+
+        // Le garde doit repérer le joueur et déclencher l'alarme
+        assert!(state.enemies[0].is_alerted, "Le garde doit repérer le joueur dans son cône de vision");
+        assert!(state.status_message.contains("ALERTE"), "Un message d'alerte doit être émis");
+
+        // Vérifier l'effet KVL de l'alerte
+        let alarm = state.kvl_context.get_var("alarm_active");
+        assert_eq!(alarm, Some(&Value::Bool(true)), "L'alarme KVL doit être active");
+
+        // 3. Test d'occultation par un mur solide
+        // Positionner un mur entre le joueur et le garde
+        state.enemies[0].is_alerted = false;
+        state.enemies[0].alert_timer = 0.0;
+        state.walls.push(WallInstance {
+            id: "test_shield_wall".into(),
+            x: state.enemies[0].x - 40.0,
+            y: state.enemies[0].y - 50.0,
+            w: 20.0,
+            h: 100.0,
+        });
+
+        state.update(0.016, &input);
+
+        // Le mur doit occulter la ligne de mire (Raycast bloqué)
+        assert!(!state.enemies[0].is_alerted, "Le mur solide doit masquer le joueur (occultation Raycast)");
+    }
+
+    #[test]
+    fn test_minimap_radar_toggle() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        assert!(state.show_minimap, "Le radar tactique doit être affiché par défaut");
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyN);
+        state.update(0.016, &input);
+
+        assert!(!state.show_minimap, "La touche N doit masquer le radar tactique");
+
+        input.on_key_up(KeyCode::KeyN);
+        input.on_key_down(KeyCode::KeyN);
+        state.update(0.016, &input);
+
+        assert!(state.show_minimap, "Un second appui sur N doit réactiver le radar");
     }
 }

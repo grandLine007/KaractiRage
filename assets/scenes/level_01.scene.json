@@ -76,5 +76,18 @@
       "w": 36.0,
       "h": 240.0
     }
+  ],
+  "enemies": [
+    {
+      "id": "guard_sentinel_1",
+      "x": 760.0,
+      "y": 200.0,
+      "size": 40.0,
+      "patrol_min_y": 120.0,
+      "patrol_max_y": 500.0,
+      "speed": 120.0,
+      "vision_range": 220.0,
+      "script_path": "assets/scripts/guard_alert.kvl.json"
+    }
   ]
 }

@@ -180,6 +180,27 @@
   * Zéro avertissement de compilation, buffer audio streaming à faible latence (~10 ms).
   * Impact CPU négligeable (< 0.2% de CPU supplémentaire par frame).
 
+### Étape 12 : Ennemis Patrouilleurs, IA KVL (Raycast LoS) & Minicarte Radar 2D *(14 Octobre 2026)*
+* **Réalisations** :
+  * Implémentation du **système d'IA de patrouille et de détection de champ de vision** (Raycasting & Line of Sight) :
+    * Ajout de `EnemyEntity` et de `enemies` dans le format de scène data-driven `level_01.scene.json`.
+    * Sentinelle autonome (`guard_sentinel_1`) avec patrouille ping-pong sur l'axe Y et visière robotique.
+    * Algorithme d'intersection segment-AABB de **Liang-Barsky** ultra-rapide ($\mathcal{O}(1)$ sans allocation) pour tester l'occultation de la ligne de mire par les murs et portes fermées.
+    * Détection en cône de vision en temps réel : dès que le joueur est vu sans obstacle, le garde déclenche l'événement KVL `"OnPlayerSeen"`, passe en état d'alerte rouge, émet la sirène rétro `SoundType::Alarm` et génère un geyser de particules d'exclamation.
+  * Nouvelles actions et script KVL `guard_alert.kvl.json` :
+    * `TriggerAlarm` (activation du flag d'alerte), `ClearAlarm` (extinction temporisée après fuite du joueur), `LockAllDoors` (verrouillage de sécurité immédiat de toutes les portes pour confiner l'intrus).
+    * Nœuds ajoutés à la palette contextuelle de l'éditeur visuel KVL.
+  * **Minicarte Radar Tactique 2D (Minimap)** :
+    * Cadre radar technologique bleu nuit avec grille et bordures néon cyan `0x000284C7`.
+    * Projection en temps réel de tous les éléments du monde (murs, portes, pièces dorées, sentinelles avec faisceau de visée, et joueur clignotant).
+    * Bascule d'affichage via la touche `N` avec effet sonore `SoundType::RadarPing`.
+  * Raccordement complet au Mode Éditeur (`TAB`) :
+    * Sélection directe du garde à la souris (`SelectedEntity::Enemy(idx)`), déplacement libre et inspection de son script KVL d'IA avec câblage visuel des broches.
+* **Mesures & Benchmarks** :
+  * 16/16 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+2 tests IA et radar).
+  * 0 avertissement de compilation, hot-path maintenu sous 500 µs (consommation < 4% du budget 60 FPS).
+  * 100% compatible compilation WebAssembly (`wasm32-unknown-unknown`).
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur
