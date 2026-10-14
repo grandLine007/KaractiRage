@@ -1,0 +1,70 @@
+# KARACTIRAGE — FICHIER DIRECTEUR DU PROJET
+
+> **Rôle de ce document** : Ce fichier est le document vivant et collaboratif qui pilote le développement de KaractiRage. Il consigne l'état du projet, les étapes franchies, les observations de l'utilisateur (vos souhaits, ajustements et retours) et les observations techniques de l'agent. Il sert de boussole permanente.
+
+---
+
+## 1. Vision et Principes Fondateurs
+* **Objectif** : Concevoir un moteur et environnement de création de jeux accessible aux PC modestes (*low-end first*), modulaire, déterministe et assisté par des agents IA outillés.
+* **Philosophie clé** : Le runtime de jeu est 100% autonome et déterministe (aucune IA ni connexion obligatoire pour jouer).
+* **Langage du cœur** : **Rust** (sécurité mémoire, modularité Cargo, fiabilité pour le dev multi-agents).
+* **Système logique** : **KVL (KaractiRage Visual Logic)** — continuum en 3 niveaux (Guidé $\rightarrow$ Visuel $\rightarrow$ Expert) sur un modèle unique de données.
+
+---
+
+## 2. Cartographie de l'Architecture (Crates actives)
+
+| Crate | Responsabilité | Statut |
+| :--- | :--- | :--- |
+| `crates/kvl-core` | Modèle de données universel (graphe, nœuds, pins, variables), sérialisation JSON/RON, validateur statique d'intégrité. | ✅ Opérationnel (v0.1.0) |
+| `crates/kvl-runtime` | Interpréteur d'exécution séquentiel, traçabilité des pas, gestion du contexte mémoire et protection anti-boucles infinies. | ✅ Opérationnel (v0.1.0) |
+| `crates/kvl-cli` | CLI de test, validation et benchmark autonome des mécaniques KVL. | ✅ Opérationnel (v0.1.0) |
+| `crates/engine-core` | Fenêtrage natif (`winit`), renderer de compatibilité 2D (`softbuffer`), boucle de jeu 60 FPS et interconnexion KVL. | ✅ Opérationnel (v0.1.0) |
+
+---
+
+## 3. Journal des Étapes et Réalisations
+
+### Étape 1 : Initialisation & Prototype KVL Core *(14 Octobre 2026)*
+* **Réalisations** :
+  * Création du dépôt Git local avec branche `main`.
+  * Configuration du Workspace Cargo modulaire (`kvl-core`, `kvl-runtime`, `kvl-cli`).
+  * Implémentation du modèle KVL : `Graph`, `Node` (catégories d'intention, blocs composés), `Pin`, `Connection`, `Value`.
+  * Validateur statique détectant les incohérences de types, connexions orphelines et inversions de pins.
+  * Interpréteur d'exécution testé sur la mécanique de ramassage d'une pièce.
+* **Mesures & Benchmarks** :
+  * Temps de résolution de l'événement et exécution des 3 nœuds : **13.5 microsecondes**.
+  * Consommation mémoire : négligeable, allocations contrôlées, zéro fuite.
+  * 100% des tests unitaires validés.
+
+### Étape 2 : Moteur de rendu 2D et Fenêtrage natif *(14 Octobre 2026)*
+* **Réalisations** :
+  * Ajout de la crate `engine-core` basée sur `winit` 0.29 et `softbuffer` 0.4.
+  * Implémentation du renderer 2D logiciel (Canvas pixel, formes géométriques, texte bitmap sans police externe).
+  * Création de la scène de jeu interactive : joueur contrôlable (flèches / ZQSD), pièces à collecter, porte interactive.
+  * Interconnexion directe avec le runtime KVL : chaque collision ou interaction déclenche un événement KVL qui met à jour les variables et génère un log de traçabilité en bas d'écran.
+* **Mesures & Benchmarks** :
+  * Temps de compilation complet : 3.8s.
+  * Consommation RAM estimée : ~15 Mo.
+  * Zéro avertissement de compilation, tests workspace au vert.
+
+---
+
+## 4. Observations & Directives de l'Utilisateur
+*RAS pour l'instant*
+
+* **Priorité actuelle** : Développer le système graphique et le fenêtrage (Option 2) avant le mode guidé et l'éditeur complet.
+* **Méthodologie demandée** :
+  * Rédiger systématiquement un rapport d'intervention à chaque étape (stocké dans `rapports/`, ignoré par Git).
+  * Maintenir à jour ce fichier directeur (`PROJET_DIRECTEUR.md`) avec les faits et les observations partagées.
+
+---
+
+## 5. Observations & Recommandations Techniques (Agent)
+
+* **Performance & Low-End** :
+  * Pour le fenêtrage et le rendu initial, le couple `winit` + `wgpu` (avec fallback d'API graphique) ou un framebuffer logiciel type `softbuffer` permet de garantir que le moteur s'ouvre même sur un PC modeste sans GPU dédié moderne.
+  * *Recommandation* : Prévoir un mode de rendu "Software/Compatibilité" dès maintenant pour valider le principe *Low-end first* énoncé dans l'étude technique.
+* **Intégration KVL $\leftrightarrow$ Moteur** :
+  * La boucle de jeu doit convertir les entrées utilisateur (`KeyDown`, `MouseButton`, `Collision`) en triggers d'événements KVL (`trigger_event`).
+  * Cela démontrera le premier jeu interactif jouable piloté par la logique visuelle.

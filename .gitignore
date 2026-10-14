@@ -16,8 +16,9 @@
 .LSOverride
 ._*
 
-# Logs / Temp
+# Logs / Temp / Rapports locaux
 *.log
+rapports/
 
 
 *.docx
