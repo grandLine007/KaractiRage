@@ -68,6 +68,19 @@
   * Temps de frame CPU moyen : **< 400 microsecondes** (consomme moins de 3% du budget de 16.6ms pour 60 FPS).
   * Tests workspace 100% au vert, zéro warning.
 
+### Étape 5 : Mode Éditeur Interactif & Dépliage Progressif KVL *(14 Octobre 2026)*
+* **Réalisations** :
+  * Création du module `editor` : bascule instantanée entre **Mode Jeu** et **Mode Édition** avec la touche **`TAB`**.
+  * **Sélection et déplacement à la souris (Mouse picking)** : clic sur n'importe quel objet (joueur, pièce, porte), halo de sélection jaune et glisser-déposer pour réorganiser la scène.
+  * **Inspecteur d'entité & Visualiseur KVL** (Phase 10 de la roadmap) :
+    * **Vue Simplifiée** : Affichage linéaire de macro-blocs stylisés (*« Contact $\rightarrow$ Score +10 $\rightarrow$ Disparaître »*).
+    * **Vue Détaillée (Dépliage progressif)** : Touche **`ESPACE`** pour déplier la vue technique complète (nœuds individuels, pins Trigger In/Out et connexions).
+  * Suspension déterministe du gameplay en mode édition pour éditer sereinement, puis reprise immédiate avec **`TAB`**.
+* **Mesures & Benchmarks** :
+  * Temps de compilation : 0.82s.
+  * Empreinte mémoire stable : ~15 Mo de RAM.
+  * Zéro régression, 100% des tests unitaires validés.
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

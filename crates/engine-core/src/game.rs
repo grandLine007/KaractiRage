@@ -1,4 +1,5 @@
 use crate::adaptation::AdaptationManager;
+use crate::editor::{EditorMode, EditorState, SelectedEntity};
 use crate::input::InputState;
 use crate::renderer::Canvas;
 use crate::scene::SceneData;
@@ -52,6 +53,7 @@ pub struct GameState {
     pub status_message: String,
     pub telemetry: Telemetry,
     pub adaptation: AdaptationManager,
+    pub editor: EditorState,
 }
 
 impl GameState {
@@ -133,9 +135,10 @@ impl GameState {
             particles: Vec::new(),
             kvl_graphs,
             kvl_context,
-            status_message: "Scène JSON chargée. F1: Télémétrie | F2: Profil Qualité | F3: Auto-Adapt | R: Reload".into(),
+            status_message: "Prêt ! TAB: Mode Éditeur | F1: Télémétrie | R: Reload".into(),
             telemetry: Telemetry::new(),
             adaptation: AdaptationManager::new(),
+            editor: EditorState::new(),
         })
     }
 
@@ -170,20 +173,145 @@ impl GameState {
         let frame_start = std::time::Instant::now();
         let mut kvl_steps_this_frame = 0;
 
-        // Contrôles de diagnostic
+        // Bascule Mode Jeu / Mode Édition (TAB)
+        if input.is_key_just_pressed(KeyCode::Tab) {
+            self.editor.toggle_mode();
+            self.status_message = match self.editor.mode {
+                EditorMode::Play => "Mode Jeu actif ! (ZQSD/Flèches pour jouer | TAB pour éditer)".into(),
+                EditorMode::Edit => "Mode Édition actif ! Cliquez sur un objet pour inspecter ses blocs KVL.".into(),
+            };
+            return;
+        }
+
+        // ==========================================
+        // GESTION DU MODE ÉDITION
+        // ==========================================
+        if self.editor.mode == EditorMode::Edit {
+            if input.is_key_just_pressed(KeyCode::Space) {
+                self.editor.toggle_view_detail();
+                self.status_message = if self.editor.is_detailed_view {
+                    "Inspecteur KVL : Vue détaillée technique dépliée".into()
+                } else {
+                    "Inspecteur KVL : Vue simplifiée (macro-blocs)".into()
+                };
+            }
+
+            // Sélection à la souris
+            if input.mouse_just_clicked {
+                let mx = input.mouse_x;
+                let my = input.mouse_y;
+
+                // 1. Bouton toggle vue détaillée
+                if mx >= 510.0 && mx <= 770.0 && my >= 280.0 && my <= 305.0 {
+                    self.editor.toggle_view_detail();
+                    return;
+                }
+
+                // 2. Clic sur le Joueur
+                let half = self.player_size / 2.0;
+                if mx >= self.player_x - half && mx <= self.player_x + half
+                    && my >= self.player_y - half && my <= self.player_y + half
+                {
+                    self.editor.selected = SelectedEntity::Player;
+                    self.editor.is_dragging = true;
+                    self.editor.drag_offset_x = self.player_x - mx;
+                    self.editor.drag_offset_y = self.player_y - my;
+                    self.status_message = "Joueur sélectionné. Déplacez-le à la souris.".into();
+                    return;
+                }
+
+                // 3. Clic sur une Pièce
+                let mut found_coin = None;
+                for (idx, coin) in self.coins.iter().enumerate() {
+                    let dx = mx - coin.x;
+                    let dy = my - coin.y;
+                    if (dx * dx + dy * dy).sqrt() <= (coin.radius + 8.0) {
+                        found_coin = Some(idx);
+                        break;
+                    }
+                }
+                if let Some(idx) = found_coin {
+                    self.editor.selected = SelectedEntity::Coin(idx);
+                    self.editor.is_dragging = true;
+                    self.editor.drag_offset_x = self.coins[idx].x - mx;
+                    self.editor.drag_offset_y = self.coins[idx].y - my;
+                    self.status_message = format!("Pièce '{}' sélectionnée. Blocs KVL affichés à droite.", self.coins[idx].id);
+                    return;
+                }
+
+                // 4. Clic sur une Porte
+                let mut found_door = None;
+                for (idx, door) in self.doors.iter().enumerate() {
+                    if mx >= door.x && mx <= door.x + door.w && my >= door.y && my <= door.y + door.h {
+                        found_door = Some(idx);
+                        break;
+                    }
+                }
+                if let Some(idx) = found_door {
+                    self.editor.selected = SelectedEntity::Door(idx);
+                    self.editor.is_dragging = true;
+                    self.editor.drag_offset_x = self.doors[idx].x - mx;
+                    self.editor.drag_offset_y = self.doors[idx].y - my;
+                    self.status_message = format!("Porte '{}' sélectionnée. Blocs KVL affichés à droite.", self.doors[idx].id);
+                    return;
+                }
+
+                // Clic dans la zone de jeu vide -> désélectionner
+                if mx < 500.0 && my >= 55.0 && my <= 435.0 {
+                    self.editor.selected = SelectedEntity::None;
+                }
+            }
+
+            if input.mouse_just_released {
+                self.editor.is_dragging = false;
+            }
+
+            // Déplacement de l'objet sélectionné à la souris
+            if self.editor.is_dragging && input.mouse_pressed {
+                let new_x = (input.mouse_x + self.editor.drag_offset_x).clamp(30.0, 480.0);
+                let new_y = (input.mouse_y + self.editor.drag_offset_y).clamp(70.0, 410.0);
+
+                match self.editor.selected {
+                    SelectedEntity::Player => {
+                        self.player_x = new_x;
+                        self.player_y = new_y;
+                    }
+                    SelectedEntity::Coin(idx) => {
+                        if idx < self.coins.len() {
+                            self.coins[idx].x = new_x;
+                            self.coins[idx].y = new_y;
+                        }
+                    }
+                    SelectedEntity::Door(idx) => {
+                        if idx < self.doors.len() {
+                            self.doors[idx].x = new_x;
+                            self.doors[idx].y = new_y;
+                        }
+                    }
+                    SelectedEntity::None => {}
+                }
+            }
+
+            // En mode édition, le gameplay est suspendu pour éditer tranquillement
+            return;
+        }
+
+        // ==========================================
+        // GESTION DU MODE JEU
+        // ==========================================
         if input.is_key_just_pressed(KeyCode::F1) {
             self.telemetry.toggle_overlay();
         }
         if input.is_key_just_pressed(KeyCode::F2) {
             self.adaptation.cycle_profile_manual();
-            self.status_message = format!("Profil forcé manuellement : {}", self.adaptation.current_profile.name());
+            self.status_message = format!("Profil forcé : {}", self.adaptation.current_profile.name());
         }
         if input.is_key_just_pressed(KeyCode::F3) {
             self.adaptation.toggle_auto_mode();
             self.status_message = if self.adaptation.auto_adapt {
-                "Adaptation dynamique automatique : ACTIVEE".into()
+                "Adaptation dynamique : ACTIVEE".into()
             } else {
-                "Adaptation dynamique automatique : DESACTIVEE (Manuel)".into()
+                "Adaptation dynamique : MANUELLE".into()
             };
         }
         if input.is_key_just_pressed(KeyCode::KeyR) {
@@ -220,7 +348,7 @@ impl GameState {
         self.player_x = self.player_x.clamp(20.0, 780.0);
         self.player_y = self.player_y.clamp(60.0, 420.0);
 
-        // Mise à jour des particules
+        // Particules
         for p in &mut self.particles {
             p.x += p.vx * dt;
             p.y += p.vy * dt;
@@ -230,7 +358,7 @@ impl GameState {
 
         let mut spawn_requests = Vec::new();
 
-        // 1. Détection des collisions avec les pièces -> Déclencheur KVL
+        // Collision pièces
         for coin in &mut self.coins {
             if !coin.collected {
                 let dx = self.player_x - coin.x;
@@ -250,7 +378,6 @@ impl GameState {
                         }
                     }
 
-                    // Enregistrement des particules à émettre
                     spawn_requests.push((coin.x, coin.y, 20, 0x00FDE047));
 
                     let score = match self.kvl_context.get_var("score") {
@@ -262,7 +389,7 @@ impl GameState {
             }
         }
 
-        // 2. Interaction avec la porte (touche E ou Espace)
+        // Interaction porte
         for door in &mut self.doors {
             let dx_door = self.player_x - (door.x + door.w / 2.0);
             let dy_door = self.player_y - (door.y + door.h / 2.0);
@@ -284,23 +411,20 @@ impl GameState {
                 spawn_requests.push((door.x + door.w / 2.0, door.y + door.h / 2.0, 15, p_col));
 
                 self.status_message = if door.is_open {
-                    format!("Porte ({}) déverrouillée et ouverte !", door.id)
+                    format!("Porte ({}) ouverte !", door.id)
                 } else {
                     format!("Porte ({}) fermée.", door.id)
                 };
             }
         }
 
-        // Émission des particules après la fin des emprunts sur coins et doors
         for (px, py, count, col) in spawn_requests {
             self.spawn_particles(px, py, count, col);
         }
 
-        // Mesure de télémétrie de la frame
         let frame_duration_us = frame_start.elapsed().as_micros() as u64;
         self.telemetry.record_frame(frame_duration_us, kvl_steps_this_frame);
 
-        // Boucle d'adaptation matérielle dynamique par hystérésis
         if let Some(msg) = self.adaptation.evaluate_adaptation(frame_duration_us) {
             self.status_message = msg.into();
         }
@@ -309,54 +433,80 @@ impl GameState {
     pub fn render(&self, canvas: &mut Canvas) {
         canvas.clear(0x00141923);
 
+        let is_edit_mode = self.editor.mode == EditorMode::Edit;
+
         // Bandeau supérieur (HUD)
-        canvas.draw_rect(0, 0, canvas.width as u32, 45, 0x001E2638);
-        canvas.draw_rect(0, 44, canvas.width as u32, 2, 0x003B82F6);
+        let header_bg = if is_edit_mode { 0x004C1D95 } else { 0x001E2638 };
+        let header_border = if is_edit_mode { 0x00A855F7 } else { 0x003B82F6 };
+        canvas.draw_rect(0, 0, canvas.width as u32, 45, header_bg);
+        canvas.draw_rect(0, 44, canvas.width as u32, 2, header_border);
 
-        let score = match self.kvl_context.get_var("score") {
-            Some(Value::Int(s)) => *s,
-            _ => 0,
-        };
+        if is_edit_mode {
+            canvas.draw_text(15, 12, "KARACTIRAGE [MODE EDITION ACTIF - APPUYEZ SUR TAB POUR JOUER]", 0x00F8FAFC, 2);
+        } else {
+            let header_title = format!("KARACTIRAGE 2D - {}", self.scene_name.to_uppercase());
+            canvas.draw_text(15, 12, &header_title, 0x00FFFFFF, 2);
 
-        let header_title = format!("KARACTIRAGE 2D - {}", self.scene_name.to_uppercase());
-        canvas.draw_text(15, 12, &header_title, 0x00FFFFFF, 2);
+            let profile_color = self.adaptation.current_profile.color();
+            let profile_txt = format!("[{}]", self.adaptation.current_profile.name());
+            canvas.draw_text((canvas.width as i32) - 490, 14, &profile_txt, profile_color, 1);
 
-        // Profil Badge
-        let profile_color = self.adaptation.current_profile.color();
-        let profile_name = self.adaptation.current_profile.name();
-        let profile_txt = format!("[{}]", profile_name);
-        canvas.draw_text((canvas.width as i32) - 490, 14, &profile_txt, profile_color, 1);
-
-        // Score
-        let score_txt = format!("SCORE KVL: {}", score);
-        canvas.draw_text((canvas.width as i32) - 180, 12, &score_txt, 0x00FBBF24, 2);
+            let score = match self.kvl_context.get_var("score") {
+                Some(Value::Int(s)) => *s,
+                _ => 0,
+            };
+            let score_txt = format!("SCORE KVL: {}", score);
+            canvas.draw_text((canvas.width as i32) - 180, 12, &score_txt, 0x00FBBF24, 2);
+        }
 
         // Aire de jeu (Cadre)
-        canvas.draw_rect_outline(15, 55, (canvas.width as u32) - 30, 380, 0x002B364F, 2);
+        let play_area_w = if is_edit_mode { 485 } else { (canvas.width as u32) - 30 };
+        canvas.draw_rect_outline(15, 55, play_area_w, 380, if is_edit_mode { 0x006D28D9 } else { 0x002B364F }, 2);
+
+        // Grille d'édition en mode édition
+        if is_edit_mode {
+            for gx in (25..500).step_by(30) {
+                for gy in (65..430).step_by(30) {
+                    canvas.set_pixel(gx, gy, 0x00334155);
+                }
+            }
+        }
 
         // Rendu des portes
-        for door in &self.doors {
+        for (idx, door) in self.doors.iter().enumerate() {
             let door_color = if door.is_open { 0x0010B981 } else { 0x00EF4444 };
-            canvas.draw_rect(
-                door.x as i32,
-                door.y as i32,
-                door.w as u32,
-                door.h as u32,
-                door_color,
-            );
+            canvas.draw_rect(door.x as i32, door.y as i32, door.w as u32, door.h as u32, door_color);
+
+            // Halo de sélection
+            if is_edit_mode && self.editor.selected == SelectedEntity::Door(idx) {
+                canvas.draw_rect_outline(door.x as i32 - 4, door.y as i32 - 4, door.w as u32 + 8, door.h as u32 + 8, 0x00FBBF24, 2);
+            }
+
             let door_label = if door.is_open { "OUVERTE" } else { "PORTE" };
             canvas.draw_text(door.x as i32 - 10, door.y as i32 - 18, door_label, door_color, 1);
         }
 
         // Rendu des pièces dorées
-        for coin in &self.coins {
-            if !coin.collected {
+        for (idx, coin) in self.coins.iter().enumerate() {
+            if !coin.collected || is_edit_mode {
                 canvas.draw_circle(coin.x as i32, coin.y as i32, coin.radius as i32, 0x00F59E0B);
                 canvas.draw_circle(coin.x as i32, coin.y as i32, (coin.radius * 0.6) as i32, 0x00FDE047);
+
+                // Halo de sélection
+                if is_edit_mode && self.editor.selected == SelectedEntity::Coin(idx) {
+                    canvas.draw_rect_outline(
+                        coin.x as i32 - coin.radius as i32 - 4,
+                        coin.y as i32 - coin.radius as i32 - 4,
+                        (coin.radius as u32 + 4) * 2,
+                        (coin.radius as u32 + 4) * 2,
+                        0x00FBBF24,
+                        2,
+                    );
+                }
             }
         }
 
-        // Rendu des particules
+        // Particules
         for p in &self.particles {
             canvas.draw_rect(p.x as i32, p.y as i32, 2, 2, p.color);
         }
@@ -378,20 +528,166 @@ impl GameState {
             0x0093C5FD,
             2,
         );
-        canvas.draw_text(
-            (self.player_x as i32) - 18,
-            (self.player_y as i32) - half - 15,
-            "JOUEUR",
-            0x0093C5FD,
-            1,
-        );
+        if is_edit_mode && self.editor.selected == SelectedEntity::Player {
+            canvas.draw_rect_outline(
+                (self.player_x as i32) - half - 4,
+                (self.player_y as i32) - half - 4,
+                self.player_size as u32 + 8,
+                self.player_size as u32 + 8,
+                0x00FBBF24,
+                2,
+            );
+        }
+        canvas.draw_text((self.player_x as i32) - 18, (self.player_y as i32) - half - 15, "JOUEUR", 0x0093C5FD, 1);
+
+        // ========================================================
+        // PANNEAU INSPECTEUR KVL (EN MODE ÉDITION)
+        // ========================================================
+        if is_edit_mode {
+            let insp_x = 510;
+            let insp_y = 55;
+            let insp_w = 275;
+            let insp_h = 380;
+
+            canvas.draw_rect(insp_x, insp_y, insp_w, insp_h, 0x000F172A);
+            canvas.draw_rect_outline(insp_x, insp_y, insp_w, insp_h, 0x0038BDF8, 2);
+
+            canvas.draw_text(insp_x + 12, insp_y + 12, "INSPECTEUR D'OBJET & KVL", 0x0038BDF8, 1);
+            canvas.draw_rect(insp_x + 12, insp_y + 26, insp_w - 24, 1, 0x00334155);
+
+            match self.editor.selected {
+                SelectedEntity::None => {
+                    canvas.draw_text(insp_x + 12, insp_y + 45, "AUCUN OBJET SELECTIONNE.", 0x0094A3B8, 1);
+                    canvas.draw_text(insp_x + 12, insp_y + 65, "Cliquez sur une piece,", 0x0064748B, 1);
+                    canvas.draw_text(insp_x + 12, insp_y + 80, "la porte ou le joueur pour", 0x0064748B, 1);
+                    canvas.draw_text(insp_x + 12, insp_y + 95, "afficher et deplier sa logique.", 0x0064748B, 1);
+                }
+                SelectedEntity::Player => {
+                    canvas.draw_text(insp_x + 12, insp_y + 40, "ENTITE : JOUEUR", 0x0038BDF8, 1);
+                    let pos_str = format!("Position : X:{:.0}  Y:{:.0}", self.player_x, self.player_y);
+                    canvas.draw_text(insp_x + 12, insp_y + 60, &pos_str, 0x00F8FAFC, 1);
+                    canvas.draw_text(insp_x + 12, insp_y + 80, "Vitesse  : 220 px/sec", 0x0094A3B8, 1);
+                    canvas.draw_text(insp_x + 12, insp_y + 100, "Controle : Clavier ZQSD / Fleches", 0x0094A3B8, 1);
+
+                    canvas.draw_rect(insp_x + 12, insp_y + 130, insp_w - 24, 1, 0x00334155);
+                    canvas.draw_text(insp_x + 12, insp_y + 145, "LOGIQUE KVL ASSOCIEE :", 0x00FBBF24, 1);
+                    canvas.draw_text(insp_x + 12, insp_y + 165, "- Emetteur d'evenements", 0x00A7F3D0, 1);
+                    canvas.draw_text(insp_x + 12, insp_y + 185, "- Declenche 'OnPlayerOverlap'", 0x00A7F3D0, 1);
+                    canvas.draw_text(insp_x + 12, insp_y + 205, "- Declenche 'OnDoorInteract'", 0x00A7F3D0, 1);
+                }
+                SelectedEntity::Coin(idx) => {
+                    let coin = &self.coins[idx];
+                    canvas.draw_text(insp_x + 12, insp_y + 35, &format!("ENTITE : PIECE ({})", coin.id), 0x00FBBF24, 1);
+                    let pos_str = format!("Pos : X:{:.0}  Y:{:.0}", coin.x, coin.y);
+                    canvas.draw_text(insp_x + 12, insp_y + 52, &pos_str, 0x00F8FAFC, 1);
+
+                    // Bouton bascule de vue
+                    let view_btn_bg = if self.editor.is_detailed_view { 0x00047857 } else { 0x001D4ED8 };
+                    canvas.draw_rect(insp_x + 12, insp_y + 72, insp_w - 24, 22, view_btn_bg);
+                    let view_btn_txt = if self.editor.is_detailed_view { "[ VUE DETAILLEE (ESPACE) ]" } else { "[ VUE SIMPLIFIEE (ESPACE) ]" };
+                    canvas.draw_text(insp_x + 20, insp_y + 78, view_btn_txt, 0x00FFFFFF, 1);
+
+                    // Visualisation KVL
+                    if !self.editor.is_detailed_view {
+                        // VUE SIMPLIFIÉE (Macro-blocs ergonomiques KaractiRage)
+                        canvas.draw_text(insp_x + 12, insp_y + 110, "CHAINE LOGIQUE VISUELLE :", 0x0038BDF8, 1);
+
+                        // Bloc 1
+                        canvas.draw_rect(insp_x + 12, insp_y + 130, insp_w - 24, 30, 0x001E293B);
+                        canvas.draw_rect_outline(insp_x + 12, insp_y + 130, insp_w - 24, 30, 0x003B82F6, 1);
+                        canvas.draw_text(insp_x + 18, insp_y + 140, "1. Contact avec le joueur", 0x0093C5FD, 1);
+
+                        canvas.draw_text(insp_x + 120, insp_y + 165, "|", 0x00FBBF24, 1);
+                        canvas.draw_text(insp_x + 120, insp_y + 175, "V", 0x00FBBF24, 1);
+
+                        // Bloc 2
+                        canvas.draw_rect(insp_x + 12, insp_y + 190, insp_w - 24, 30, 0x001E293B);
+                        canvas.draw_rect_outline(insp_x + 12, insp_y + 190, insp_w - 24, 30, 0x0010B981, 1);
+                        canvas.draw_text(insp_x + 18, insp_y + 200, "2. Ajouter 10 au score", 0x006EE7B7, 1);
+
+                        canvas.draw_text(insp_x + 120, insp_y + 225, "|", 0x00FBBF24, 1);
+                        canvas.draw_text(insp_x + 120, insp_y + 235, "V", 0x00FBBF24, 1);
+
+                        // Bloc 3
+                        canvas.draw_rect(insp_x + 12, insp_y + 250, insp_w - 24, 30, 0x001E293B);
+                        canvas.draw_rect_outline(insp_x + 12, insp_y + 250, insp_w - 24, 30, 0x00EF4444, 1);
+                        canvas.draw_text(insp_x + 18, insp_y + 260, "3. Faire disparaitre", 0x00FCA5A5, 1);
+
+                        canvas.draw_text(insp_x + 12, insp_y + 310, "-> Pressez ESPACE pour deplier", 0x0094A3B8, 1);
+                    } else {
+                        // VUE DÉTAILLÉE (Nœuds techniques et Pins dépliés)
+                        canvas.draw_text(insp_x + 12, insp_y + 105, "NOEUDS & PINS TECHNIQUES :", 0x0010B981, 1);
+
+                        // Noeud Event
+                        canvas.draw_text(insp_x + 12, insp_y + 125, "[Event: evt_overlap]", 0x0093C5FD, 1);
+                        canvas.draw_text(insp_x + 20, insp_y + 140, "Sortie : [Trigger: out] -->", 0x0064748B, 1);
+
+                        // Noeud Action 1
+                        canvas.draw_text(insp_x + 12, insp_y + 165, "[Action: act_add_score]", 0x006EE7B7, 1);
+                        canvas.draw_text(insp_x + 20, insp_y + 180, "Entree: [Trigger: in]", 0x0064748B, 1);
+                        canvas.draw_text(insp_x + 20, insp_y + 195, "Sortie: [Trigger: out] -->", 0x0064748B, 1);
+
+                        // Noeud Action 2
+                        canvas.draw_text(insp_x + 12, insp_y + 220, "[Action: act_destroy]", 0x00FCA5A5, 1);
+                        canvas.draw_text(insp_x + 20, insp_y + 235, "Entree: [Trigger: in]", 0x0064748B, 1);
+
+                        canvas.draw_text(insp_x + 12, insp_y + 270, "Connexions : 2 fils valides", 0x00FBBF24, 1);
+                        canvas.draw_text(insp_x + 12, insp_y + 310, "-> Pressez ESPACE pour replier", 0x0094A3B8, 1);
+                    }
+                }
+                SelectedEntity::Door(idx) => {
+                    let door = &self.doors[idx];
+                    canvas.draw_text(insp_x + 12, insp_y + 35, &format!("ENTITE : PORTE ({})", door.id), 0x0010B981, 1);
+                    let pos_str = format!("Pos : X:{:.0}  Y:{:.0}", door.x, door.y);
+                    canvas.draw_text(insp_x + 12, insp_y + 52, &pos_str, 0x00F8FAFC, 1);
+
+                    let view_btn_bg = if self.editor.is_detailed_view { 0x00047857 } else { 0x001D4ED8 };
+                    canvas.draw_rect(insp_x + 12, insp_y + 72, insp_w - 24, 22, view_btn_bg);
+                    let view_btn_txt = if self.editor.is_detailed_view { "[ VUE DETAILLEE (ESPACE) ]" } else { "[ VUE SIMPLIFIEE (ESPACE) ]" };
+                    canvas.draw_text(insp_x + 20, insp_y + 78, view_btn_txt, 0x00FFFFFF, 1);
+
+                    if !self.editor.is_detailed_view {
+                        canvas.draw_text(insp_x + 12, insp_y + 115, "CHAINE LOGIQUE VISUELLE :", 0x0038BDF8, 1);
+
+                        canvas.draw_rect(insp_x + 12, insp_y + 140, insp_w - 24, 34, 0x001E293B);
+                        canvas.draw_rect_outline(insp_x + 12, insp_y + 140, insp_w - 24, 34, 0x003B82F6, 1);
+                        canvas.draw_text(insp_x + 18, insp_y + 152, "1. Appui sur E (Proximite)", 0x0093C5FD, 1);
+
+                        canvas.draw_text(insp_x + 120, insp_y + 190, "|", 0x00FBBF24, 1);
+                        canvas.draw_text(insp_x + 120, insp_y + 200, "V", 0x00FBBF24, 1);
+
+                        canvas.draw_rect(insp_x + 12, insp_y + 220, insp_w - 24, 34, 0x001E293B);
+                        canvas.draw_rect_outline(insp_x + 12, insp_y + 220, insp_w - 24, 34, 0x0010B981, 1);
+                        canvas.draw_text(insp_x + 18, insp_y + 232, "2. Basculer Ouvert/Ferme", 0x006EE7B7, 1);
+
+                        canvas.draw_text(insp_x + 12, insp_y + 310, "-> Pressez ESPACE pour deplier", 0x0094A3B8, 1);
+                    } else {
+                        canvas.draw_text(insp_x + 12, insp_y + 110, "NOEUDS & PINS TECHNIQUES :", 0x0010B981, 1);
+
+                        canvas.draw_text(insp_x + 12, insp_y + 135, "[Event: evt_door_interact]", 0x0093C5FD, 1);
+                        canvas.draw_text(insp_x + 20, insp_y + 155, "Sortie : [Trigger: out] -->", 0x0064748B, 1);
+
+                        canvas.draw_text(insp_x + 12, insp_y + 185, "[Action: act_toggle_door]", 0x006EE7B7, 1);
+                        canvas.draw_text(insp_x + 20, insp_y + 205, "Entree: [Trigger: in]", 0x0064748B, 1);
+
+                        canvas.draw_text(insp_x + 12, insp_y + 260, "Connexions : 1 fil valide", 0x00FBBF24, 1);
+                        canvas.draw_text(insp_x + 12, insp_y + 310, "-> Pressez ESPACE pour replier", 0x0094A3B8, 1);
+                    }
+                }
+            }
+        }
 
         // Bandeau inférieur : Statut et traçabilité KVL
         let bottom_y = 445;
         canvas.draw_rect(0, bottom_y as i32, canvas.width as u32, 155, 0x000F172A);
         canvas.draw_rect(0, bottom_y as i32, canvas.width as u32, 1, 0x00334155);
 
-        canvas.draw_text(15, bottom_y + 8, "CONTROLES : F1 (Overlay Telemetrie) | F2 (Changer Profil) | F3 (Auto) | R (Reload)", 0x0094A3B8, 1);
+        let info_line = if is_edit_mode {
+            "MODE EDITION : Clic gauche (Selectionner/Deplacer) | ESPACE (Deplier KVL) | TAB (Reprendre le jeu)"
+        } else {
+            "MODE JEU : TAB (Editeur/Inspecteur) | F1 (Telemetrie) | F2 (Profil) | F3 (Auto) | R (Reload)"
+        };
+        canvas.draw_text(15, bottom_y + 8, info_line, 0x0094A3B8, 1);
         canvas.draw_text(15, bottom_y + 24, &self.status_message, 0x0038BDF8, 1);
 
         canvas.draw_text(15, bottom_y + 45, "TRACES RUNTIME KVL :", 0x0094A3B8, 1);
@@ -402,14 +698,13 @@ impl GameState {
             canvas.draw_text(15, bottom_y + 65 + (i as i32 * 18), &trace_line, 0x00A7F3D0, 1);
         }
 
-        // Overlay Télémétrie & Profiling (F1)
-        if self.telemetry.show_overlay {
+        // Overlay Télémétrie en Mode Jeu
+        if !is_edit_mode && self.telemetry.show_overlay {
             let ov_x = (canvas.width as i32) - 310;
             let ov_y = 65;
             let ov_w = 295;
             let ov_h = 240;
 
-            // Panneau semi-transparent sombre
             canvas.draw_rect(ov_x, ov_y, ov_w, ov_h, 0x000A0F1D);
             canvas.draw_rect_outline(ov_x, ov_y, ov_w, ov_h, 0x0038BDF8, 1);
 
@@ -432,10 +727,9 @@ impl GameState {
             let auto_str = if self.adaptation.auto_adapt { "AUTO-ADAPTATIF (ON)" } else { "MANUEL (OFF)" };
             canvas.draw_text(ov_x + 10, ov_y + 76, auto_str, 0x00FCD34D, 1);
 
-            let particles_line = format!("Particules actives : {} / {}", self.particles.len(), self.adaptation.current_profile.max_particles());
+            let particles_line = format!("Particules : {} / {}", self.particles.len(), self.adaptation.current_profile.max_particles());
             canvas.draw_text(ov_x + 10, ov_y + 92, &particles_line, 0x0094A3B8, 1);
 
-            // Sparkline Graph des 120 dernières frames
             canvas.draw_text(ov_x + 10, ov_y + 115, "TEMPS DE FRAME (HISTORIQUE) :", 0x0094A3B8, 1);
             let graph_y = ov_y + 130;
             let graph_h = 70;
@@ -446,14 +740,11 @@ impl GameState {
             for (idx, &time_us) in samples.iter().enumerate() {
                 let bar_x = (ov_x + 12) + (idx as i32 * 2);
                 if bar_x < (ov_x + 10 + 273) {
-                    // Échelle : 16666 us = 50px de hauteur
                     let bar_h = ((time_us as f32 / 3000.0) * (graph_h as f32 * 0.7)).min(graph_h as f32 - 4.0) as u32;
                     let bar_color = if time_us > 16_666 { 0x00EF4444 } else if time_us > 8_000 { 0x00FBBF24 } else { 0x0010B981 };
                     canvas.draw_rect(bar_x, graph_y + graph_h - (bar_h as i32) - 2, 2, bar_h.max(2), bar_color);
                 }
             }
-
-            canvas.draw_text(ov_x + 10, ov_y + 215, "Touche F2 pour forcer le profil", 0x0064748B, 1);
         }
     }
 }

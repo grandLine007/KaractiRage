@@ -8,6 +8,7 @@ use winit::keyboard::PhysicalKey;
 use winit::window::WindowBuilder;
 
 mod adaptation;
+mod editor;
 mod game;
 mod input;
 mod renderer;
@@ -55,6 +56,15 @@ fn main() {
                     if let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) {
                         surface.resize(w, h).unwrap();
                         canvas.resize(size.width as usize, size.height as usize);
+                    }
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    input.on_mouse_move(position.x as f32, position.y as f32);
+                }
+                WindowEvent::MouseInput { state, .. } => {
+                    match state {
+                        ElementState::Pressed => input.on_mouse_down(),
+                        ElementState::Released => input.on_mouse_up(),
                     }
                 }
                 WindowEvent::KeyboardInput { event: key_event, .. } => {
