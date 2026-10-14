@@ -4,6 +4,7 @@ use crate::editor::{EditorMode, EditorState, SelectedEntity};
 use crate::input::InputState;
 use crate::renderer::Canvas;
 use crate::scene::SceneData;
+use crate::spatial::{SpatialHashGrid, SpatialItem, SpatialKind};
 use crate::telemetry::Telemetry;
 use kvl_core::*;
 use kvl_runtime::*;
@@ -124,6 +125,7 @@ pub struct GameState {
     pub editor: EditorState,
     pub audio: AudioEngine,
     pub show_minimap: bool,
+    pub spatial_grid: SpatialHashGrid,
 }
 
 impl GameState {
@@ -270,6 +272,7 @@ impl GameState {
             editor: EditorState::new(),
             audio: AudioEngine::new(),
             show_minimap: true,
+            spatial_grid: SpatialHashGrid::new(64.0, 256),
         })
     }
 
@@ -404,6 +407,16 @@ impl GameState {
                 "Radar Tactique (Minimap) : ACTIVÉ".into()
             } else {
                 "Radar Tactique (Minimap) : MASQUÉ".into()
+            };
+        }
+
+        // Bascule Visualisation Grille Spatiale (Touche G)
+        if input.is_key_just_pressed(KeyCode::KeyG) {
+            let vis = self.spatial_grid.toggle_debug();
+            self.status_message = if vis {
+                "Grille Spatiale (Spatial Hash Grid) : AFFICHÉE".into()
+            } else {
+                "Grille Spatiale (Spatial Hash Grid) : MASQUÉE".into()
             };
         }
 
@@ -838,64 +851,92 @@ impl GameState {
         let effective_speed = self.player_speed + speed_boost;
 
         // ==========================================
-        // PHYSIQUE 2D & GLISSEMENT AABB (AXE SÉPARÉ)
+        // PARTITIONNEMENT SPATIAL (ZERO-ALLOCATION)
+        // ==========================================
+        self.spatial_grid.clear();
+        for (idx, wall) in self.walls.iter().enumerate() {
+            self.spatial_grid.insert(SpatialItem {
+                id: idx,
+                kind: SpatialKind::Solid,
+                x: wall.x,
+                y: wall.y,
+                w: wall.w,
+                h: wall.h,
+            });
+        }
+        for (idx, door) in self.doors.iter().enumerate() {
+            if !door.is_open {
+                self.spatial_grid.insert(SpatialItem {
+                    id: idx,
+                    kind: SpatialKind::Door(idx),
+                    x: door.x,
+                    y: door.y,
+                    w: door.w,
+                    h: door.h,
+                });
+            }
+        }
+        for (idx, coin) in self.coins.iter().enumerate() {
+            if !coin.collected {
+                self.spatial_grid.insert(SpatialItem {
+                    id: idx,
+                    kind: SpatialKind::Coin(idx),
+                    x: coin.x - coin.radius,
+                    y: coin.y - coin.radius,
+                    w: coin.radius * 2.0,
+                    h: coin.radius * 2.0,
+                });
+            }
+        }
+        for (idx, enemy) in self.enemies.iter().enumerate() {
+            self.spatial_grid.insert(SpatialItem {
+                id: idx,
+                kind: SpatialKind::Enemy(idx),
+                x: enemy.x - enemy.size / 2.0,
+                y: enemy.y - enemy.size / 2.0,
+                w: enemy.size,
+                h: enemy.size,
+            });
+        }
+
+        // ==========================================
+        // PHYSIQUE 2D & GLISSEMENT AABB ACCÉLÉRÉ
         // ==========================================
         let half = self.player_size / 2.0;
 
-        // Liste des boîtes solides (murs fixes + portes fermées)
-        #[derive(Clone, Copy)]
-        struct SolidBox {
-            x: f32,
-            y: f32,
-            w: f32,
-            h: f32,
-        }
-        let mut solid_boxes: Vec<SolidBox> = self.walls.iter()
-            .map(|w| SolidBox { x: w.x, y: w.y, w: w.w, h: w.h })
-            .collect();
-        for door in &self.doors {
-            if !door.is_open {
-                solid_boxes.push(SolidBox { x: door.x, y: door.y, w: door.w, h: door.h });
-            }
-        }
-
-        // 1. Déplacement et résolution sur l'axe X (glissement fluide le long des parois verticales)
+        // 1. Déplacement et résolution sur l'axe X via requêtes spatiales O(1)
         if move_x != 0.0 {
             self.player_x += move_x * effective_speed * dt;
             self.player_x = self.player_x.clamp(30.0 + half, 1160.0 - half);
 
             let p_min_x = self.player_x - half;
-            let p_max_x = self.player_x + half;
             let p_min_y = self.player_y - half;
-            let p_max_y = self.player_y + half;
-
-            for obs in &solid_boxes {
-                if p_max_x > obs.x && p_min_x < obs.x + obs.w && p_max_y > obs.y && p_min_y < obs.y + obs.h {
+            let candidates = self.spatial_grid.query_aabb(p_min_x, p_min_y, self.player_size, self.player_size);
+            for item in candidates {
+                if matches!(item.kind, SpatialKind::Solid | SpatialKind::Door(_)) {
                     if move_x > 0.0 {
-                        self.player_x = obs.x - half;
+                        self.player_x = item.x - half;
                     } else if move_x < 0.0 {
-                        self.player_x = obs.x + obs.w + half;
+                        self.player_x = item.x + item.w + half;
                     }
                 }
             }
         }
 
-        // 2. Déplacement et résolution sur l'axe Y (glissement fluide le long des parois horizontales)
+        // 2. Déplacement et résolution sur l'axe Y via requêtes spatiales O(1)
         if move_y != 0.0 {
             self.player_y += move_y * effective_speed * dt;
             self.player_y = self.player_y.clamp(75.0 + half, 595.0 - half);
 
             let p_min_x = self.player_x - half;
-            let p_max_x = self.player_x + half;
             let p_min_y = self.player_y - half;
-            let p_max_y = self.player_y + half;
-
-            for obs in &solid_boxes {
-                if p_max_x > obs.x && p_min_x < obs.x + obs.w && p_max_y > obs.y && p_min_y < obs.y + obs.h {
+            let candidates = self.spatial_grid.query_aabb(p_min_x, p_min_y, self.player_size, self.player_size);
+            for item in candidates {
+                if matches!(item.kind, SpatialKind::Solid | SpatialKind::Door(_)) {
                     if move_y > 0.0 {
-                        self.player_y = obs.y - half;
+                        self.player_y = item.y - half;
                     } else if move_y < 0.0 {
-                        self.player_y = obs.y + obs.h + half;
+                        self.player_y = item.y + item.h + half;
                     }
                 }
             }
@@ -911,57 +952,74 @@ impl GameState {
 
         let mut spawn_requests = Vec::new();
 
-        // Collision pièces
-        for coin in &mut self.coins {
-            if !coin.collected {
-                let dx = self.player_x - coin.x;
-                let dy = self.player_y - coin.y;
-                let dist = (dx * dx + dy * dy).sqrt();
+        // Collision et collecte des pièces accélérées par la Grille Spatiale
+        let mut collected_indices = Vec::new();
+        {
+            let candidates = self.spatial_grid.query_aabb(
+                self.player_x - half - 2.0,
+                self.player_y - half - 2.0,
+                self.player_size + 4.0,
+                self.player_size + 4.0,
+            );
+            for item in candidates {
+                if let SpatialKind::Coin(idx) = item.kind {
+                    if idx < self.coins.len() && !self.coins[idx].collected {
+                        let coin = &self.coins[idx];
+                        let dx = self.player_x - coin.x;
+                        let dy = self.player_y - coin.y;
+                        let dist = (dx * dx + dy * dy).sqrt();
 
-                if dist < (self.player_size / 2.0 + coin.radius) {
-                    coin.collected = true;
-
-                    let prev_score = match self.kvl_context.get_var("score") {
-                        Some(Value::Int(s)) => *s,
-                        _ => 0,
-                    };
-                    let prev_boost = match self.kvl_context.get_var("speed_boost") {
-                        Some(Value::Int(b)) => *b,
-                        _ => 0,
-                    };
-
-                    if let Some(graph) = self.kvl_graphs.get(&coin.script_path) {
-                        if let Ok(steps) = Interpreter::trigger_event(
-                            graph,
-                            &mut self.kvl_context,
-                            "OnPlayerOverlap",
-                        ) {
-                            kvl_steps_this_frame += steps;
+                        if dist < (half + coin.radius) {
+                            collected_indices.push(idx);
                         }
                     }
-
-                    spawn_requests.push((coin.x, coin.y, 25, 0x00FDE047));
-
-                    let score = match self.kvl_context.get_var("score") {
-                        Some(Value::Int(s)) => *s,
-                        _ => 0,
-                    };
-                    let new_boost = match self.kvl_context.get_var("speed_boost") {
-                        Some(Value::Int(b)) => *b,
-                        _ => 0,
-                    };
-
-                    if new_boost > prev_boost {
-                        self.audio.play(SoundType::SpeedBoost);
-                    } else if score >= prev_score + 50 {
-                        self.audio.play(SoundType::BonusFanfare);
-                    } else {
-                        self.audio.play(SoundType::Coin);
-                    }
-
-                    self.status_message = format!("Pièce ({}) collectée ! Score KVL : {}", coin.id, score);
                 }
             }
+        }
+
+        for idx in collected_indices {
+            let coin = &mut self.coins[idx];
+            coin.collected = true;
+
+            let prev_score = match self.kvl_context.get_var("score") {
+                Some(Value::Int(s)) => *s,
+                _ => 0,
+            };
+            let prev_boost = match self.kvl_context.get_var("speed_boost") {
+                Some(Value::Int(b)) => *b,
+                _ => 0,
+            };
+
+            if let Some(graph) = self.kvl_graphs.get(&coin.script_path) {
+                if let Ok(steps) = Interpreter::trigger_event(
+                    graph,
+                    &mut self.kvl_context,
+                    "OnPlayerOverlap",
+                ) {
+                    kvl_steps_this_frame += steps;
+                }
+            }
+
+            spawn_requests.push((coin.x, coin.y, 25, 0x00FDE047));
+
+            let score = match self.kvl_context.get_var("score") {
+                Some(Value::Int(s)) => *s,
+                _ => 0,
+            };
+            let new_boost = match self.kvl_context.get_var("speed_boost") {
+                Some(Value::Int(b)) => *b,
+                _ => 0,
+            };
+
+            if new_boost > prev_boost {
+                self.audio.play(SoundType::SpeedBoost);
+            } else if score >= prev_score + 50 {
+                self.audio.play(SoundType::BonusFanfare);
+            } else {
+                self.audio.play(SoundType::Coin);
+            }
+
+            self.status_message = format!("Pièce ({}) collectée ! Score KVL : {}", coin.id, score);
         }
 
         // Interaction porte
@@ -1054,12 +1112,15 @@ impl GameState {
             let in_cone = dist_sq < range_sq && dx < 25.0 && dy.abs() < (enemy.vision_range * 0.70);
 
             if in_cone {
-                // Raycast pour vérifier si un mur ou une porte solide bloque la vue
+                // Raycast accéléré par requête segment sur la Grille Spatiale
                 let mut sight_blocked = false;
-                for obs in &solid_boxes {
-                    if segment_intersects_aabb(enemy.x, enemy.y, self.player_x, self.player_y, obs.x, obs.y, obs.w, obs.h) {
-                        sight_blocked = true;
-                        break;
+                let candidates = self.spatial_grid.query_segment(enemy.x, enemy.y, self.player_x, self.player_y);
+                for obs in candidates {
+                    if matches!(obs.kind, SpatialKind::Solid | SpatialKind::Door(_)) {
+                        if segment_intersects_aabb(enemy.x, enemy.y, self.player_x, self.player_y, obs.x, obs.y, obs.w, obs.h) {
+                            sight_blocked = true;
+                            break;
+                        }
                     }
                 }
 
@@ -1167,6 +1228,24 @@ impl GameState {
         let play_area_h = (h - 260).max(300) as u32;
 
         canvas.draw_rect_outline(20, 70, play_area_w, play_area_h, if is_edit_mode { 0x006D28D9 } else { 0x002B364F }, 2);
+
+        // Visualisation de débogage de la Grille Spatiale (Touche G)
+        if self.spatial_grid.debug_visible {
+            let max_x = 20 + play_area_w as i32;
+            let max_y = 70 + play_area_h as i32;
+            let cs = self.spatial_grid.cell_size as i32;
+            let mut gx = 20;
+            while gx <= max_x {
+                canvas.draw_line(gx, 70, gx, max_y, 0x001B263B);
+                gx += cs;
+            }
+            let mut gy = 70;
+            while gy <= max_y {
+                canvas.draw_line(20, gy, max_x, gy, 0x001B263B);
+                gy += cs;
+            }
+            canvas.draw_text(30, 75, "GRILLE SPATIALE O(1) : ACTIVE (64px)", 0x0038BDF8, 1);
+        }
 
         // Grille de repérage en mode édition
         if is_edit_mode {
@@ -1462,7 +1541,7 @@ impl GameState {
         let info_line = if is_edit_mode {
             "MODE EDITION : Clic (Deplacer) | M (Son) | ESPACE (Deplier KVL) | TAB (Reprendre)"
         } else {
-            "MODE JEU : TAB (Editeur KVL) | N (Radar) | M (Son) | F1 (Telemetrie) | F2 (Profil) | F3 (Auto) | R (Reload)"
+            "MODE JEU : TAB (Editeur KVL) | N (Radar) | G (Grille) | M (Son) | F1 (Telemetrie) | F2 (Profil) | F3 (Auto) | R (Reload)"
         };
         canvas.draw_text(20, bottom_y + 14, info_line, 0x0094A3B8, 2);
         canvas.draw_text(20, bottom_y + 40, &self.status_message, 0x0038BDF8, 2);
@@ -1478,7 +1557,7 @@ impl GameState {
         // Overlay Télémétrie en Mode Jeu (F1)
         if !is_edit_mode && self.telemetry.show_overlay {
             let ov_w = 400;
-            let ov_h = 320;
+            let ov_h = 346;
             let ov_x = w - ov_w - 20;
             let ov_y = 70;
 
@@ -1507,8 +1586,11 @@ impl GameState {
             let particles_line = format!("Particules : {} / {}", self.particles.len(), self.adaptation.current_profile.max_particles());
             canvas.draw_text(ov_x + 16, ov_y + 138, &particles_line, 0x0094A3B8, 2);
 
-            canvas.draw_text(ov_x + 16, ov_y + 168, "TEMPS DE FRAME (HISTORIQUE) :", 0x0094A3B8, 2);
-            let graph_y = ov_y + 192;
+            let spatial_line = format!("Grille Spatiale : {} req | {} cand", self.spatial_grid.stats_queries, self.spatial_grid.stats_candidates);
+            canvas.draw_text(ov_x + 16, ov_y + 160, &spatial_line, 0x0038BDF8, 2);
+
+            canvas.draw_text(ov_x + 16, ov_y + 186, "TEMPS DE FRAME (HISTORIQUE) :", 0x0094A3B8, 2);
+            let graph_y = ov_y + 210;
             let graph_h = 100;
             canvas.draw_rect(ov_x + 16, graph_y, (ov_w - 32) as u32, graph_h as u32, 0x00161F33);
             canvas.draw_rect_outline(ov_x + 16, graph_y, (ov_w - 32) as u32, graph_h as u32, 0x002B364F, 1);
@@ -2139,5 +2221,50 @@ mod tests {
         state.update(0.016, &input);
 
         assert!(state.show_minimap, "Un second appui sur N doit réactiver le radar");
+    }
+
+    #[test]
+    fn test_spatial_hash_grid_collision_and_queries() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        // 1. Vérification de la bascule de débogage spatial (Touche G)
+        assert!(!state.spatial_grid.debug_visible, "La grille spatiale démarre masquée");
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyG);
+        state.update(0.016, &input);
+
+        assert!(state.spatial_grid.debug_visible, "La touche G doit activer la visualisation de la grille spatiale");
+        assert!(state.status_message.contains("AFFICHÉE"));
+
+        input.on_key_up(KeyCode::KeyG);
+        input.on_key_down(KeyCode::KeyG);
+        state.update(0.016, &input);
+        assert!(!state.spatial_grid.debug_visible, "Un second appui sur G doit masquer la grille");
+
+        // 2. Vérification que les requêtes spatiales et candidats sont enregistrés dans les stats
+        input.on_key_up(KeyCode::KeyG);
+        input.on_key_down(KeyCode::KeyD); // Déplacer vers la droite pour déclencher les requêtes
+        state.update(0.016, &input);
+
+        assert!(state.spatial_grid.stats_queries > 0, "Des requêtes broadphase doivent être effectuées");
+
+        // 3. Collecte de pièce via la grille spatiale
+        assert!(!state.coins.is_empty());
+        let coin_x = state.coins[0].x;
+        let coin_y = state.coins[0].y;
+        state.player_x = coin_x;
+        state.player_y = coin_y;
+
+        let empty_input = InputState::new();
+        state.update(0.016, &empty_input);
+
+        assert!(state.coins[0].collected, "La pièce doit être détectée et collectée via le partitionnement spatial");
+        let score = match state.kvl_context.get_var("score") {
+            Some(Value::Int(s)) => *s,
+            _ => 0,
+        };
+        assert!(score > 0, "Le score KVL doit être incrémenté lors de la collecte");
     }
 }

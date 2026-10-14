@@ -195,10 +195,25 @@
     * Projection en temps réel de tous les éléments du monde (murs, portes, pièces dorées, sentinelles avec faisceau de visée, et joueur clignotant).
     * Bascule d'affichage via la touche `N` avec effet sonore `SoundType::RadarPing`.
   * Raccordement complet au Mode Éditeur (`TAB`) :
-    * Sélection directe du garde à la souris (`SelectedEntity::Enemy(idx)`), déplacement libre et inspection de son script KVL d'IA avec câblage visuel des broches.
+### Étape 13 : Partitionnement Spatial (Spatial Hash Grid) $\mathcal{O}(1)$ & Zéro-Allocation *(14 Octobre 2026)*
+* **Réalisations** :
+  * Conception et intégration de la structure de données `SpatialHashGrid` (`crates/engine-core/src/spatial.rs`) :
+    * Hachage spatial 2D avec taille de cellule optimisée ($C = 64\text{ px}$) et dispersion bitwise rapide `(cx * 73856093 ^ cy * 19349663) & bucket_mask`.
+    * Masquage bitwise sur puissance de deux ($N=256$) éliminant le coût des divisions modulo.
+    * Respect strict de la directive d'architecture **Zero Alloc Hot Path** : réinitialisation in-place `bucket.clear()` et tampon réutilisable `query_buffer` évitant toute réallocation de mémoire tas par frame.
+  * Indexation spatiale dynamique et broadphase :
+    * Indexation de tous les éléments du monde : murs solides, portes fermées, pièces dorées, et sentinelles de patrouille.
+    * Accélération de la résolution physique AABB du joueur (glissement fluide séparé X et Y) via `query_aabb`.
+    * Accélération de la détection et collecte des pièces via filtrage spatial préalable.
+    * Accélération du Raycasting de ligne de mire (LoS) des gardes patrouilleurs via `query_segment` (recherche des seuls obstacles dans le corridor de visée avant l'intersection fine de Liang-Barsky).
+  * Affichage de débogage et télémétrie :
+    * Visualisation en direct du quadrillage de cellules spatiales activable avec la touche **`G`**.
+    * Indicateur des statistiques de broadphase (`stats_queries`, `stats_candidates`) affiché en direct dans l'overlay de profilage **`F1`**.
+    * Raccourci `G (Grille)` ajouté au pied d'écran.
 * **Mesures & Benchmarks** :
-  * 16/16 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+2 tests IA et radar).
-  * 0 avertissement de compilation, hot-path maintenu sous 500 µs (consommation < 4% du budget 60 FPS).
+  * 19/19 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+3 tests dédiés au spatial hash grid).
+  * Suppression totale des allocations dynamiques de vecteurs d'obstacles (`solid_boxes: Vec<SolidBox>`) dans la boucle de frame.
+  * 0 avertissement de compilation (`cargo check --all-targets`).
   * 100% compatible compilation WebAssembly (`wasm32-unknown-unknown`).
 
 ---

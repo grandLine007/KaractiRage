@@ -14,6 +14,7 @@ mod game;
 mod input;
 mod renderer;
 mod scene;
+mod spatial;
 mod telemetry;
 
 use game::GameState;
