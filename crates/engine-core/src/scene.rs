@@ -84,6 +84,11 @@ impl SceneData {
         Ok(scene)
     }
 
+    pub fn from_json_str(json: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let scene: Self = serde_json::from_str(json)?;
+        Ok(scene)
+    }
+
     #[allow(dead_code)]
     pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
         let content = serde_json::to_string_pretty(self)?;

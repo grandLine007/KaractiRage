@@ -214,7 +214,25 @@
   * 19/19 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+3 tests dédiés au spatial hash grid).
   * Suppression totale des allocations dynamiques de vecteurs d'obstacles (`solid_boxes: Vec<SolidBox>`) dans la boucle de frame.
   * 0 avertissement de compilation (`cargo check --all-targets`).
-  * 100% compatible compilation WebAssembly (`wasm32-unknown-unknown`).
+### Étape 14 : Exportateur WebAssembly (Wasm) & Démonstrateur Canvas HTML5 *(14 Octobre 2026)*
+* **Réalisations** :
+  * Architecture bicéphale native Desktop (`main.rs`) & WebAssembly (`lib.rs` / `cdylib`) dans `crates/engine-core` :
+    * Exposition de la bibliothèque `karactirage_wasm` avec liaisons `wasm-bindgen` complètes (`crates/engine-core/src/wasm_api.rs`).
+    * Gestion native du zero-copy : le pointeur brut vers le buffer de pixels RGBA32 de `Canvas` est partagé directement avec la mémoire linéaire WebAssembly (`Uint8ClampedArray` vers `ImageData` HTML5).
+    * Fallback autonome de scène et scripts KVL embarqués (`include_str!`) : permet au binaire Wasm de fonctionner instantanément dans le navigateur sans nécessiter d'appels `std::fs` ni de requêtes réseau synchrones.
+  * Démonstrateur Web complet dans `web/` :
+    * `web/index.html` : Interface cockpit haute fidélité en Dark Mode (palette HSL sur-mesure, typographies Outfit et Fira Code, glassmorphism avec flou d'arrière-plan).
+    * `web/style.css` : Design responsive avec affichage pixel-art préservé (`image-rendering: pixelated`), cartes d'indicateurs de performance et légendes interactives.
+    * `web/app.js` : Boucle d'animation à 60 FPS (`requestAnimationFrame`), transmission continue des entrées clavier et coordonnées souris (redimensionnées au Canvas 1200x800), et polling télémétrique à 10 Hz.
+    * Boutons rapides tactiles/cliquables pour basculer le Mode Éditeur (TAB), le Radar (N), la Grille (G) et le Son (M).
+  * Outillage & Automatisation :
+    * `scripts/build_web.sh` : Script de compilation Wasm automatique avec `wasm-bindgen` (binaire optimisé `karactirage_wasm_bg.wasm` de seulement 535 Ko).
+    * `scripts/serve_web.py` : Serveur de développement local Python avec types MIME conformes (`application/wasm`, `application/javascript`) et isolation cross-origin.
+* **Mesures & Benchmarks** :
+  * Taille finale du module WebAssembly : **535 Ko** (ultra-léger pour le web).
+  * Rendu 60 FPS constant sous navigateur moderne sans garbage collection ni réallocations.
+  * 100% des tests workspace validés (`cargo test`).
+  * Zéro avertissement de compilation.
 
 ---
 

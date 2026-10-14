@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KaractiRage 2D Engine — Démonstrateur WebAssembly & KVL</title>
+  <meta name="description" content="Moteur de jeu 2D KaractiRage et logique visuelle KVL exécutés directement dans le navigateur en WebAssembly à 60 FPS avec partitionnement spatial O(1).">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600;700&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- En-tête Principal -->
+    <header class="engine-header">
+      <div class="brand">
+        <div class="logo-badge">⚡ KR</div>
+        <div class="title-group">
+          <h1>KARACTIRAGE 2D ENGINE</h1>
+          <p class="subtitle">Runtime Rust &amp; Logique Visuelle KVL — Export WebAssembly (Wasm) &amp; Canvas HTML5</p>
+        </div>
+      </div>
+      <div class="badges-row">
+        <span class="badge badge-accent">60 FPS</span>
+        <span class="badge badge-success">Zero-Alloc Hot Path</span>
+        <span class="badge badge-cyan">Grille Spatiale O(1)</span>
+        <span class="badge badge-purple">KVL Engine</span>
+      </div>
+    </header>
+
+    <!-- Zone Centrale : Canvas et Panneaux Latéraux -->
+    <main class="engine-workspace">
+      <!-- Zone de Jeu Canvas -->
+      <section class="canvas-wrapper">
+        <div class="canvas-frame">
+          <canvas id="game-canvas" width="1200" height="800"></canvas>
+          <div id="loading-overlay" class="loading-overlay">
+            <div class="spinner"></div>
+            <p id="loading-text">Chargement du runtime WebAssembly KaractiRage...</p>
+          </div>
+        </div>
+        
+        <!-- Barre d'état intégrée -->
+        <div class="status-bar">
+          <span class="status-label">ETAT DU MOTEUR :</span>
+          <span id="engine-status" class="status-text">Initialisation en cours...</span>
+        </div>
+      </section>
+
+      <!-- Panneau Latéral de Diagnostic & Télémétrie -->
+      <aside class="sidebar-hud">
+        <div class="hud-card">
+          <div class="hud-card-header">
+            <h3>📊 Télémétrie &amp; Performance</h3>
+            <span class="pulse-dot"></span>
+          </div>
+          <div class="metric-grid">
+            <div class="metric-item">
+              <span class="metric-label">Taux Rafraîchissement</span>
+              <span id="metric-fps" class="metric-value text-emerald">-- FPS</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-label">Temps Frame CPU</span>
+              <span id="metric-cpu" class="metric-value text-cyan">-- µs</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-label">Budget Frame 60 FPS</span>
+              <span id="metric-budget" class="metric-value text-emerald">RESPECTÉ</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-label">Requêtes Spatiales O(1)</span>
+              <span id="metric-spatial" class="metric-value text-amber">-- req/frame</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hud-card">
+          <div class="hud-card-header">
+            <h3>🎮 Variables KVL Runtime</h3>
+          </div>
+          <div class="metric-grid">
+            <div class="metric-item">
+              <span class="metric-label">Score Joueur KVL</span>
+              <span id="metric-score" class="metric-value text-amber">0 PTS</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-label">Mode d'Exécution</span>
+              <span id="metric-mode" class="metric-value text-purple">JEU</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hud-card">
+          <div class="hud-card-header">
+            <h3>🕹️ Commandes Rapides</h3>
+          </div>
+          <div class="quick-actions">
+            <button id="btn-toggle-editor" class="action-btn">
+              <span class="key-tag">TAB</span> Mode Édition
+            </button>
+            <button id="btn-toggle-radar" class="action-btn">
+              <span class="key-tag">N</span> Radar Tactique
+            </button>
+            <button id="btn-toggle-grid" class="action-btn">
+              <span class="key-tag">G</span> Grille Spatiale
+            </button>
+            <button id="btn-toggle-audio" class="action-btn">
+              <span class="key-tag">M</span> Son Muet / Actif
+            </button>
+            <button id="btn-reload" class="action-btn">
+              <span class="key-tag">R</span> Réinitialiser
+            </button>
+          </div>
+        </div>
+
+        <div class="hud-card">
+          <div class="hud-card-header">
+            <h3>⌨️ Guide des Raccourcis</h3>
+          </div>
+          <ul class="shortcuts-list">
+            <li><kbd>ZQSD</kbd> ou <kbd>Flèches</kbd> : Déplacer le joueur</li>
+            <li><kbd>E</kbd> ou <kbd>Espace</kbd> : Interagir avec la porte</li>
+            <li><kbd>TAB</kbd> : Ouvrir l'Inspecteur &amp; Éditeur KVL</li>
+            <li><kbd>Clic Gauche</kbd> : Sélectionner &amp; déplacer des objets</li>
+            <li><kbd>N</kbd> : Minicarte Radar néon</li>
+            <li><kbd>G</kbd> : Quadrillage spatial 64px</li>
+            <li><kbd>F1</kbd> : Diagnostic intégré &amp; Sparkline</li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Pied de Page Technologique -->
+    <footer class="engine-footer">
+      <span>KaractiRage v0.1.0 — Architecture Low-End First, 100% Déterministe &amp; Émulation Pixel-Perfect</span>
+      <span>Cible : WebAssembly (wasm32-unknown-unknown) • Renderer Canvas 2D</span>
+    </footer>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

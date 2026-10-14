@@ -1,0 +1,32 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_outputdevice_free: (a: number, b: number) => void;
+export const outputdevice_close: (a: number) => void;
+export const wasm_get_canvas_height: () => number;
+export const wasm_get_canvas_width: () => number;
+export const wasm_get_cpu_us: () => number;
+export const wasm_get_fps: () => number;
+export const wasm_get_framebuffer_ptr: () => number;
+export const wasm_get_score: () => number;
+export const wasm_get_spatial_queries: () => number;
+export const wasm_get_status_message: () => [number, number];
+export const wasm_init_engine: () => number;
+export const wasm_on_key_down: (a: number) => void;
+export const wasm_on_key_up: (a: number) => void;
+export const wasm_on_mouse_down: (a: number) => void;
+export const wasm_on_mouse_move: (a: number, b: number) => void;
+export const wasm_on_mouse_up: (a: number) => void;
+export const wasm_render_frame: (a: number) => number;
+export const wasm_toggle_editor_mode: () => number;
+export const wasm_toggle_radar: () => number;
+export const wasm_toggle_spatial_grid: () => number;
+export const wasm_bindgen__convert__closures_____invoke__hf89d7653fac0de47: (a: number, b: number) => void;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_destroy_closure: (a: number, b: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __wbindgen_start: () => void;

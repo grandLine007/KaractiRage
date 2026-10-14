@@ -130,7 +130,13 @@ pub struct GameState {
 
 impl GameState {
     pub fn load_from_scene(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let scene_data = SceneData::load_from_file(path)?;
+        let scene_data = match SceneData::load_from_file(path) {
+            Ok(s) => s,
+            Err(_) => {
+                let default_json = include_str!("../../../assets/scenes/level_01.scene.json");
+                SceneData::from_json_str(default_json)?
+            }
+        };
 
         let mut kvl_graphs = HashMap::new();
         let mut kvl_context = ExecutionContext::new();
@@ -141,6 +147,12 @@ impl GameState {
                 Some(c)
             } else if let Ok(c) = fs::read_to_string(format!("../../{}", path)) {
                 Some(c)
+            } else if path.contains("coin_pickup") {
+                Some(include_str!("../../../assets/scripts/coin_pickup.kvl.json").to_string())
+            } else if path.contains("door_interaction") {
+                Some(include_str!("../../../assets/scripts/door_interaction.kvl.json").to_string())
+            } else if path.contains("guard_alert") {
+                Some(include_str!("../../../assets/scripts/guard_alert.kvl.json").to_string())
             } else {
                 None
             }
