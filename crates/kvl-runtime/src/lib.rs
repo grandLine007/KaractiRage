@@ -90,4 +90,53 @@ mod tests {
             println!("  [{}] {} : {}", step.timestamp_us, step.node_name, step.message);
         }
     }
+
+    #[test]
+    fn test_condition_branching_true_and_false() {
+        let mut graph = Graph::new("test_cond", "Test Condition", "Branchement conditionnel KVL");
+        graph.add_variable("score", Value::Int(0));
+        graph.add_variable("door_is_open", Value::Bool(false));
+        graph.add_variable("access_denied", Value::Bool(false));
+
+        let evt = Node::new("evt_interact", "Event Interact", Category::Interactions, "Event", NodeKind::Event { event_type: "OnDoorInteract".into() })
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        let cond = Node::new("cond_score", "Condition Score >= 50", Category::MathLogic, "Condition", NodeKind::Condition { operator: "ScoreAtLeast50".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+            .with_output(Pin::new_trigger("out_true", "Vrai", PinDirection::Output))
+            .with_output(Pin::new_trigger("out_false", "Faux", PinDirection::Output));
+
+        let act_unlock = Node::new("act_open", "Ouvrir Porte", Category::World, "Action", NodeKind::Action { action_type: "ToggleDoor".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        let act_deny = Node::new("act_deny", "Refuser Accès", Category::World, "Action", NodeKind::Action { action_type: "DenyAccess".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph.add_node(evt);
+        graph.add_node(cond);
+        graph.add_node(act_unlock);
+        graph.add_node(act_deny);
+
+        graph.connect_pins("evt_interact", "out_trigger", "cond_score", "in_trigger").unwrap();
+        graph.connect_pins("cond_score", "out_true", "act_open", "in_trigger").unwrap();
+        graph.connect_pins("cond_score", "out_false", "act_deny", "in_trigger").unwrap();
+
+        // CAS 1 : Score = 20 (< 50) -> Branche FAUX activée
+        let mut ctx = Interpreter::init_context(&graph);
+        ctx.set_var("score", Value::Int(20));
+
+        let steps = Interpreter::trigger_event(&graph, &mut ctx, "OnDoorInteract").unwrap();
+        assert_eq!(steps, 3); // Event -> Condition -> DenyAccess
+        assert_eq!(ctx.get_var("access_denied"), Some(&Value::Bool(true)), "Accès doit être refusé");
+        assert_eq!(ctx.get_var("door_is_open"), Some(&Value::Bool(false)), "Porte doit rester fermée");
+
+        // CAS 2 : Score = 65 (>= 50) -> Branche VRAI activée
+        ctx.set_var("score", Value::Int(65));
+        ctx.set_var("access_denied", Value::Bool(false));
+
+        let steps2 = Interpreter::trigger_event(&graph, &mut ctx, "OnDoorInteract").unwrap();
+        assert_eq!(steps2, 3); // Event -> Condition -> ToggleDoor
+        assert_eq!(ctx.get_var("door_is_open"), Some(&Value::Bool(true)), "Porte doit être ouverte");
+        assert_eq!(ctx.get_var("access_denied"), Some(&Value::Bool(false)), "Pas de refus d'accès");
+    }
 }

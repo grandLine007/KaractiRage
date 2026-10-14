@@ -1,9 +1,17 @@
 {
   "id": "graph_door_porte_secrete",
   "name": "Logique : Porte Principale",
-  "description": "Mécanique guidée : bascule l'état ouvert/fermé lors de l'interaction.",
+  "description": "Mécanique conditionnelle : vérifie si Score >= 50 avant d'ouvrir la porte.",
   "version": 1,
   "variables": {
+    "access_denied": {
+      "name": "access_denied",
+      "data_type": "Bool",
+      "initial_value": {
+        "type": "Bool",
+        "value": false
+      }
+    },
     "door_is_open": {
       "name": "door_is_open",
       "data_type": "Bool",
@@ -14,35 +22,9 @@
     }
   },
   "nodes": {
-    "act_toggle_door": {
-      "id": "act_toggle_door",
-      "name": "Basculer état de la porte",
-      "category": "World",
-      "description": "Inverse l'état ouvert/fermé de la porte.",
-      "kind": {
-        "Action": {
-          "action_type": "ToggleDoor"
-        }
-      },
-      "inputs": [
-        {
-          "id": "in_trigger",
-          "name": "Exécution",
-          "direction": "Input",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "outputs": [],
-      "ui": {
-        "position_x": 200.0,
-        "position_y": 0.0,
-        "color_tag": null
-      }
-    },
     "evt_door_interact": {
       "id": "evt_door_interact",
-      "name": "Interaction avec la porte",
+      "name": "Interaction Joueur",
       "category": "Interactions",
       "description": "Déclenché lors de l'appui sur E ou Espace près de la porte.",
       "kind": {
@@ -65,14 +47,121 @@
         "position_y": 0.0,
         "color_tag": null
       }
+    },
+    "act_deny_access": {
+      "id": "act_deny_access",
+      "name": "Alerte Accès Refusé",
+      "category": "World",
+      "description": "Signale le refus d'accès et empêche le passage.",
+      "kind": {
+        "Action": {
+          "action_type": "DenyAccess"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 340.0,
+        "position_y": 80.0,
+        "color_tag": null
+      }
+    },
+    "act_toggle_door": {
+      "id": "act_toggle_door",
+      "name": "Déverrouiller Porte",
+      "category": "World",
+      "description": "Bascule l'état ouvert/fermé de la porte.",
+      "kind": {
+        "Action": {
+          "action_type": "ToggleDoor"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 340.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "cond_score_50": {
+      "id": "cond_score_50",
+      "name": "Condition : Score >= 50",
+      "category": "MathLogic",
+      "description": "Vérifie si le joueur a accumulé au moins 50 points.",
+      "kind": {
+        "Condition": {
+          "operator": "ScoreAtLeast50"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_true",
+          "name": "Vrai [>= 50]",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        },
+        {
+          "id": "out_false",
+          "name": "Faux [< 50]",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 160.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
     }
   },
   "connections": [
     {
-      "id": "conn_door",
+      "id": "conn_evt_to_cond",
       "from_node": "evt_door_interact",
       "from_pin": "out_trigger",
+      "to_node": "cond_score_50",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_cond_true",
+      "from_node": "cond_score_50",
+      "from_pin": "out_true",
       "to_node": "act_toggle_door",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_cond_false",
+      "from_node": "cond_score_50",
+      "from_pin": "out_false",
+      "to_node": "act_deny_access",
       "to_pin": "in_trigger"
     }
   ]

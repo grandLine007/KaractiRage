@@ -14,32 +14,6 @@
     }
   },
   "nodes": {
-    "act_destroy": {
-      "id": "act_destroy",
-      "name": "Faire disparaître la pièce",
-      "category": "World",
-      "description": "Supprime l'objet du monde de jeu.",
-      "kind": {
-        "Action": {
-          "action_type": "DestroySelf"
-        }
-      },
-      "inputs": [
-        {
-          "id": "in_trigger",
-          "name": "Exécution",
-          "direction": "Input",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "outputs": [],
-      "ui": {
-        "position_x": 360.0,
-        "position_y": 0.0,
-        "color_tag": null
-      }
-    },
     "act_add_score": {
       "id": "act_add_score",
       "name": "Ajouter 10 au score",
@@ -96,6 +70,32 @@
       ],
       "ui": {
         "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_destroy": {
+      "id": "act_destroy",
+      "name": "Faire disparaître la pièce",
+      "category": "World",
+      "description": "Supprime l'objet du monde de jeu.",
+      "kind": {
+        "Action": {
+          "action_type": "DestroySelf"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 360.0,
         "position_y": 0.0,
         "color_tag": null
       }

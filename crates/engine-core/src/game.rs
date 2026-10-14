@@ -384,6 +384,21 @@ impl GameState {
                                             .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
                                         (n, "Pluie Etincelles")
                                     }
+                                    "ConditionScore50" => {
+                                        let id = format!("cond_score_{}", count);
+                                        let n = Node::new(&id, "Si Score >= 50", Category::MathLogic, "Vérifie si le score atteint 50 points", NodeKind::Condition { operator: "ScoreAtLeast50".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_true", "Vrai", PinDirection::Output))
+                                            .with_output(Pin::new_trigger("out_false", "Faux", PinDirection::Output));
+                                        (n, "Condition (Score >= 50)")
+                                    }
+                                    "DenyAccess" => {
+                                        let id = format!("act_deny_{}", count);
+                                        let n = Node::new(&id, "Alerte Refus Accès", Category::World, "Émet un refus d'accès sonore et visuel", NodeKind::Action { action_type: "DenyAccess".into() })
+                                            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+                                            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+                                        (n, "Alerte Refus")
+                                    }
                                     _ => return,
                                 };
                                 let id_str = new_node.id.clone();
@@ -757,6 +772,9 @@ impl GameState {
             let dist_door = (dx_door * dx_door + dy_door * dy_door).sqrt();
 
             if dist_door < 75.0 && (input.is_key_just_pressed(KeyCode::KeyE) || input.is_key_just_pressed(KeyCode::Space)) {
+                // Réinitialiser le flag de refus avant exécution
+                self.kvl_context.set_var("access_denied", Value::Bool(false));
+
                 if let Some(graph) = self.kvl_graphs.get(&door.script_path) {
                     if let Ok(steps) = Interpreter::trigger_event(
                         graph,
@@ -767,15 +785,34 @@ impl GameState {
                     }
                 }
 
-                door.is_open = !door.is_open;
-                let p_col = if door.is_open { 0x0010B981 } else { 0x00EF4444 };
-                spawn_requests.push((door.x + door.w / 2.0, door.y + door.h / 2.0, 20, p_col));
-
-                self.status_message = if door.is_open {
-                    format!("Porte ({}) ouverte !", door.id)
-                } else {
-                    format!("Porte ({}) fermée.", door.id)
+                let was_denied = match self.kvl_context.get_var("access_denied") {
+                    Some(Value::Bool(d)) => *d,
+                    _ => false,
                 };
+
+                if was_denied {
+                    // Refus d'accès : particules rouges et message d'avertissement
+                    spawn_requests.push((door.x + door.w / 2.0, door.y + door.h / 2.0, 25, 0x00EF4444));
+                    let current_score = match self.kvl_context.get_var("score") {
+                        Some(Value::Int(s)) => *s,
+                        _ => 0,
+                    };
+                    self.status_message = format!("Accès Refusé (Porte {}) ! Score insuffisant : {} / 50 requis.", door.id, current_score);
+                } else {
+                    let new_open = match self.kvl_context.get_var("door_is_open") {
+                        Some(Value::Bool(b)) => *b,
+                        _ => !door.is_open,
+                    };
+                    door.is_open = new_open;
+                    let p_col = if door.is_open { 0x0010B981 } else { 0x00EF4444 };
+                    spawn_requests.push((door.x + door.w / 2.0, door.y + door.h / 2.0, 20, p_col));
+
+                    self.status_message = if door.is_open {
+                        format!("Porte ({}) déverrouillée et ouverte !", door.id)
+                    } else {
+                        format!("Porte ({}) fermée.", door.id)
+                    };
+                }
             }
         }
 
@@ -1152,9 +1189,11 @@ impl GameState {
                 let block_y = insp_y + 215 + (idx as i32 * 56);
                 let (box_col, badge) = match node.kind {
                     NodeKind::Event { .. } => (0x000284C7, "1. EVENT :"),
+                    NodeKind::Condition { .. } => (0x00D97706, "? CONDITION :"),
                     NodeKind::Action { ref action_type } if action_type == "BonusPoints" => (0x00F59E0B, "BONUS :"),
                     NodeKind::Action { ref action_type } if action_type == "BoostSpeed" => (0x0006B6D4, "SPEED :"),
                     NodeKind::Action { ref action_type } if action_type == "SpawnSparkles" => (0x00EC4899, "FX :"),
+                    NodeKind::Action { ref action_type } if action_type == "DenyAccess" => (0x00DC2626, "! REFUS :"),
                     _ if idx == 1 => (0x00059669, "ACTION :"),
                     _ => (0x009333EA, "EFFET :"),
                 };
@@ -1178,8 +1217,9 @@ impl GameState {
             let mut sorted_nodes: Vec<&Node> = graph.nodes.values().collect();
             sorted_nodes.sort_by_key(|n| match n.kind {
                 NodeKind::Event { .. } => 0,
-                NodeKind::Action { ref action_type } if action_type == "AddScore" => 1,
-                _ => 2,
+                NodeKind::Condition { .. } => 1,
+                NodeKind::Action { ref action_type } if action_type == "AddScore" => 2,
+                _ => 3,
             });
 
             let mut pin_sockets: HashMap<(String, String), (i32, i32)> = HashMap::new();
@@ -1191,6 +1231,7 @@ impl GameState {
 
                 let (header_col, header_tag) = match node.kind {
                     NodeKind::Event { .. } => (0x000284C7, "EVENT"),
+                    NodeKind::Condition { .. } => (0x00D97706, "CONDITION"),
                     _ => (0x00059669, "ACTION"),
                 };
 
@@ -1242,14 +1283,35 @@ impl GameState {
                     let sock_y = py;
                     let is_connected = graph.is_pin_connected(&node.id, &pin.id);
 
-                    let sock_col = if is_connected { 0x0006B6D4 } else { 0x00FBBF24 };
+                    let sock_col = if pin.id == "out_true" {
+                        0x0010B981
+                    } else if pin.id == "out_false" {
+                        0x00EF4444
+                    } else if is_connected {
+                        0x0006B6D4
+                    } else {
+                        0x00FBBF24
+                    };
                     canvas.draw_rect(sock_x, sock_y, 22, 20, sock_col);
                     canvas.draw_rect_outline(sock_x, sock_y, 22, 20, 0x00FFFFFF, 1);
                     canvas.draw_text(sock_x + 6, sock_y + 3, ">", 0x00000000, 2);
 
-                    let pin_lbl = format!("{}:Out", pin.id);
+                    let pin_lbl = if pin.id == "out_true" {
+                        "Vrai:Out".to_string()
+                    } else if pin.id == "out_false" {
+                        "Faux:Out".to_string()
+                    } else {
+                        format!("{}:Out", pin.id)
+                    };
                     let text_w = pin_lbl.len() as i32 * 12;
-                    canvas.draw_text(sock_x - text_w - 6, sock_y + 3, &pin_lbl, 0x00FDE047, 2);
+                    let text_col = if pin.id == "out_true" {
+                        0x0034D399
+                    } else if pin.id == "out_false" {
+                        0x00F87171
+                    } else {
+                        0x00FDE047
+                    };
+                    canvas.draw_text(sock_x - text_w - 6, sock_y + 3, &pin_lbl, text_col, 2);
 
                     let socket_center = (sock_x + 11, sock_y + 10);
                     pin_sockets.insert((node.id.clone(), pin.id.clone()), socket_center);
@@ -1315,9 +1377,9 @@ impl GameState {
         // ==========================================
         if self.editor.show_node_palette {
             let pal_x = insp_x + 12;
-            let pal_y = insp_y + 90;
+            let pal_y = insp_y + 80;
             let pal_w = btn_w + 12;
-            let pal_h = 240;
+            let pal_h = 320;
 
             // Fond sombre avec bordure violette néon
             canvas.draw_rect(pal_x, pal_y, pal_w, pal_h, 0x000B0F19);
@@ -1331,11 +1393,13 @@ impl GameState {
                 ("BonusPoints", "+ Bonus Majeur (+50 pts)", 0x00F59E0B),
                 ("BoostSpeed", "+ Boost Vitesse (+120 px/s)", 0x0006B6D4),
                 ("SpawnSparkles", "+ Pluie d'Etincelles Dorees", 0x00EC4899),
+                ("ConditionScore50", "? Condition: Si Score >= 50", 0x00F97316),
+                ("DenyAccess", "! Action: Alerte Refus", 0x00EF4444),
                 ("cancel", "[ Fermer la palette ]", 0x0064748B),
             ];
 
             for (idx, (tpl_id, tpl_name, col)) in templates.iter().enumerate() {
-                let item_y = pal_y + 44 + (idx as i32 * 46);
+                let item_y = pal_y + 40 + (idx as i32 * 45);
                 let item_w = pal_w - 24;
                 let item_h = 36;
 
@@ -1520,5 +1584,38 @@ mod tests {
         assert_eq!(reloaded.coins[0].x, 555.0, "Position X de la pièce persistée");
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_door_condition_blocks_and_unlocks_with_score() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        let door_x = state.doors[0].x;
+        let door_y = state.doors[0].y;
+        let door_h = state.doors[0].h;
+
+        // Positionner le joueur à portée d'interaction de la porte
+        state.player_x = door_x - 30.0;
+        state.player_y = door_y + (door_h / 2.0);
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyE);
+
+        // 1. Score initial = 0 (< 50) -> La porte doit refuser l'accès et rester fermée
+        state.update(0.016, &input);
+        assert!(!state.doors[0].is_open, "La porte doit rester fermée quand le score < 50");
+        assert!(state.status_message.contains("Accès Refusé"), "Un message d'accès refusé doit être émis");
+
+        // 2. Augmenter le score à 50+
+        state.kvl_context.set_var("score", Value::Int(50));
+
+        // Interagir à nouveau avec la touche E
+        input.on_key_up(KeyCode::KeyE);
+        input.on_key_down(KeyCode::KeyE);
+        state.update(0.016, &input);
+
+        assert!(state.doors[0].is_open, "La porte doit s'ouvrir une fois le score >= 50 atteint");
+        assert!(state.status_message.contains("déverrouillée et ouverte"), "Le message d'ouverture doit être émis");
     }
 }

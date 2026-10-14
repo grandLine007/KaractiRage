@@ -133,7 +133,23 @@
 * **Mesures & Benchmarks** :
   * 9/9 tests unitaires réussis à 100% sur l'ensemble du Workspace Cargo.
   * Zéro avertissement de compilation, persistance validée par test automatisé de rechargement à froid.
-  * Temps de frame CPU moyen : ~420 µs (< 3% du budget frame de 16.6 ms).
+### Étape 10 : Blocs de Logique Conditionnelle & Variables KVL *(14 Octobre 2026)*
+* **Réalisations** :
+  * Implémentation du **branchement conditionnel dynamique dans KVL** (Option 2 choisie par l'utilisateur) :
+    * Évaluation dans `kvl-runtime` des nœuds `NodeKind::Condition { operator }` sur les variables mémoire (ex: `ScoreAtLeast50`, `CheckVarBool`).
+    * Routage déterministe du flux d'exécution vers la broche de sortie `out_true` (Vrai) ou `out_false` (Faux), avec traçabilité complète dans le journal d'audit.
+    * Nouvelles actions natives : `ToggleDoor` (ouverture porte), `DenyAccess` (flag de refus d'accès), `ResetScore`.
+  * Verrouillage conditionnel interactif dans `level_01` :
+    * La porte principale exige désormais `Score >= 50` pour s'ouvrir.
+    * En cas de score insuffisant (< 50) : déclenchement de la branche `out_false`, verrouillage maintenu, geyser de particules d'alerte rouges et message explicite.
+    * Dès que le joueur atteint 50 points : déclenchement de la branche `out_true`, déverrouillage de la porte et particules vertes.
+  * Enrichissement de l'éditeur visuel & palette :
+    * Nouveaux templates de palette : `? Condition: Si Score >= 50` et `! Action: Alerte Refus`.
+    * Thème visuel ambre / orange néon (`0x00D97706`) avec broches stylisées en vert émeraude (`Vrai:Out`) et rouge (`Faux:Out`).
+* **Mesures & Benchmarks** :
+  * 11/11 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo.
+  * Zéro avertissement de compilation.
+  * Temps de frame CPU moyen : ~420 µs (< 3% du budget frame de 16.6 ms pour 60 FPS).
 
 ---
 

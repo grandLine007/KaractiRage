@@ -127,6 +127,26 @@ impl Interpreter {
                             ctx.set_var("sparkle_burst", Value::Int(count + 1));
                             ctx.record_step(&next_node.id, &next_node.name, "Pluie d'étincelles dorées déclenchée !");
                         }
+                        "ToggleDoor" => {
+                            let is_open = match ctx.get_var("door_is_open") {
+                                Some(Value::Bool(b)) => *b,
+                                _ => false,
+                            };
+                            ctx.set_var("door_is_open", Value::Bool(!is_open));
+                            ctx.record_step(
+                                &next_node.id,
+                                &next_node.name,
+                                if !is_open { "Porte déverrouillée et ouverte !" } else { "Porte refermée." },
+                            );
+                        }
+                        "DenyAccess" => {
+                            ctx.set_var("access_denied", Value::Bool(true));
+                            ctx.record_step(&next_node.id, &next_node.name, "Accès refusé ! Condition non remplie.");
+                        }
+                        "ResetScore" => {
+                            ctx.set_var("score", Value::Int(0));
+                            ctx.record_step(&next_node.id, &next_node.name, "Score réinitialisé à 0 !");
+                        }
                         "DestroySelf" => {
                             ctx.record_step(&next_node.id, &next_node.name, "Objet marqué pour destruction");
                         }
@@ -140,17 +160,40 @@ impl Interpreter {
                 }
 
                 NodeKind::Condition { operator } => {
-                    ctx.record_step(
-                        &next_node.id,
-                        &next_node.name,
-                        format!("Évaluation Condition [{}]", operator),
-                    );
+                    let current_score = match ctx.get_var("score") {
+                        Some(Value::Int(s)) => *s,
+                        _ => 0,
+                    };
 
-                    // Dans un cas complet, on évalue les pins de données connectés
-                    // Pour ce premier prototype, on teste le branchement 'true' / 'false'
-                    let is_true = true; // par défaut
+                    let is_true = match operator.as_str() {
+                        "ScoreAtLeast50" | "ScoreGte50" => current_score >= 50,
+                        "ScoreAtLeast20" | "ScoreGte20" => current_score >= 20,
+                        "ScoreAtLeast10" | "ScoreGte10" => current_score >= 10,
+                        op if op.starts_with("ScoreAtLeast:") || op.starts_with("ScoreGte:") => {
+                            let threshold = op.split(':').nth(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(50);
+                            current_score >= threshold
+                        }
+                        op if op.starts_with("CheckVarBool:") => {
+                            let var_name = op.split(':').nth(1).unwrap_or("");
+                            match ctx.get_var(var_name) {
+                                Some(Value::Bool(b)) => *b,
+                                _ => false,
+                            }
+                        }
+                        _ => {
+                            // Par défaut si non spécifié, tester si le score est positif
+                            current_score > 0
+                        }
+                    };
+
+                    let msg = if is_true {
+                        format!("Condition [{}] VRAIE (Score : {}) -> Branche [out_true]", operator, current_score)
+                    } else {
+                        format!("Condition [{}] FAUSSE (Score : {}) -> Branche [out_false]", operator, current_score)
+                    };
+                    ctx.record_step(&next_node.id, &next_node.name, msg);
+
                     let out_pin = if is_true { "out_true" } else { "out_false" };
-
                     Self::execute_flow(graph, ctx, &next_node.id, out_pin, executed_nodes)?;
                 }
 
