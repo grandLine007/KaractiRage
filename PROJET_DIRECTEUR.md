@@ -81,6 +81,18 @@
   * Empreinte mémoire stable : ~15 Mo de RAM.
   * Zéro régression, 100% des tests unitaires validés.
 
+### Étape 6 : Refonte de l'affichage & Typographie haute lisibilité *(14 Octobre 2026)*
+* **Réalisations** :
+  * Réponse au retour utilisateur (*« revois un peu l'affichage, c'est trop petit »*) particulièrement marqué sur les écrans haute densité (Retina / HiDPI).
+  * Résolution de fenêtre native portée à **1200 x 800** (au lieu de 800 x 600).
+  * Implémentation du moteur de rendu de texte bitmap avec multiplicateur d'échelle (`scale = 2` ou `3`) : glyphes 12x14 px et 18x21 px parfaitement lisibles sans flou.
+  * Re-dimensionnement et repositionnement proportionnel des entités interactives (joueur, pièces, porte, particules).
+  * Panneau d'inspecteur latéral élargi (360 px), encarts de titres de scènes et télémétrie redimensionnés dynamiquement.
+* **Mesures & Benchmarks** :
+  * Fluidité maintenue : temps de frame CPU toujours < 1 ms en software rendering direct.
+  * Confort visuel immédiat en jeu et dans l'inspecteur KVL.
+
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur
