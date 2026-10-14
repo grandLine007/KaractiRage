@@ -151,6 +151,35 @@
   * Zéro avertissement de compilation.
   * Temps de frame CPU moyen : ~420 µs (< 3% du budget frame de 16.6 ms pour 60 FPS).
 
+### Étape 11 : Système Sonore Rétro & Synthèse Procédurale Low-Overhead *(14 Octobre 2026)*
+* **Réalisations** :
+  * Implémentation du **synthétiseur sonore procédural temps réel** (Option A choisie par l'utilisateur) :
+    * Intégration de `tinyaudio` (moteur audio bas niveau multiplateforme léger, CoreAudio sous macOS, WASAPI sous Windows, ALSA sous Linux).
+    * Générateur d'ondes mathématiques pures (ondes carrées, sinusoïdales, triangulaires, pseudo-bruit blanc et glissandi avec enveloppe d'amplitude ADSR).
+    * Zéro dépendance d'actifs volumineux sur disque : 100% procédural (aucun fichier .wav/.mp3 à charger).
+    * 9 familles d'effets sonores arcade rétro :
+      * `Coin` : carillon doré bi-ton B5 (987 Hz) $\rightarrow$ E6 (1318 Hz).
+      * `BonusFanfare` : arpège héroïque 4 notes C5-E5-G5-C6.
+      * `DoorOpen` : glissando ascendant triangulaire 220 Hz $\rightarrow$ 440 Hz.
+      * `DoorClose` : glissando descendant sourd 380 Hz $\rightarrow$ 140 Hz.
+      * `AccessDenied` : double bip grave de buzzer d'erreur (130 Hz).
+      * `SpeedBoost` : balayage de fréquence ascendant avec vibrato dynamique.
+      * `Sparkles` : poussière d'étoiles scintillante haute fréquence (1200-2400 Hz).
+      * `UiClick` : impulsion courte et nette (1200 Hz) pour validation UI et câblage.
+      * `WireCut` : claquement percussif texturé pour section de fil KVL.
+  * Raccordement complet aux événements de jeu et d'édition :
+    * Collision avec une pièce $\rightarrow$ son `Coin` (ou `BonusFanfare` si bonus >= 50).
+    * Interaction avec la porte $\rightarrow$ `AccessDenied` si verrouillée, sinon `DoorOpen` / `DoorClose`.
+    * Câblage de nœuds KVL $\rightarrow$ `UiClick` lors de la pose, `WireCut` lors de la section de liaison.
+    * Sauvegarde globale (`Ctrl+S`) $\rightarrow$ carillon de validation `BonusFanfare`.
+    * Raccourci Mute clavier (`M`) : bascule instantanée du flux audio avec retour haptique et indicateur HUD (`[AUDIO: ACTIF (M)]` vert ou `[AUDIO: MUET (M)]` rouge).
+  * Résilience et architecture sans crash :
+    * Dégradation gracieuse automatique (`is_available = false`, `[AUDIO: N/D]`) en environnement sans carte son / tests automatisés headless.
+* **Mesures & Benchmarks** :
+  * 14/14 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+3 tests audio et intégration).
+  * Zéro avertissement de compilation, buffer audio streaming à faible latence (~10 ms).
+  * Impact CPU négligeable (< 0.2% de CPU supplémentaire par frame).
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

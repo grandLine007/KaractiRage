@@ -1,4 +1,5 @@
 use crate::adaptation::AdaptationManager;
+use crate::audio::{AudioEngine, SoundType};
 use crate::editor::{EditorMode, EditorState, SelectedEntity};
 use crate::input::InputState;
 use crate::renderer::Canvas;
@@ -63,6 +64,7 @@ pub struct GameState {
     pub telemetry: Telemetry,
     pub adaptation: AdaptationManager,
     pub editor: EditorState,
+    pub audio: AudioEngine,
 }
 
 impl GameState {
@@ -167,10 +169,11 @@ impl GameState {
             particles: Vec::new(),
             kvl_graphs,
             kvl_context,
-            status_message: "Prêt ! TAB: Mode Éditeur | F1: Télémétrie | R: Reload".into(),
+            status_message: "Prêt ! TAB: Mode Éditeur | M: Son | F1: Télémétrie | R: Reload".into(),
             telemetry: Telemetry::new(),
             adaptation: AdaptationManager::new(),
             editor: EditorState::new(),
+            audio: AudioEngine::new(),
         })
     }
 
@@ -236,6 +239,7 @@ impl GameState {
             fs::write(target_path, json)?;
         }
 
+        self.audio.play(SoundType::BonusFanfare);
         self.status_message = "Scène et scripts KVL sauvegardés sur disque avec succès ! (Ctrl+S)".into();
         Ok(())
     }
@@ -273,6 +277,16 @@ impl GameState {
                 self.status_message = format!("Erreur lors de la sauvegarde : {}", e);
             }
             return;
+        }
+
+        // Bascule Son (Touche M)
+        if input.is_key_just_pressed(KeyCode::KeyM) {
+            let muted = self.audio.toggle_mute();
+            self.status_message = if muted {
+                "Audio procédural : MUET (Mute actif)".into()
+            } else {
+                "Audio procédural : ACTIF (Synthèse 44.1 kHz)".into()
+            };
         }
 
         // Bascule Mode Jeu / Mode Édition (TAB)
@@ -403,6 +417,7 @@ impl GameState {
                                 };
                                 let id_str = new_node.id.clone();
                                 graph.add_node(new_node);
+                                self.audio.play(SoundType::UiClick);
                                 self.editor.show_node_palette = false;
                                 self.status_message = format!("Nœud '{}' ({}) créé ! Reliez ses pins à la souris.", id_str, name);
                                 return;
@@ -434,6 +449,7 @@ impl GameState {
                             let conn_id = cut_hit.connection_id.clone();
                             if let Some(graph) = self.kvl_graphs.get_mut(script_path) {
                                 if graph.remove_connection_by_id(&conn_id) {
+                                    self.audio.play(SoundType::WireCut);
                                     self.status_message = format!("Connexion '{}' coupée avec succès !", conn_id);
                                     return;
                                 }
@@ -454,6 +470,7 @@ impl GameState {
                                     if let Some(graph) = self.kvl_graphs.get_mut(script_path) {
                                         match graph.connect_pins(&wire.from_node, &wire.from_pin, &node_id, &pin_id) {
                                             Ok(_) => {
+                                                self.audio.play(SoundType::UiClick);
                                                 self.status_message = format!("Nouvelle liaison établie : {}:{} -> {}:{} !", wire.from_node, wire.from_pin, node_id, pin_id);
                                             }
                                             Err(err) => {
@@ -477,6 +494,7 @@ impl GameState {
                                     if let Some(graph) = self.kvl_graphs.get_mut(script_path) {
                                         let removed = graph.disconnect_pin(&node_id, &pin_id);
                                         if removed > 0 {
+                                            self.audio.play(SoundType::WireCut);
                                             self.status_message = format!("Broche {}:{} déconnectée ({} fil retiré).", node_id, pin_id, removed);
                                         } else {
                                             self.status_message = format!("Broche {}:{} libre (prête à recevoir un fil).", node_id, pin_id);
@@ -744,6 +762,15 @@ impl GameState {
                 if dist < (self.player_size / 2.0 + coin.radius) {
                     coin.collected = true;
 
+                    let prev_score = match self.kvl_context.get_var("score") {
+                        Some(Value::Int(s)) => *s,
+                        _ => 0,
+                    };
+                    let prev_boost = match self.kvl_context.get_var("speed_boost") {
+                        Some(Value::Int(b)) => *b,
+                        _ => 0,
+                    };
+
                     if let Some(graph) = self.kvl_graphs.get(&coin.script_path) {
                         if let Ok(steps) = Interpreter::trigger_event(
                             graph,
@@ -760,6 +787,19 @@ impl GameState {
                         Some(Value::Int(s)) => *s,
                         _ => 0,
                     };
+                    let new_boost = match self.kvl_context.get_var("speed_boost") {
+                        Some(Value::Int(b)) => *b,
+                        _ => 0,
+                    };
+
+                    if new_boost > prev_boost {
+                        self.audio.play(SoundType::SpeedBoost);
+                    } else if score >= prev_score + 50 {
+                        self.audio.play(SoundType::BonusFanfare);
+                    } else {
+                        self.audio.play(SoundType::Coin);
+                    }
+
                     self.status_message = format!("Pièce ({}) collectée ! Score KVL : {}", coin.id, score);
                 }
             }
@@ -791,7 +831,8 @@ impl GameState {
                 };
 
                 if was_denied {
-                    // Refus d'accès : particules rouges et message d'avertissement
+                    // Refus d'accès : son d'erreur, particules rouges et message d'avertissement
+                    self.audio.play(SoundType::AccessDenied);
                     spawn_requests.push((door.x + door.w / 2.0, door.y + door.h / 2.0, 25, 0x00EF4444));
                     let current_score = match self.kvl_context.get_var("score") {
                         Some(Value::Int(s)) => *s,
@@ -804,6 +845,11 @@ impl GameState {
                         _ => !door.is_open,
                     };
                     door.is_open = new_open;
+                    if door.is_open {
+                        self.audio.play(SoundType::DoorOpen);
+                    } else {
+                        self.audio.play(SoundType::DoorClose);
+                    }
                     let p_col = if door.is_open { 0x0010B981 } else { 0x00EF4444 };
                     spawn_requests.push((door.x + door.w / 2.0, door.y + door.h / 2.0, 20, p_col));
 
@@ -819,6 +865,7 @@ impl GameState {
         // Traitement des étincelles déclenchées par KVL (SpawnSparkles)
         if let Some(Value::Int(sparkles)) = self.kvl_context.get_var("sparkle_burst") {
             if *sparkles > 0 {
+                self.audio.play(SoundType::Sparkles);
                 spawn_requests.push((self.player_x, self.player_y, (*sparkles as usize) * 35, 0x00FDE047));
                 self.kvl_context.set_var("sparkle_burst", Value::Int(0));
             }
@@ -851,6 +898,14 @@ impl GameState {
 
         if is_edit_mode {
             canvas.draw_text(20, 18, "KARACTIRAGE [MODE EDITION] - TAB: JOUER | CLIC: DEPLACER", 0x00F8FAFC, 2);
+            let (audio_txt, audio_col) = if !self.audio.is_available {
+                ("[AUDIO: N/D]", 0x0094A3B8)
+            } else if self.audio.is_muted() {
+                ("[AUDIO: MUET]", 0x00EF4444)
+            } else {
+                ("[AUDIO: ACTIF]", 0x0010B981)
+            };
+            canvas.draw_text(w - 220, 18, audio_txt, audio_col, 2);
         } else {
             let header_title = format!("KARACTIRAGE - {}", self.scene_name.to_uppercase());
             canvas.draw_text(20, 18, &header_title, 0x00FFFFFF, 2);
@@ -859,12 +914,21 @@ impl GameState {
             let profile_txt = format!("[{}]", self.adaptation.current_profile.name());
             canvas.draw_text(w - 580, 20, &profile_txt, profile_color, 2);
 
+            let (audio_txt, audio_col) = if !self.audio.is_available {
+                ("[AUDIO: N/D]", 0x0094A3B8)
+            } else if self.audio.is_muted() {
+                ("[AUDIO: MUET (M)]", 0x00EF4444)
+            } else {
+                ("[AUDIO: ACTIF (M)]", 0x0010B981)
+            };
+            canvas.draw_text(w - 410, 20, audio_txt, audio_col, 2);
+
             let score = match self.kvl_context.get_var("score") {
                 Some(Value::Int(s)) => *s,
                 _ => 0,
             };
             let score_txt = format!("SCORE: {}", score);
-            canvas.draw_text(w - 220, 18, &score_txt, 0x00FBBF24, 2);
+            canvas.draw_text(w - 200, 18, &score_txt, 0x00FBBF24, 2);
         }
 
         // 2. Zone de jeu (Dimensions réactives)
@@ -1050,9 +1114,9 @@ impl GameState {
         canvas.draw_rect(0, bottom_y, w as u32, 2, 0x00334155);
 
         let info_line = if is_edit_mode {
-            "MODE EDITION : Clic gauche (Deplacer) | ESPACE (Deplier KVL) | TAB (Reprendre)"
+            "MODE EDITION : Clic (Deplacer) | M (Son) | ESPACE (Deplier KVL) | TAB (Reprendre)"
         } else {
-            "MODE JEU : TAB (Editeur KVL) | F1 (Telemetrie) | F2 (Profil) | F3 (Auto) | R (Reload)"
+            "MODE JEU : TAB (Editeur KVL) | M (Son On/Off) | F1 (Telemetrie) | F2 (Profil) | F3 (Auto) | R (Reload)"
         };
         canvas.draw_text(20, bottom_y + 14, info_line, 0x0094A3B8, 2);
         canvas.draw_text(20, bottom_y + 40, &self.status_message, 0x0038BDF8, 2);
@@ -1617,5 +1681,40 @@ mod tests {
 
         assert!(state.doors[0].is_open, "La porte doit s'ouvrir une fois le score >= 50 atteint");
         assert!(state.status_message.contains("déverrouillée et ouverte"), "Le message d'ouverture doit être émis");
+    }
+
+    #[test]
+    fn test_audio_mute_toggle_and_gameplay_sound_triggers() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        assert!(!state.audio.is_muted(), "L'audio doit être actif au démarrage");
+
+        // 1. Bascule Mute via KeyCode::KeyM
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyM);
+        state.update(0.016, &input);
+
+        assert!(state.audio.is_muted(), "La touche M doit couper le son (Mute)");
+        assert!(state.status_message.contains("MUET"));
+
+        // Rétablir le son
+        input.on_key_up(KeyCode::KeyM);
+        input.on_key_down(KeyCode::KeyM);
+        state.update(0.016, &input);
+
+        assert!(!state.audio.is_muted(), "Un second appui sur M doit réactiver le son");
+        assert!(state.status_message.contains("ACTIF"));
+
+        // 2. Émission d'effets sonores sans panique
+        state.audio.play(SoundType::Coin);
+        state.audio.play(SoundType::DoorOpen);
+        state.audio.play(SoundType::DoorClose);
+        state.audio.play(SoundType::AccessDenied);
+        state.audio.play(SoundType::BonusFanfare);
+        state.audio.play(SoundType::SpeedBoost);
+        state.audio.play(SoundType::Sparkles);
+        state.audio.play(SoundType::UiClick);
+        state.audio.play(SoundType::WireCut);
     }
 }

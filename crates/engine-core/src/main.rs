@@ -8,6 +8,7 @@ use winit::keyboard::PhysicalKey;
 use winit::window::WindowBuilder;
 
 mod adaptation;
+mod audio;
 mod editor;
 mod game;
 mod input;
