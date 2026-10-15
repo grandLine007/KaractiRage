@@ -29,13 +29,19 @@ const WINDOW_WIDTH: u32 = 1200;
 const WINDOW_HEIGHT: u32 = 800;
 
 fn main() {
-    println!("=== KARACTIRAGE ENGINE 2D - DEMO INITIALE ===");
-    println!("Démarrage du fenêtrage natif et du renderer de compatibilité...\n");
+    println!("============================================================");
+    println!("⚡ KARACTIRAGE ENGINE 2D — NATIVE RUNTIME (Dark Edition)");
+    println!("============================================================");
+    println!("🎮 Mode initial  : JEU DE DÉMONSTRATION (Low-End / 60 FPS)");
+    println!("🛠️  Mode Studio   : Appuyez sur [TAB] pour l'Atelier Studio ECS & KVL");
+    println!("📖 Guide Moteur  : Appuyez sur [H] pour le Guide Pédagogique");
+    println!("🌀 Multi-Genres  : Appuyez sur [F4 / L] pour changer de genre (RPG, Plateforme, Shmup, Sokoban)");
+    println!("🌐 Démo Web/CSS  : Accessible dans votre navigateur sur http://localhost:8080/\n");
 
     let event_loop = EventLoop::new().expect("Création de l'EventLoop");
     let window = Rc::new(
         WindowBuilder::new()
-            .with_title("⚡ KaractiRage Engine 2D — Studio & Runtime ECS (Low-End / 60 FPS)")
+            .with_title("⚡ KaractiRage Engine 2D — Studio & Runtime ECS (Dark Edition)")
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
             .build(&event_loop)
             .expect("Création de la fenêtre"),

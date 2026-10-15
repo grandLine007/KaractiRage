@@ -2819,16 +2819,17 @@ impl GameState {
     }
 
     pub fn render(&mut self, canvas: &mut Canvas) {
-        canvas.clear(0x000B0F19);
+        canvas.clear(0x00080B14);
 
         let is_edit_mode = self.editor.mode == EditorMode::Edit;
         let w = canvas.width as i32;
         let h = canvas.height as i32;
 
-        // 1. Bandeau supérieur (HUD) : Hauteur 56px
-        let header_bg = if is_edit_mode { 0x001E1035 } else { 0x000F172A };
-        let header_border = if is_edit_mode { 0x007C3AED } else { 0x000284C7 };
+        // 1. Bandeau supérieur (HUD) : Hauteur 56px (Thème Dark Studio)
+        let header_bg = if is_edit_mode { 0x00150E28 } else { 0x000D1322 };
+        let header_border = if is_edit_mode { 0x007C3AED } else { 0x00232D48 };
         canvas.draw_rect(0, 0, w as u32, 56, header_bg);
+        canvas.draw_rect(0, 54, w as u32, 1, 0x001F293D);
         canvas.draw_rect(0, 55, w as u32, 2, header_border);
 
         if is_edit_mode {
@@ -2927,24 +2928,24 @@ impl GameState {
             } else {
                 ("AUDIO: ON", 0x0010B981)
             };
-            canvas.draw_badge(w - 295, 12, 90, 32, 0x001E293B, audio_col, audio_txt, audio_col, 2);
+            canvas.draw_badge(w - 335, 12, 95, 32, 0x001E293B, audio_col, audio_txt, audio_col, 2);
 
             // Bouton Guide Interactif (? AIDE)
-            let help_x = w - 195;
+            let help_x = w - 230;
             let help_y = 12;
             let help_w = 95;
             let help_h = 32;
             let help_bg = if self.editor.show_help_modal { 0x004F46E5 } else { 0x001E1B4B };
-            canvas.draw_badge(help_x, help_y, help_w as u32, help_h as u32, help_bg, 0x00818CF8, "[? AIDE]", 0x00E0E7FF, 2);
+            canvas.draw_badge(help_x, help_y, help_w as u32, help_h as u32, help_bg, 0x00818CF8, "[H: AIDE]", 0x00E0E7FF, 2);
             self.editor.help_btn_hitbox = Some((help_x, help_y, help_w as u32, help_h as u32));
 
             // Bouton Bascule Mode Jeu [TAB]
-            canvas.draw_badge(w - 92, 12, 76, 32, 0x00064E3B, 0x0010B981, "JOUER", 0x00D1FAE5, 2);
+            canvas.draw_badge(w - 125, 12, 110, 32, 0x00064E3B, 0x0010B981, "[TAB] JOUER", 0x00D1FAE5, 2);
         } else {
             self.editor.help_btn_hitbox = None;
 
-            // Brand Badge Jeu
-            canvas.draw_badge(16, 12, 140, 32, 0x00082F49, 0x000284C7, "KARACTIRAGE", 0x00E0F2FE, 2);
+            // Brand Badge Jeu - Dark Edition
+            canvas.draw_badge(16, 12, 165, 32, 0x00151D33, 0x007C3AED, "KARACTIRAGE 2D", 0x00F3E8FF, 2);
 
             // Genre déduit des composants réels (agnostique du nom de fichier de scène)
             let player_mode = self
@@ -2962,7 +2963,7 @@ impl GameState {
                 MovementMode::TopDown if has_pushables => ("PUZZLE SOKOBAN", 0x00F59E0B, 0x00FBBF24),
                 MovementMode::TopDown => ("TOP-DOWN RPG", 0x000284C7, 0x0038BDF8),
             };
-            canvas.draw_badge(164, 12, 120, 32, 0x001E293B, genre_bd, genre_badge, genre_col, 2);
+            canvas.draw_badge(189, 12, 120, 32, 0x001E293B, genre_bd, genre_badge, genre_col, 2);
 
             let score = match self.kvl_context.get_var("score") {
                 Some(Value::Int(s)) => *s,
@@ -2992,16 +2993,16 @@ impl GameState {
                     }
                 }
             };
-            canvas.draw_badge(292, 12, 380, 32, obj_bg, obj_bd, obj_txt, obj_fg, 2);
+            canvas.draw_badge(317, 12, 360, 32, obj_bg, obj_bd, obj_txt, obj_fg, 2);
 
             // Score Pill
             let score_txt = format!("SCORE: {}", score);
-            canvas.draw_badge(678, 12, 115, 32, 0x001E293B, 0x00F59E0B, &score_txt, 0x00FBBF24, 2);
+            canvas.draw_badge(685, 12, 110, 32, 0x001E293B, 0x00F59E0B, &score_txt, 0x00FBBF24, 2);
 
             // Profil d'adaptation
             let profile_color = self.adaptation.current_profile.color();
             let profile_txt = format!("{}", self.adaptation.current_profile.name());
-            canvas.draw_badge(801, 12, 85, 32, 0x001E293B, profile_color, &profile_txt, profile_color, 2);
+            canvas.draw_badge(803, 12, 85, 32, 0x001E293B, profile_color, &profile_txt, profile_color, 2);
 
             // Audio
             let (audio_txt, audio_col) = if !self.audio.is_available {
@@ -3011,19 +3012,19 @@ impl GameState {
             } else {
                 ("AUDIO: ON", 0x0010B981)
             };
-            canvas.draw_badge(894, 12, 95, 32, 0x001E293B, audio_col, audio_txt, audio_col, 2);
+            canvas.draw_badge(896, 12, 95, 32, 0x001E293B, audio_col, audio_txt, audio_col, 2);
 
             // Bouton Guide (? AIDE)
-            let help_x = w - 195;
+            let help_x = w - 245;
             let help_y = 12;
             let help_w = 95;
             let help_h = 32;
             let help_bg = if self.editor.show_help_modal { 0x004F46E5 } else { 0x001E1B4B };
-            canvas.draw_badge(help_x, help_y, help_w as u32, help_h as u32, help_bg, 0x00818CF8, "[? AIDE]", 0x00E0E7FF, 2);
+            canvas.draw_badge(help_x, help_y, help_w as u32, help_h as u32, help_bg, 0x00818CF8, "[H: AIDE]", 0x00E0E7FF, 2);
             self.editor.help_btn_hitbox = Some((help_x, help_y, help_w as u32, help_h as u32));
 
             // Bouton Bascule Studio [TAB]
-            canvas.draw_badge(w - 92, 12, 76, 32, 0x002E1065, 0x00A855F7, "STUDIO", 0x00F3E8FF, 2);
+            canvas.draw_badge(w - 140, 12, 125, 32, 0x002E1065, 0x00A855F7, "[TAB] STUDIO", 0x00F3E8FF, 2);
         }
 
         // 2. Zone de jeu (Viewport)
@@ -3905,10 +3906,10 @@ impl GameState {
             }
         }
 
-        // 3. Bandeau inférieur : Commandes pédagogiques, statut et traces KVL (Hauteur 175px)
+        // 3. Bandeau inférieur : Commandes pédagogiques, statut et traces KVL (Hauteur 175px - Dark Studio)
         let bottom_y = h - 175;
-        canvas.draw_rect(0, bottom_y, w as u32, 175, 0x000F172A);
-        canvas.draw_rect(0, bottom_y, w as u32, 2, 0x001E293B);
+        canvas.draw_rect(0, bottom_y, w as u32, 175, 0x000D1322);
+        canvas.draw_rect(0, bottom_y, w as u32, 2, 0x00232D48);
 
         // Ruban de commandes rapides claires et pédagogiques
         if is_edit_mode {
@@ -3933,12 +3934,12 @@ impl GameState {
             }
         } else {
             let pills = [
+                ("TAB: Studio ECS", 0x002E1065, 0x00F3E8FF),
+                ("H: Guide", 0x001E1B4B, 0x00E0E7FF),
                 ("F4 / L: Changer Genre", 0x00047857, 0x00D1FAE5),
                 ("ZQSD / Fleches: Bouger", 0x000369A1, 0x00E0F2FE),
                 ("F: Tirer Laser", 0x00B45309, 0x00FDE68A),
                 ("E: Interagir", 0x001E293B, 0x0094A3B8),
-                ("TAB: Studio ECS", 0x006B21A8, 0x00F3E8FF),
-                ("H: Guide", 0x004338CA, 0x00E0E7FF),
                 ("N: Radar", 0x001E293B, 0x0094A3B8),
                 ("G: Grille", 0x001E293B, 0x0094A3B8),
                 ("M: Son", 0x001E293B, 0x0094A3B8),
@@ -3952,14 +3953,14 @@ impl GameState {
         }
 
         // Ligne de statut du moteur
-        canvas.draw_badge(20, bottom_y + 42, 110, 24, 0x001E293B, 0x0038BDF8, "ÉTAT MOTEUR", 0x0038BDF8, 1);
+        canvas.draw_badge(20, bottom_y + 42, 110, 24, 0x00151D33, 0x007C3AED, "STATUT KVL", 0x00F3E8FF, 1);
         canvas.draw_text(140, bottom_y + 46, &self.status_message, 0x00F8FAFC, 2);
 
         // Console de traçabilité d'exécution KVL
         let console_y = bottom_y + 74;
-        canvas.draw_rect(20, console_y, (w - 40) as u32, 92, 0x000A0F1D);
-        canvas.draw_rect_outline(20, console_y, (w - 40) as u32, 92, 0x001E293B, 1);
-        canvas.draw_text(30, console_y + 6, "CONSOLE RUNTIME KVL (FLUX RÉACTIF DE LA LOGIQUE) :", 0x0064748B, 1);
+        canvas.draw_rect(20, console_y, (w - 40) as u32, 92, 0x00060911);
+        canvas.draw_rect_outline(20, console_y, (w - 40) as u32, 92, 0x001F293D, 1);
+        canvas.draw_text(30, console_y + 6, "CONSOLE RUNTIME KVL (DARK EDITION) :", 0x0006B6D4, 1);
 
         let log_count = self.kvl_context.execution_log.len();
         let start_idx = log_count.saturating_sub(3);
@@ -4056,14 +4057,14 @@ impl GameState {
 
         // Ombrage d'arrière-plan
         canvas.draw_rect(0, 0, screen_w as u32, screen_h as u32, 0x00060913);
-        canvas.draw_rect(mx, my, mw as u32, mh as u32, 0x000F172A);
-        canvas.draw_rect_outline(mx, my, mw as u32, mh as u32, 0x0038BDF8, 2);
-        canvas.draw_corner_brackets(mx, my, mw as u32, mh as u32, 20, 0x0038BDF8);
+        canvas.draw_rect(mx, my, mw as u32, mh as u32, 0x000D1322);
+        canvas.draw_rect_outline(mx, my, mw as u32, mh as u32, 0x007C3AED, 2);
+        canvas.draw_corner_brackets(mx, my, mw as u32, mh as u32, 20, 0x00A855F7);
 
-        // Barre d'en-tête
-        canvas.draw_rect(mx, my, mw as u32, 40, 0x000284C7);
-        canvas.draw_text(mx + 16, my + 11, "GUIDE PÉDAGOGIQUE ET ARCHITECTURE DU MOTEUR", 0x00FFFFFF, 2);
-        canvas.draw_badge(mx + mw - 110, my + 7, 95, 26, 0x000369A1, 0x0038BDF8, "[ÉCHAP]", 0x00E0F2FE, 1);
+        // Barre d'en-tête (Thème Dark Améthyste)
+        canvas.draw_rect(mx, my, mw as u32, 40, 0x002E1065);
+        canvas.draw_text(mx + 16, my + 11, "GUIDE PÉDAGOGIQUE — KARACTIRAGE DARK EDITION", 0x00F3E8FF, 2);
+        canvas.draw_badge(mx + mw - 110, my + 7, 95, 26, 0x003B1D66, 0x00A855F7, "[ÉCHAP]", 0x00F3E8FF, 1);
 
         // Section 1 : ARCHITECTURE UNIVERSELLE & MULTI-GENRES
         let mut cy = my + 54;
