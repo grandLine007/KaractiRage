@@ -1,6 +1,7 @@
 {
   "name": "Niveau 1 : Salle des Émeraudes",
   "description": "Scène universelle KaractiRage avec entités ECS et scripts KVL.",
+  "objective": "COLLECTEZ 50 OR POUR OUVRIR LA PORTE DU TEMPLE",
   "entities": [
     {
       "id": 1,

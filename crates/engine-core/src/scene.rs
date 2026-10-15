@@ -72,6 +72,8 @@ pub struct SceneData {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
+    pub objective: Option<String>,
+    #[serde(default)]
     pub entities: Vec<Entity>,
 
     // Rétrocompatibilité avec les scènes existantes

@@ -1,6 +1,7 @@
 {
   "name": "Niveau Plateforme : L'Ascension des Nuages",
   "description": "Démonstration du contrôleur de plateforme 2D universel (gravité, sauts, gouffres et plateformes flottantes).",
+  "objective": "SAUTEZ SUR LES PLATEFORMES ET ATTEIGNEZ LE PORTAIL",
   "entities": [
     {
       "id": 1,

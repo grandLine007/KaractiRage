@@ -113,6 +113,7 @@ pub fn segment_intersects_aabb(x1: f32, y1: f32, x2: f32, y2: f32, bx: f32, by: 
 pub struct GameState {
     pub scene_path: String,
     pub scene_name: String,
+    pub scene_objective: Option<String>,
     pub entities: Vec<Entity>,
     pub particles: Vec<Particle>,
     pub kvl_graphs: HashMap<String, Graph>,
@@ -313,6 +314,102 @@ impl GameState {
                     None => return false,
                 }
             }
+            "SpeedDec" => {
+                match ent.movement {
+                    Some(ref mut mov) => {
+                        mov.speed = (mov.speed - 25.0).max(25.0);
+                        self.status_message = format!("Vitesse de '{}' : {:.0} px/s.", ent.name, mov.speed);
+                    }
+                    None => return false,
+                }
+            }
+            "SpeedInc" => {
+                match ent.movement {
+                    Some(ref mut mov) => {
+                        mov.speed = (mov.speed + 25.0).min(900.0);
+                        self.status_message = format!("Vitesse de '{}' : {:.0} px/s.", ent.name, mov.speed);
+                    }
+                    None => return false,
+                }
+            }
+            "JumpDec" => {
+                match ent.movement {
+                    Some(ref mut mov) => {
+                        if let MovementMode::Platformer { ref mut jump_force, .. } = mov.mode {
+                            *jump_force = (*jump_force - 40.0).max(120.0);
+                            self.status_message = format!("Impulsion saut de '{}' : {:.0} px/s.", ent.name, *jump_force);
+                        } else {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
+            "JumpInc" => {
+                match ent.movement {
+                    Some(ref mut mov) => {
+                        if let MovementMode::Platformer { ref mut jump_force, .. } = mov.mode {
+                            *jump_force = (*jump_force + 40.0).min(1200.0);
+                            self.status_message = format!("Impulsion saut de '{}' : {:.0} px/s.", ent.name, *jump_force);
+                        } else {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
+            "GravityDec" => {
+                match ent.movement {
+                    Some(ref mut mov) => {
+                        if let MovementMode::Platformer { ref mut gravity, .. } = mov.mode {
+                            *gravity = (*gravity - 80.0).max(100.0);
+                            self.status_message = format!("Gravité de '{}' : {:.0} px/s².", ent.name, *gravity);
+                        } else {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
+            "GravityInc" => {
+                match ent.movement {
+                    Some(ref mut mov) => {
+                        if let MovementMode::Platformer { ref mut gravity, .. } = mov.mode {
+                            *gravity = (*gravity + 80.0).min(2500.0);
+                            self.status_message = format!("Gravité de '{}' : {:.0} px/s².", ent.name, *gravity);
+                        } else {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
+            "ThrustDec" => {
+                match ent.movement {
+                    Some(ref mut mov) => {
+                        if let MovementMode::SpaceInertia { ref mut thrust, .. } = mov.mode {
+                            *thrust = (*thrust - 50.0).max(100.0);
+                            self.status_message = format!("Poussée spatiale de '{}' : {:.0}.", ent.name, *thrust);
+                        } else {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
+            "ThrustInc" => {
+                match ent.movement {
+                    Some(ref mut mov) => {
+                        if let MovementMode::SpaceInertia { ref mut thrust, .. } = mov.mode {
+                            *thrust = (*thrust + 50.0).min(1500.0);
+                            self.status_message = format!("Poussée spatiale de '{}' : {:.0}.", ent.name, *thrust);
+                        } else {
+                            return false;
+                        }
+                    }
+                    None => return false,
+                }
+            }
             "TogglePushable" => {
                 match ent.collider {
                     Some(ref mut col) if col.is_solid || col.is_pushable => {
@@ -396,9 +493,12 @@ impl GameState {
             }
         }
 
+        let scene_objective = scene_data.objective.clone();
+
         Ok(Self {
             scene_path: path.to_string(),
             scene_name: scene_data.name,
+            scene_objective,
             entities,
             particles: Vec::new(),
             kvl_graphs,
@@ -507,6 +607,7 @@ impl GameState {
         let scene_data = SceneData {
             name: self.scene_name.clone(),
             description: "Scène universelle KaractiRage avec entités ECS et scripts KVL.".into(),
+            objective: self.scene_objective.clone(),
             entities: saved_entities,
             player: None,
             coins: Vec::new(),
@@ -1763,23 +1864,33 @@ impl GameState {
         }
 
         // Déverrouillage automatique de la porte si toutes les dalles sont pressées
-        if total_plates > 0 && plates_pressed >= total_plates {
-            for ent in &mut self.entities {
-                if ent.tag == "door" {
-                    if let Some(ref mut col) = ent.collider {
-                        if col.is_solid {
-                            col.is_solid = false;
-                            if let Some(ref mut r) = ent.renderable {
-                                r.color = 0x0010B981;
-                                r.outline_color = Some(0x006EE7B7);
+        if total_plates > 0 {
+            self.kvl_context.set_var("plates_pressed", Value::Int(plates_pressed as i64));
+            self.kvl_context.set_var("total_plates", Value::Int(total_plates as i64));
+            if plates_pressed >= total_plates {
+                self.kvl_context.set_var("puzzle_solved", Value::Bool(true));
+                self.kvl_context.set_var("objective", Value::String("OBJECTIF: ENIGME RESOLUE ! SORTIE DU SANCTUAIRE".into()));
+
+                for ent in &mut self.entities {
+                    if ent.tag == "door" {
+                        if let Some(ref mut col) = ent.collider {
+                            if col.is_solid {
+                                col.is_solid = false;
+                                if let Some(ref mut r) = ent.renderable {
+                                    r.color = 0x0010B981;
+                                    r.outline_color = Some(0x006EE7B7);
+                                }
+                                self.audio.play(SoundType::DoorOpen);
+                                self.audio.play(SoundType::BonusFanfare);
+                                spawn_requests.push((ent.transform.center_x(), ent.transform.center_y(), 30, 0x0010B981));
+                                self.status_message = "ENIGME RESOLUE ! Dalles enclenchées, portail ouvert !".to_string();
                             }
-                            self.audio.play(SoundType::DoorOpen);
-                            self.audio.play(SoundType::BonusFanfare);
-                            spawn_requests.push((ent.transform.center_x(), ent.transform.center_y(), 30, 0x0010B981));
-                            self.status_message = "ENIGME RESOLUE ! Dalles enclenchées, portail ouvert !".to_string();
                         }
                     }
                 }
+            } else {
+                self.kvl_context.set_var("puzzle_solved", Value::Bool(false));
+                self.kvl_context.set_var("objective", Value::String(format!("OBJECTIF: DALLES ACTIVEES ({}/{})", plates_pressed, total_plates)));
             }
         }
 
@@ -2125,22 +2236,28 @@ impl GameState {
                 _ => 0,
             };
 
-            // Carte d'objectif dynamique adaptée au genre
-            let (obj_txt, obj_bg, obj_bd, obj_fg) = if self.scene_path.contains("platformer") {
-                ("OBJECTIF: SAUTEZ (ESPACE/Z) ET ATTEIGNEZ LE PORTAIL", 0x00064E3B, 0x0010B981, 0x006EE7B7)
-            } else if self.scene_path.contains("space") {
-                ("OBJECTIF: PILOTEZ LE VAISSEAU ET TIREZ (F/ESPACE)", 0x002E1065, 0x00A855F7, 0x00F3E8FF)
-            } else if self.scene_path.contains("puzzle") {
-                let is_open = self.entities.iter().any(|e| e.tag == "door" && e.collider.map_or(false, |c| !c.is_solid));
-                if is_open {
-                    ("OBJECTIF: ENIGME RESOLUE ! SORTIE DU SANCTUAIRE", 0x00064E3B, 0x0010B981, 0x006EE7B7)
-                } else {
-                    ("OBJECTIF: POUSSEZ LES 2 CAISSES SUR LES DALLES DE PRESSION", 0x00451A03, 0x00D97706, 0x00FDE047)
-                }
-            } else if score < 50 {
-                ("OBJECTIF: COLLECTEZ 50 OR POUR LA PORTE", 0x00451A03, 0x00D97706, 0x00FDE047)
+            // Carte d'objectif dynamique hiérarchique et 100% découplée :
+            // 1. Variable KVL runtime "objective" (pilotée par scripts KVL ou puzzles dynamiques)
+            // 2. scene_objective (défini par l'auteur dans le fichier de scène JSON)
+            // 3. Fallback dynamique déduit du modèle physique ECS actif du joueur
+            let (obj_txt, obj_bg, obj_bd, obj_fg) = if let Some(Value::String(s)) = self.kvl_context.get_var("objective") {
+                (s.as_str(), 0x00064E3B, 0x0010B981, 0x006EE7B7)
+            } else if let Some(ref s_obj) = self.scene_objective {
+                (s_obj.as_str(), 0x00451A03, 0x00D97706, 0x00FDE047)
             } else {
-                ("OBJECTIF ATTEINT ! PORTE OUVERTE, SORTEZ", 0x00064E3B, 0x0010B981, 0x006EE7B7)
+                match player_mode {
+                    MovementMode::Platformer { .. } => ("OBJECTIF: SAUTEZ (ESPACE/Z) ET ATTEIGNEZ LE PORTAIL", 0x00064E3B, 0x0010B981, 0x006EE7B7),
+                    MovementMode::SpaceInertia { .. } => ("OBJECTIF: PILOTEZ LE VAISSEAU ET TIREZ (F/ESPACE)", 0x002E1065, 0x00A855F7, 0x00F3E8FF),
+                    MovementMode::Grid { .. } => ("OBJECTIF: DEPLACEZ LES BLOCS SUR LA GRILLE TACTIQUE", 0x00451A03, 0x00D97706, 0x00FDE047),
+                    MovementMode::TopDown if has_pushables => ("OBJECTIF: POUSSEZ LES BLOCS SUR LES DALLES", 0x00451A03, 0x00D97706, 0x00FDE047),
+                    MovementMode::TopDown => {
+                        if score < 50 {
+                            ("OBJECTIF: COLLECTEZ 50 OR POUR LA PORTE", 0x00451A03, 0x00D97706, 0x00FDE047)
+                        } else {
+                            ("OBJECTIF ATTEINT ! PORTE OUVERTE, SORTEZ", 0x00064E3B, 0x0010B981, 0x006EE7B7)
+                        }
+                    }
+                }
             };
             canvas.draw_badge(292, 12, 380, 32, obj_bg, obj_bd, obj_txt, obj_fg, 2);
 
@@ -2705,7 +2822,47 @@ impl GameState {
                             let next_txt = format!("[ CHANGER PHYSIQUE > {} ]", mov.mode.next_preset().label());
                             canvas.draw_badge(insp_x + 30, comp_y, row_w - 12, 22, 0x00131C2E, 0x0038BDF8, &next_txt, 0x0038BDF8, 1);
                             self.editor.add_comp_hitboxes.push(("CycleMovementMode".into(), insp_x + 30, comp_y, row_w - 12, 22));
-                            comp_y += 28;
+                            comp_y += 26;
+
+                            // Paramètres physiques ajustables en direct
+                            let sub_w = row_w - 12;
+                            let speed_label = format!("Vitesse: {:.0} px/s", mov.speed);
+                            canvas.draw_badge(insp_x + 30, comp_y, sub_w - 56, 20, 0x000F172A, 0x000369A1, &speed_label, 0x007DD3FC, 1);
+                            canvas.draw_badge(insp_x + 30 + (sub_w - 52) as i32, comp_y, 24, 20, 0x001E293B, 0x00EF4444, " - ", 0x00F87171, 1);
+                            self.editor.add_comp_hitboxes.push(("SpeedDec".into(), insp_x + 30 + (sub_w - 52) as i32, comp_y, 24, 20));
+                            canvas.draw_badge(insp_x + 30 + (sub_w - 24) as i32, comp_y, 24, 20, 0x001E293B, 0x0010B981, " + ", 0x0034D399, 1);
+                            self.editor.add_comp_hitboxes.push(("SpeedInc".into(), insp_x + 30 + (sub_w - 24) as i32, comp_y, 24, 20));
+                            comp_y += 24;
+
+                            match mov.mode {
+                                MovementMode::Platformer { jump_force, gravity, .. } => {
+                                    let jump_label = format!("Saut: {:.0} px/s", jump_force);
+                                    canvas.draw_badge(insp_x + 30, comp_y, sub_w - 56, 20, 0x00064E3B, 0x00059669, &jump_label, 0x006EE7B7, 1);
+                                    canvas.draw_badge(insp_x + 30 + (sub_w - 52) as i32, comp_y, 24, 20, 0x001E293B, 0x00EF4444, " - ", 0x00F87171, 1);
+                                    self.editor.add_comp_hitboxes.push(("JumpDec".into(), insp_x + 30 + (sub_w - 52) as i32, comp_y, 24, 20));
+                                    canvas.draw_badge(insp_x + 30 + (sub_w - 24) as i32, comp_y, 24, 20, 0x001E293B, 0x0010B981, " + ", 0x0034D399, 1);
+                                    self.editor.add_comp_hitboxes.push(("JumpInc".into(), insp_x + 30 + (sub_w - 24) as i32, comp_y, 24, 20));
+                                    comp_y += 24;
+
+                                    let grav_label = format!("Gravite: {:.0}", gravity);
+                                    canvas.draw_badge(insp_x + 30, comp_y, sub_w - 56, 20, 0x00451A03, 0x00D97706, &grav_label, 0x00FDE047, 1);
+                                    canvas.draw_badge(insp_x + 30 + (sub_w - 52) as i32, comp_y, 24, 20, 0x001E293B, 0x00EF4444, " - ", 0x00F87171, 1);
+                                    self.editor.add_comp_hitboxes.push(("GravityDec".into(), insp_x + 30 + (sub_w - 52) as i32, comp_y, 24, 20));
+                                    canvas.draw_badge(insp_x + 30 + (sub_w - 24) as i32, comp_y, 24, 20, 0x001E293B, 0x0010B981, " + ", 0x0034D399, 1);
+                                    self.editor.add_comp_hitboxes.push(("GravityInc".into(), insp_x + 30 + (sub_w - 24) as i32, comp_y, 24, 20));
+                                    comp_y += 24;
+                                }
+                                MovementMode::SpaceInertia { thrust, .. } => {
+                                    let thrust_label = format!("Poussee: {:.0}", thrust);
+                                    canvas.draw_badge(insp_x + 30, comp_y, sub_w - 56, 20, 0x002E1065, 0x007C3AED, &thrust_label, 0x00DDD6FE, 1);
+                                    canvas.draw_badge(insp_x + 30 + (sub_w - 52) as i32, comp_y, 24, 20, 0x001E293B, 0x00EF4444, " - ", 0x00F87171, 1);
+                                    self.editor.add_comp_hitboxes.push(("ThrustDec".into(), insp_x + 30 + (sub_w - 52) as i32, comp_y, 24, 20));
+                                    canvas.draw_badge(insp_x + 30 + (sub_w - 24) as i32, comp_y, 24, 20, 0x001E293B, 0x0010B981, " + ", 0x0034D399, 1);
+                                    self.editor.add_comp_hitboxes.push(("ThrustInc".into(), insp_x + 30 + (sub_w - 24) as i32, comp_y, 24, 20));
+                                    comp_y += 24;
+                                }
+                                _ => {}
+                            }
                         }
                         if let Some(ref vis) = ent.vision {
                             let vis_desc = format!("VisionSensing : Radar Raycast (Portee: {:.0}px)", vis.range);
@@ -3980,6 +4137,137 @@ mod tests {
         state.render(&mut canvas);
         assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "CycleMovementMode"));
         assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "TogglePushable"));
+    }
+
+    #[test]
+    fn test_data_driven_objective_hierarchy() {
+        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène chargée");
+
+        // 1. Scene objective chargé depuis le JSON
+        assert!(state.scene_objective.is_some());
+        assert_eq!(state.scene_objective.as_deref().unwrap(), "COLLECTEZ 50 OR POUR OUVRIR LA PORTE DU TEMPLE");
+
+        // 2. HUD rendu en jeu
+        let mut canvas = Canvas::new(1200, 800);
+        state.render(&mut canvas);
+
+        // 3. Priorité KVL : si une variable "objective" est positionnée, elle prévaut sur scene_objective
+        state.kvl_context.set_var("objective", Value::String("OBJECTIF KVL SURMESURE EN COURS".into()));
+        state.render(&mut canvas);
+        assert_eq!(
+            state.kvl_context.get_var("objective"),
+            Some(&Value::String("OBJECTIF KVL SURMESURE EN COURS".into()))
+        );
+
+        // 4. Fallback sans scene_objective ni KVL var
+        state.kvl_context.variables.remove("objective");
+        state.scene_objective = None;
+        state.render(&mut canvas); // Ne doit pas paniquer et utilise le fallback physique
+    }
+
+    #[test]
+    fn test_studio_live_physics_tuning() {
+        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène chargée");
+
+        let p_idx = state.player_index().unwrap();
+        state.editor.selected = SelectedEntity::Entity(p_idx);
+
+        let initial_speed = state.entities[p_idx].movement.as_ref().unwrap().speed;
+        assert!(state.add_component_to_selected("SpeedInc"));
+        assert_eq!(state.entities[p_idx].movement.as_ref().unwrap().speed, initial_speed + 25.0);
+
+        assert!(state.add_component_to_selected("SpeedDec"));
+        assert_eq!(state.entities[p_idx].movement.as_ref().unwrap().speed, initial_speed);
+
+        // Basculer en mode Platformer
+        state.entities[p_idx].movement.as_mut().unwrap().mode = MovementMode::Platformer {
+            gravity: 920.0,
+            jump_force: 480.0,
+            is_grounded: false,
+            max_fall_speed: 650.0,
+        };
+
+        assert!(state.add_component_to_selected("JumpInc"));
+        if let MovementMode::Platformer { jump_force, .. } = state.entities[p_idx].movement.as_ref().unwrap().mode {
+            assert_eq!(jump_force, 520.0);
+        } else {
+            panic!("Mode attendu : Platformer");
+        }
+
+        assert!(state.add_component_to_selected("GravityDec"));
+        if let MovementMode::Platformer { gravity, .. } = state.entities[p_idx].movement.as_ref().unwrap().mode {
+            assert_eq!(gravity, 840.0);
+        } else {
+            panic!("Mode attendu : Platformer");
+        }
+
+        // Basculer en mode SpaceInertia
+        state.entities[p_idx].movement.as_mut().unwrap().mode = MovementMode::SpaceInertia {
+            angular_speed: 4.0,
+            thrust: 520.0,
+            drag: 0.985,
+        };
+
+        assert!(state.add_component_to_selected("ThrustInc"));
+        if let MovementMode::SpaceInertia { thrust, .. } = state.entities[p_idx].movement.as_ref().unwrap().mode {
+            assert_eq!(thrust, 570.0);
+        } else {
+            panic!("Mode attendu : SpaceInertia");
+        }
+
+        // Vérification de la présence des boutons d'ajustement dans l'inspecteur
+        state.editor.toggle_mode();
+        let mut canvas = Canvas::new(1200, 800);
+        state.render(&mut canvas);
+        assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "SpeedInc"));
+        assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "SpeedDec"));
+        assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "ThrustInc"));
+        assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "ThrustDec"));
+    }
+
+    #[test]
+    fn test_environmental_puzzle_kvl_synchronization() {
+        let mut state = GameState::load_from_scene("assets/scenes/puzzle_01.scene.json")
+            .expect("Scène chargée");
+
+        // État initial : 0 dalle pressée
+        let input = InputState::new();
+        state.update(0.016, &input);
+
+        assert_eq!(state.kvl_context.get_var("plates_pressed"), Some(&Value::Int(0)));
+        assert_eq!(state.kvl_context.get_var("total_plates"), Some(&Value::Int(2)));
+        assert_eq!(state.kvl_context.get_var("puzzle_solved"), Some(&Value::Bool(false)));
+        assert_eq!(state.kvl_context.get_var("objective"), Some(&Value::String("OBJECTIF: DALLES ACTIVEES (0/2)".into())));
+
+        // Placer une première caisse sur une dalle
+        let plate_pos: Vec<(f32, f32)> = state.entities.iter()
+            .filter(|e| e.tag == "plate")
+            .map(|e| (e.transform.x, e.transform.y))
+            .collect();
+        let crate_indices: Vec<usize> = state.entities.iter()
+            .enumerate()
+            .filter(|(_, e)| e.tag == "crate")
+            .map(|(i, _)| i)
+            .collect();
+
+        state.entities[crate_indices[0]].transform.x = plate_pos[0].0;
+        state.entities[crate_indices[0]].transform.y = plate_pos[0].1;
+        state.update(0.016, &input);
+
+        assert_eq!(state.kvl_context.get_var("plates_pressed"), Some(&Value::Int(1)));
+        assert_eq!(state.kvl_context.get_var("puzzle_solved"), Some(&Value::Bool(false)));
+        assert_eq!(state.kvl_context.get_var("objective"), Some(&Value::String("OBJECTIF: DALLES ACTIVEES (1/2)".into())));
+
+        // Placer la seconde caisse sur la deuxième dalle
+        state.entities[crate_indices[1]].transform.x = plate_pos[1].0;
+        state.entities[crate_indices[1]].transform.y = plate_pos[1].1;
+        state.update(0.016, &input);
+
+        assert_eq!(state.kvl_context.get_var("plates_pressed"), Some(&Value::Int(2)));
+        assert_eq!(state.kvl_context.get_var("puzzle_solved"), Some(&Value::Bool(true)));
+        assert_eq!(state.kvl_context.get_var("objective"), Some(&Value::String("OBJECTIF: ENIGME RESOLUE ! SORTIE DU SANCTUAIRE".into())));
     }
 }
 

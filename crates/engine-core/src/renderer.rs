@@ -165,7 +165,7 @@ impl Canvas {
         self.draw_rect_outline(x, y, w, h, border_col, 1);
         let text_w = text.len() as i32 * 6 * scale as i32;
         let text_h = 7 * scale as i32;
-        let tx = x + (w as i32 - text_w) / 2;
+        let tx = (x + (w as i32 - text_w) / 2).max(x + 4);
         let ty = y + (h as i32 - text_h) / 2;
         self.draw_text(tx, ty, text, text_col, scale);
     }

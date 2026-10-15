@@ -408,6 +408,28 @@
   * **HUD agnostique** : le badge de genre est calculé à partir des composants réels (physique du joueur, présence de blocs poussables) et non plus du nom de fichier ; ajout du genre `GRILLE / TACTIQUE`.
 * **Mesures** : 68/68 tests (+1 `test_studio_genre_authoring_tools`), 0 avertissement, Wasm recompilé.
 
+### Étape 23 : Objectifs Data-Driven, Synchronisation KVL & Réglage Physique en Direct *(15 Octobre 2026)*
+* **Constat** : La carte d'objectif du HUD testait encore le chemin de fichier de la scène (`self.scene_path.contains("platformer")`), et les paramètres fins de physique (vitesse, saut, gravité, poussée) ne pouvaient pas être affinés en direct dans l'inspecteur.
+* **Réalisations** :
+  * **Format de scène & objectifs data-driven (`SceneData.objective`)** :
+    * Ajout de `pub objective: Option<String>` dans `SceneData` et `GameState`, avec persistance sur disque (`Ctrl+S`).
+    * Suppression définitive des vérifications de nom de fichier dans le HUD.
+  * **Hiérarchie de résolution d'objectif 100% découplée** :
+    1. Variable KVL runtime `"objective"` (priorité maximale, pour quêtes et scripts dynamiques).
+    2. `scene_objective` (défini par l'auteur dans le fichier de scène JSON).
+    3. Fallback dynamique déduit du composant `Movement2D` actif du joueur.
+  * **Synchronisation KVL des puzzles environnementaux (`SYSTEM 4.5`)** :
+    * Export en temps réel des variables `plates_pressed`, `total_plates` et `puzzle_solved` vers le contexte KVL.
+    * Mise à jour réactive du texte d'objectif : `"OBJECTIF: DALLES ACTIVEES (X/N)"` puis `"OBJECTIF: ENIGME RESOLUE ! SORTIE DU SANCTUAIRE"`.
+  * **Réglage en direct (*Live Tuning*) de la physique dans l'inspecteur Studio** :
+    * 8 nouvelles actions interactives avec boutons `[ - ]` et `[ + ]` dans l'inspecteur ECS : `SpeedDec`/`SpeedInc` (vitesse), `JumpDec`/`JumpInc` (force de saut), `GravityDec`/`GravityInc` (gravité), `ThrustDec`/`ThrustInc` (poussée spatiale).
+    * Permet aux créateurs de calibrer le *game feel* de n'importe quel genre de jeu en temps réel.
+  * **Ergonomie du rendu** : espacement minimal garanti pour les badges de texte long dans `draw_badge()`.
+* **Mesures & Benchmarks** :
+  * **74/74 tests unitaires validés à 100%** (+3 nouveaux tests : `test_data_driven_objective_hierarchy`, `test_studio_live_physics_tuning`, `test_environmental_puzzle_kvl_synchronization`).
+  * **0 avertissement de compilation** (`cargo check --all-targets`).
+  * Export WebAssembly synchronisé via `./scripts/build_web.sh`.
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

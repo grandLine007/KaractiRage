@@ -1,6 +1,7 @@
 {
   "name": "Niveau Spatial : Ceinture d'Astéroïdes",
   "description": "Démonstration du contrôleur spatial à inertie newtonienne (rotation angulaire, poussée, tirs de projectiles et dérive).",
+  "objective": "PILOTEZ LE VAISSEAU ET PURGEZ LES SENTINELLES (F/ESPACE)",
   "entities": [
     {
       "id": 1,

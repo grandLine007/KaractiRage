@@ -1,6 +1,7 @@
 {
   "name": "Sanctuaire des Mécanismes (Puzzle & Sokoban)",
   "description": "Démonstration du moteur pour jeux de puzzle, Sokoban et énigmes environnementales (caisses poussables, dalles de pression et portes logiques).",
+  "objective": "POUSSEZ LES 2 CAISSES SUR LES DALLES DE PRESSION",
   "entities": [
     {
       "id": 1,
