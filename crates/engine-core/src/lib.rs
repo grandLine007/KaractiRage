@@ -6,6 +6,7 @@ pub mod editor;
 pub mod entity;
 pub mod game;
 pub mod input;
+pub mod inventory;
 pub mod renderer;
 pub mod scene;
 pub mod spatial;

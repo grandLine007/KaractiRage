@@ -283,4 +283,65 @@ mod tests {
         assert_eq!(steps_cond, 3);
         assert_eq!(ctx.get_var("open_confirmed"), Some(&Value::Int(1)));
     }
+
+    #[test]
+    fn test_inventory_and_hotbar_kvl_actions_and_conditions() {
+        let mut graph = Graph::new("test_inv", "Test Inventory Logic", "");
+        let evt = Node::new("evt_chest", "Chest Open", Category::Interactions, "", NodeKind::Event { event_type: "OnChestOpened".into() })
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let act_give_pot = Node::new("act_give", "Give Potions", Category::Progression, "", NodeKind::Action { action_type: "GiveItem:potion_heal:3".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let cond_has = Node::new("cond_has", "Has Potion", Category::MathLogic, "", NodeKind::Condition { operator: "HasItem:potion_heal".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+            .with_output(Pin::new_trigger("out_true", "Vrai", PinDirection::Output));
+        let act_give_key = Node::new("act_key", "Give Key", Category::Progression, "", NodeKind::Action { action_type: "GiveItem:key_dungeon:1".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let act_select_slot = Node::new("act_slot", "Select Slot 2", Category::World, "", NodeKind::Action { action_type: "SelectHotbarSlot:2".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph.add_node(evt);
+        graph.add_node(act_give_pot);
+        graph.add_node(cond_has);
+        graph.add_node(act_give_key);
+        graph.add_node(act_select_slot);
+
+        graph.connect_pins("evt_chest", "out_trigger", "act_give", "in_trigger").unwrap();
+        graph.connect_pins("act_give", "out_trigger", "cond_has", "in_trigger").unwrap();
+        graph.connect_pins("cond_has", "out_true", "act_key", "in_trigger").unwrap();
+        graph.connect_pins("act_key", "out_trigger", "act_slot", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        let steps = Interpreter::trigger_event(&graph, &mut ctx, "OnChestOpened").unwrap();
+        assert_eq!(steps, 5);
+
+        // Vérification contextuelle
+        assert_eq!(ctx.get_var("item_count_potion_heal"), Some(&Value::Int(3)));
+        assert_eq!(ctx.get_var("has_potion_heal"), Some(&Value::Bool(true)));
+        assert_eq!(ctx.get_var("item_count_key_dungeon"), Some(&Value::Int(1)));
+        assert_eq!(ctx.get_var("has_key_dungeon"), Some(&Value::Bool(true)));
+        assert_eq!(ctx.get_var("hotbar_selected_slot"), Some(&Value::Int(2)));
+
+        // Test condition HotbarSlotEq et RemoveItem
+        let mut graph2 = Graph::new("test_inv2", "Test Inventory 2", "");
+        let evt2 = Node::new("evt2", "Event", Category::Interactions, "", NodeKind::Event { event_type: "OnUse".into() })
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let cond_slot = Node::new("cond_slot", "Slot is 2", Category::MathLogic, "", NodeKind::Condition { operator: "HotbarSlotEq:2".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+            .with_output(Pin::new_trigger("out_true", "Vrai", PinDirection::Output));
+        let act_remove = Node::new("act_rem", "Remove 1 potion", Category::Progression, "", NodeKind::Action { action_type: "RemoveItem:potion_heal:1".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph2.add_node(evt2);
+        graph2.add_node(cond_slot);
+        graph2.add_node(act_remove);
+
+        graph2.connect_pins("evt2", "out_trigger", "cond_slot", "in_trigger").unwrap();
+        graph2.connect_pins("cond_slot", "out_true", "act_rem", "in_trigger").unwrap();
+
+        let steps2 = Interpreter::trigger_event(&graph2, &mut ctx, "OnUse").unwrap();
+        assert_eq!(steps2, 3);
+        assert_eq!(ctx.get_var("item_count_potion_heal"), Some(&Value::Int(2)));
+    }
 }

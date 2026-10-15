@@ -361,6 +361,45 @@ impl Interpreter {
                             ctx.set_var(format!("quest_completed_{}", qid), Value::Bool(true));
                             ctx.record_step(&next_node.id, &next_node.name, format!("Quête '{}' accomplie avec succès !", qid));
                         }
+                        op if op.starts_with("GiveItem:") => {
+                            let rest = op.trim_start_matches("GiveItem:");
+                            let mut parts = rest.split(':');
+                            let item_id = parts.next().unwrap_or("item");
+                            let count = parts.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                            let current_count = match ctx.get_var(&format!("item_count_{}", item_id)) {
+                                Some(Value::Int(c)) => *c,
+                                _ => 0,
+                            };
+                            let new_count = current_count + count;
+                            ctx.set_var(format!("item_count_{}", item_id), Value::Int(new_count));
+                            ctx.set_var(format!("has_{}", item_id), Value::Bool(true));
+                            ctx.set_var("last_picked_item", Value::String(item_id.to_string()));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Objet '{}' ajouté à l'inventaire (+{}) (Total: {})", item_id, count, new_count));
+                        }
+                        op if op.starts_with("RemoveItem:") => {
+                            let rest = op.trim_start_matches("RemoveItem:");
+                            let mut parts = rest.split(':');
+                            let item_id = parts.next().unwrap_or("item");
+                            let count = parts.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                            let current_count = match ctx.get_var(&format!("item_count_{}", item_id)) {
+                                Some(Value::Int(c)) => *c,
+                                _ => 0,
+                            };
+                            let new_count = (current_count - count).max(0);
+                            ctx.set_var(format!("item_count_{}", item_id), Value::Int(new_count));
+                            ctx.set_var(format!("has_{}", item_id), Value::Bool(new_count > 0));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Objet '{}' retiré de l'inventaire (-{}) (Reste: {})", item_id, count, new_count));
+                        }
+                        op if op.starts_with("SelectHotbarSlot:") => {
+                            let slot_idx = op.trim_start_matches("SelectHotbarSlot:").parse::<i64>().unwrap_or(0);
+                            ctx.set_var("hotbar_selected_slot", Value::Int(slot_idx));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Emplacement de barre d'action sélectionné : {}", slot_idx));
+                        }
+                        op if op.starts_with("UseItem:") => {
+                            let item_id = op.trim_start_matches("UseItem:");
+                            ctx.set_var(format!("used_item_{}", item_id), Value::Bool(true));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Objet '{}' utilisé via KVL !", item_id));
+                        }
                         _ => {
                             ctx.record_step(&next_node.id, &next_node.name, format!("Action personnalisée {}", action_type));
                         }
@@ -513,6 +552,51 @@ impl Interpreter {
                                 _ => false,
                             };
                             is_done_flag || step_done
+                        }
+                        op if op.starts_with("HasItem:") => {
+                            let item_id = op.trim_start_matches("HasItem:");
+                            let has_flag = match ctx.get_var(&format!("has_{}", item_id)) {
+                                Some(Value::Bool(b)) => *b,
+                                _ => false,
+                            };
+                            let count = match ctx.get_var(&format!("item_count_{}", item_id)) {
+                                Some(Value::Int(c)) => *c,
+                                _ => 0,
+                            };
+                            has_flag || count > 0
+                        }
+                        op if op.starts_with("ItemCountGte:") => {
+                            let rest = op.trim_start_matches("ItemCountGte:");
+                            let mut parts = rest.split(':');
+                            if let (Some(item_id), Some(count_str)) = (parts.next(), parts.next()) {
+                                let target_count = count_str.parse::<i64>().unwrap_or(1);
+                                match ctx.get_var(&format!("item_count_{}", item_id)) {
+                                    Some(Value::Int(c)) => *c >= target_count,
+                                    _ => false,
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        op if op.starts_with("ItemCountLt:") => {
+                            let rest = op.trim_start_matches("ItemCountLt:");
+                            let mut parts = rest.split(':');
+                            if let (Some(item_id), Some(count_str)) = (parts.next(), parts.next()) {
+                                let target_count = count_str.parse::<i64>().unwrap_or(1);
+                                match ctx.get_var(&format!("item_count_{}", item_id)) {
+                                    Some(Value::Int(c)) => *c < target_count,
+                                    _ => true,
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        op if op.starts_with("HotbarSlotEq:") => {
+                            let target_slot = op.trim_start_matches("HotbarSlotEq:").parse::<i64>().unwrap_or(0);
+                            match ctx.get_var("hotbar_selected_slot") {
+                                Some(Value::Int(s)) => *s == target_slot,
+                                _ => false,
+                            }
                         }
                         _ => {
                             current_score > 0

@@ -533,6 +533,33 @@
   * **0 avertissement de compilation** (`cargo check --all-targets`).
   * Export WebAssembly synchronisé via `./scripts/build_web.sh` (3.42s).
 
+### Étape 28 : Système d'Inventaire, Barre d'Actions (Hotbar) & Objets Ramassables KVL (*Inventory & Hotbar Engine*) *(15 Octobre 2026)*
+* **Constat** : Pour achever la boucle de gameplay d'aventure et de donjon, le joueur devait pouvoir ramasser des objets dans le monde (potions, clés, cristaux), les organiser dans un inventaire avec empilement automatique, les sélectionner et utiliser via une barre d'actions rapide (Hotbar) et les synchroniser avec KVL.
+* **Réalisations** :
+  * **Moteur d'Inventaire Universel (`crates/engine-core/src/inventory.rs`)** :
+    * Structure `Inventory` pré-allouée ($\mathcal{O}(1)$ par frame) gérant l'empilement automatique (*stacking*), le désempilement, les capacités de slots et les alertes d'obtention.
+    * Énumération `ItemKind` : consommables de soin, clés d'accès/donjon, armes, outils et ressources.
+    * Gabarits prêts à l'emploi : `Item::health_potion`, `Item::dungeon_key`, `Item::energy_crystal`, `Item::ancient_scroll`, `Item::speed_elixir`.
+    * Rendu de la barre d'action rapide (Hotbar) au bas de l'écran : 5 cases avec halo doré sur le slot sélectionné, touches numériques directes (`1` à `5`), glyphes d'icônes colorés, décompte de quantité, info-bulle et hitboxes souris cliquables.
+    * Consommation intelligente des potions avec vérification de santé (garde anti-gaspillage lorsque les PV sont déjà pleins).
+  * **Synthèse Audio Procédurale 0-Octet (`audio.rs`)** :
+    * `SoundType::ItemPickup` : carillon ascendant étincelant 4 notes (587 Hz $\rightarrow$ 1760 Hz).
+    * `SoundType::PotionDrink` : glouglou liquide rafraîchissant avec modulation sinusoïdale de vibrato.
+    * `SoundType::KeyUnlock` : double clic mécanique net de serrure de porte déverrouillée.
+  * **Composant ECS & Spawning (`entity.rs` & `game.rs`)** :
+    * `ItemPickupComponent` avec oscillation flottante sinusoïdale continue sans coût d'allocation.
+    * Absorption automatique des objets au contact du joueur avec émission de particules de la couleur de l'objet.
+    * Nouveaux presets de spawn intégrés au Studio : `"item_potion"`, `"item_key"`, `"item_crystal"`.
+  * **Intégration Logique KVL Runtime (`crates/kvl-runtime/src/interpreter.rs`)** :
+    * Actions KVL : `GiveItem:id:count`, `RemoveItem:id:count`, `SelectHotbarSlot:idx`, `UseItem:id`.
+    * Conditions KVL : `HasItem:id`, `ItemCountGte:id:count`, `ItemCountLt:id:count`, `HotbarSlotEq:idx`.
+    * Événements déclenchés : `"OnItemPickup"`, `"OnItemUse"`.
+    * Synchronisation bidirectionnelle instantanée des variables `has_<id>`, `item_count_<id>`, `last_picked_item`, `hotbar_selected_slot` et `player_hp`.
+* **Mesures & Benchmarks** :
+  * **140 tests unitaires validés à 100% (0 échec)** (+21 nouveaux tests unitaires : 5 dans inventory, 6 dans kvl-runtime, 5 dans game, 5 dans audio/main).
+  * **0 avertissement de compilation** (`cargo check --all-targets`).
+  * Export WebAssembly synchronisé via `./scripts/build_web.sh` (3.69s).
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

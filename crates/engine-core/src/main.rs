@@ -15,6 +15,7 @@ mod editor;
 mod entity;
 mod game;
 mod input;
+mod inventory;
 mod renderer;
 mod scene;
 mod spatial;

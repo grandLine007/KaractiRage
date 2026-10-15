@@ -546,6 +546,26 @@ pub struct DialogueComponent {
     pub quest_step: Option<i64>,
 }
 
+/// Composant d'objet ramassable dans le monde (World Item Pickup)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemPickupComponent {
+    pub item: crate::inventory::Item,
+    pub count: u32,
+    pub bob_timer: f32,
+    pub base_y: f32,
+}
+
+impl ItemPickupComponent {
+    pub fn new(item: crate::inventory::Item, count: u32, base_y: f32) -> Self {
+        Self {
+            item,
+            count,
+            bob_timer: 0.0,
+            base_y,
+        }
+    }
+}
+
 impl DialogueComponent {
     pub fn new(speaker: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
@@ -596,6 +616,8 @@ pub struct Entity {
     pub health: Option<Health2D>,
     #[serde(default)]
     pub dialogue: Option<DialogueComponent>,
+    #[serde(default)]
+    pub item_pickup: Option<ItemPickupComponent>,
     pub is_active: bool,
 }
 
@@ -615,6 +637,7 @@ impl Entity {
             projectile: None,
             health: None,
             dialogue: None,
+            item_pickup: None,
             is_active: true,
         }
     }
@@ -626,6 +649,11 @@ impl Entity {
 
     pub fn with_dialogue(mut self, d: DialogueComponent) -> Self {
         self.dialogue = Some(d);
+        self
+    }
+
+    pub fn with_item_pickup(mut self, pickup: ItemPickupComponent) -> Self {
+        self.item_pickup = Some(pickup);
         self
     }
 
@@ -781,5 +809,22 @@ impl Entity {
                     .with_choices(choices)
                     .with_avatar(av_lbl, color),
             )
+    }
+
+    /// Gabarit : Objet d'inventaire ramassable dans le monde (World Item Pickup)
+    pub fn spawn_item_pickup(
+        id: usize,
+        x: f32,
+        y: f32,
+        item: crate::inventory::Item,
+        count: u32,
+    ) -> Self {
+        let size = 22.0;
+        let color = item.color;
+        let name = format!("pickup_{}_{}", item.id, id);
+        Self::new(id, name, "item_pickup", Transform2D::new(x, y, size, size))
+            .with_renderable(Renderable2D::circle(size * 0.5, color, 6).with_outline(0x00FFFFFF, 1))
+            .with_collider(Collider2D::trigger(size, size))
+            .with_item_pickup(ItemPickupComponent::new(item, count, y))
     }
 }

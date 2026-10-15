@@ -5,6 +5,7 @@ use crate::dialogue::{DialogueAction, DialogueBox, QuestTracker};
 use crate::editor::{EditorMode, EditorState, SelectedEntity, StudioTool};
 use crate::entity::{Entity, MovementMode, ShapeKind};
 use crate::input::InputState;
+use crate::inventory::{Inventory, Item, ItemUseResult, HOTBAR_SLOTS_COUNT};
 use crate::renderer::Canvas;
 use crate::scene::SceneData;
 use crate::spatial::{SpatialHashGrid, SpatialItem, SpatialKind};
@@ -133,6 +134,7 @@ pub struct GameState {
     pub world_bounds: (f32, f32, f32, f32),
     pub dialogue: DialogueBox,
     pub quest: Option<QuestTracker>,
+    pub inventory: Inventory,
 }
 
 impl GameState {
@@ -157,6 +159,31 @@ impl GameState {
         self.entities.iter_mut().find(|e| {
             e.is_active && e.movement.as_ref().map_or(false, |m| m.is_player_controlled)
         })
+    }
+
+    /// Utilise ou consomme l'objet d'un slot de la barre d'action rapide (Hotbar)
+    pub fn use_hotbar_item(&mut self, slot_idx: usize) -> ItemUseResult {
+        let p_idx_opt = self.player_index();
+        let res = if let Some(p_idx) = p_idx_opt {
+            let mut hp = self.entities[p_idx].health;
+            let r = self.inventory.use_slot(slot_idx, hp.as_mut(), &mut self.audio);
+            if let Some(new_h) = hp {
+                self.entities[p_idx].health = Some(new_h);
+                self.kvl_context.set_var("player_hp", Value::Int(new_h.current as i64));
+            }
+            r
+        } else {
+            self.inventory.use_slot(slot_idx, None, &mut self.audio)
+        };
+
+        if let ItemUseResult::KeyActivated { ref item_id } = res {
+            self.kvl_context.set_var(format!("used_key_{}", item_id), Value::Bool(true));
+            for graph in self.kvl_graphs.values() {
+                let _ = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnItemUse");
+            }
+        }
+
+        res
     }
 
     /// Recherche une entité par son nom
@@ -190,6 +217,9 @@ impl GameState {
             "plate" => Entity::spawn_plate(id, x, y, 48.0),
             "hazard" => Entity::spawn_hazard(id, x, y, 32.0),
             "heart" => Entity::spawn_heart(id, x, y, 12.0),
+            "item_potion" => Entity::spawn_item_pickup(id, x, y, Item::health_potion(1), 1),
+            "item_key" => Entity::spawn_item_pickup(id, x, y, Item::dungeon_key(format!("key_{}", id), "Clef d'Or"), 1),
+            "item_crystal" => Entity::spawn_item_pickup(id, x, y, Item::energy_crystal(format!("crystal_{}", id), "Cristal d'Energie"), 1),
             "npc" => Entity::spawn_npc(
                 id,
                 format!("gardien_{}", id),
@@ -616,6 +646,24 @@ impl GameState {
             QuestTracker::new("main_quest", "Objectif Principal", obj, 1)
         });
 
+        let mut inventory = Inventory::new(16);
+        inventory.add_item(Item::health_potion(1), 2);
+        inventory.add_item(Item::dungeon_key("key_bronze", "Clef de Bronze"), 1);
+
+        kvl_context.set_var("item_count_potion_heal", Value::Int(2));
+        kvl_context.set_var("has_potion_heal", Value::Bool(true));
+        kvl_context.set_var("item_count_key_bronze", Value::Int(1));
+        kvl_context.set_var("has_key_bronze", Value::Bool(true));
+        kvl_context.set_var("hotbar_selected_slot", Value::Int(0));
+
+        // Spawner des objets ramassables dans le monde si la scène en est dépourvue
+        let has_pickup = entities.iter().any(|e| e.tag == "item_pickup");
+        if !has_pickup && scene_data.name.contains("Donjon") {
+            let next_id = entities.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+            entities.push(Entity::spawn_item_pickup(next_id, 460.0, 160.0, Item::health_potion(1), 1));
+            entities.push(Entity::spawn_item_pickup(next_id + 1, 280.0, 320.0, Item::energy_crystal("crystal_01", "Cristal Bleu"), 1));
+        }
+
         Ok(Self {
             scene_path: path.to_string(),
             scene_name: scene_data.name,
@@ -637,6 +685,7 @@ impl GameState {
             world_bounds,
             dialogue: DialogueBox::new(),
             quest,
+            inventory,
         })
     }
 
@@ -1551,6 +1600,57 @@ impl GameState {
             self.fire_player_projectile();
         }
 
+        // Mise à jour temporelle de l'inventaire
+        self.inventory.update(dt);
+
+        // Sélection et utilisation des emplacements rapides (Hotbar 1 à 5)
+        if !self.dialogue.is_active {
+            let hotbar_keys = [
+                (KeyCode::Digit1, 0),
+                (KeyCode::Digit2, 1),
+                (KeyCode::Digit3, 2),
+                (KeyCode::Digit4, 3),
+                (KeyCode::Digit5, 4),
+            ];
+
+            for (k, slot_idx) in hotbar_keys {
+                if input.is_key_just_pressed(k) {
+                    if self.inventory.selected_hotbar_index == slot_idx {
+                        self.use_hotbar_item(slot_idx);
+                    } else {
+                        self.inventory.select_slot(slot_idx);
+                        self.kvl_context.set_var("hotbar_selected_slot", Value::Int(slot_idx as i64));
+                        self.audio.play(SoundType::UiClick);
+                    }
+                }
+            }
+
+            // Touche d'utilisation directe de l'objet sélectionné (U)
+            if input.is_key_just_pressed(KeyCode::KeyU) {
+                let cur_slot = self.inventory.selected_hotbar_index;
+                self.use_hotbar_item(cur_slot);
+            }
+
+            // Clic souris sur la barre d'action
+            if input.mouse_just_clicked {
+                let mx = input.mouse_x as i32;
+                let my = input.mouse_y as i32;
+                for i in 0..HOTBAR_SLOTS_COUNT {
+                    if let Some((hx, hy, hw, hh)) = self.inventory.hotbar_hitboxes[i] {
+                        if mx >= hx && mx < hx + hw as i32 && my >= hy && my < hy + hh as i32 {
+                            if self.inventory.selected_hotbar_index == i {
+                                self.use_hotbar_item(i);
+                            } else {
+                                self.inventory.select_slot(i);
+                                self.kvl_context.set_var("hotbar_selected_slot", Value::Int(i as i64));
+                                self.audio.play(SoundType::UiClick);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Gestion de l'invulnérabilité (i-frames) pour tous les composants Health2D
         for ent in &mut self.entities {
             if let Some(ref mut h) = ent.health {
@@ -2094,14 +2194,25 @@ impl GameState {
         }
         self.particles.retain(|p| p.life > 0.0);
 
+        // Mise à jour de l'oscillation flottante des objets ramassables dans le monde
+        for ent in &mut self.entities {
+            if ent.is_active {
+                if let Some(ref mut pickup) = ent.item_pickup {
+                    pickup.bob_timer += dt * 3.5;
+                    ent.transform.y = pickup.base_y + (pickup.bob_timer.sin() * 3.5);
+                }
+            }
+        }
+
         let mut spawn_requests = Vec::new();
 
         // ==========================================
-        // SYSTEM 4 : TRIGGER OVERLAP & COLLECTIBLES (PIÈCES, CŒURS, PIÈGES)
+        // SYSTEM 4 : TRIGGER OVERLAP & COLLECTIBLES (PIÈCES, CŒURS, OBJETS, PIÈGES)
         // ==========================================
         if let Some((p_idx, px, py, pw, ph)) = player_pos {
             let mut collected_indices = Vec::new();
             let mut heart_indices = Vec::new();
+            let mut item_pickup_indices = Vec::new();
             let mut hazard_hit = false;
             {
                 let candidates = self.spatial_grid.query_aabb(px - 2.0, py - 2.0, pw + 4.0, ph + 4.0);
@@ -2121,12 +2232,15 @@ impl GameState {
                             let is_collectible = ent.tag == "collectible" || ent.tag == "coin";
                             let is_heart = ent.tag == "heart" || ent.name.contains("heart");
                             let is_hazard = ent.tag == "hazard" || ent.tag == "trap" || ent.tag == "spike";
+                            let is_item_pickup = ent.tag == "item_pickup" || ent.item_pickup.is_some();
 
                             if dist < max_reach {
                                 if is_collectible {
                                     collected_indices.push(idx);
                                 } else if is_heart {
                                     heart_indices.push(idx);
+                                } else if is_item_pickup {
+                                    item_pickup_indices.push(idx);
                                 } else if is_hazard {
                                     hazard_hit = true;
                                 }
@@ -2164,6 +2278,35 @@ impl GameState {
                     self.audio.play(SoundType::HealPickup);
                     spawn_requests.push((ent_cx, ent_cy, 22, 0x0010B981));
                     self.status_message = format!("Fiole de vitalité '{}' absorbée ! ({:.0}/{:.0} PV)", ent_name, h.current, h.max);
+                }
+            }
+
+            // Gestion du ramassage d'objets dans l'inventaire
+            for idx in item_pickup_indices {
+                let (_ent_name, ent_cx, ent_cy, opt_pickup) = {
+                    let ent = &mut self.entities[idx];
+                    (ent.name.clone(), ent.transform.center_x(), ent.transform.center_y(), ent.item_pickup.clone())
+                };
+
+                if let Some(pickup) = opt_pickup {
+                    let rem = self.inventory.add_item(pickup.item.clone(), pickup.count);
+                    if rem < pickup.count {
+                        self.entities[idx].is_active = false;
+                        self.audio.play(SoundType::ItemPickup);
+                        spawn_requests.push((ent_cx, ent_cy, 24, pickup.item.color));
+                        let total = self.inventory.get_item_count(&pickup.item.id);
+                        self.kvl_context.set_var(format!("item_count_{}", pickup.item.id), Value::Int(total as i64));
+                        self.kvl_context.set_var(format!("has_{}", pickup.item.id), Value::Bool(true));
+                        self.kvl_context.set_var("last_picked_item", Value::String(pickup.item.id.clone()));
+
+                        for graph in self.kvl_graphs.values() {
+                            if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnItemPickup") {
+                                kvl_steps_this_frame += steps;
+                            }
+                        }
+
+                        self.status_message = format!("Objet obtenu : {} (+{}) !", pickup.item.name, pickup.count - rem);
+                    }
                 }
             }
 
@@ -3712,9 +3855,9 @@ impl GameState {
         // Overlay de la palette de spawn d'entités (Touche P ou Bouton [+ SPAWN])
         if is_edit_mode && self.editor.show_spawn_palette {
             let pal_w = 440;
-            let pal_h = 580;
+            let pal_h = 610;
             let pal_x = 160;
-            let pal_y = 40;
+            let pal_y = 20;
 
             canvas.draw_rect(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x000F172A);
             canvas.draw_rect_outline(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x0038BDF8, 2);
@@ -3730,6 +3873,9 @@ impl GameState {
                 ("enemy", "+ Sentinelle Patrouilleuse (Vision)", 0x00DC2626),
                 ("hazard", "+ Piege a Piques (Degats -1 PV)", 0x00EF4444),
                 ("heart", "+ Fiole de Coeur (Soin +1 PV)", 0x00EC4899),
+                ("item_potion", "+ Objet : Potion de Soin (Hotbar)", 0x00EF4444),
+                ("item_key", "+ Objet : Clef de Donjon (KVL)", 0x00F59E0B),
+                ("item_crystal", "+ Objet : Cristal d'Energie", 0x0038BDF8),
                 ("portal", "+ Portail Quantique (Teleporteur)", 0x0006B6D4),
                 ("torch", "+ Torche Brulante (Emetteur Flammes)", 0x00F97316),
                 ("crate", "+ Bloc Poussable (Puzzle / Sokoban)", 0x00F4AF6A),
@@ -3739,11 +3885,11 @@ impl GameState {
             ];
 
             for (idx, (tpl_id, tpl_name, col)) in spawn_templates.iter().enumerate() {
-                let item_y = pal_y + 44 + (idx as i32 * 44);
+                let item_y = pal_y + 40 + (idx as i32 * 37);
                 let item_w = pal_w - 24;
-                let item_h = 34;
+                let item_h = 30;
 
-                canvas.draw_badge(pal_x + 12, item_y, item_w as u32, item_h as u32, 0x001E293B, *col, tpl_name, *col, 2);
+                canvas.draw_badge(pal_x + 12, item_y, item_w as u32, item_h as u32, 0x001E293B, *col, tpl_name, *col, 1);
 
                 self.editor.spawn_palette_hitboxes.push(crate::editor::PaletteItemHitbox {
                     template_id: tpl_id.to_string(),
@@ -3875,8 +4021,10 @@ impl GameState {
             }
         }
 
-        // 4. Suivi de quête HUD (en haut à droite sous le bandeau en Mode Jeu)
+        // 4. Suivi de quête HUD & Barre d'action rapide (Hotbar) en Mode Jeu
         if !is_edit_mode {
+            self.inventory.render_hotbar(canvas, w as u32, h as u32);
+
             if let Some(ref q) = self.quest {
                 let q_x = if self.telemetry.show_overlay { 24 } else { (w - 296).max(20) };
                 let q_y = 66;
@@ -5564,6 +5712,130 @@ mod tests {
         // La quête doit être passée à terminée
         let q = state.quest.as_ref().unwrap();
         assert!(q.is_completed);
+    }
+
+    #[test]
+    fn test_inventory_hotbar_slot_selection_and_key_navigation() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement scène");
+
+        // Vérifier l'inventaire initial (2 potions et 1 clef de bronze)
+        assert_eq!(state.inventory.get_item_count("potion_heal"), 2);
+        assert_eq!(state.inventory.get_item_count("key_bronze"), 1);
+        assert_eq!(state.inventory.selected_hotbar_index, 0);
+
+        // Appui sur la touche 2 pour sélectionner le slot 1
+        let mut input2 = InputState::new();
+        input2.on_key_down(KeyCode::Digit2);
+        state.update(0.016, &input2);
+
+        assert_eq!(state.inventory.selected_hotbar_index, 1);
+        assert_eq!(state.kvl_context.get_var("hotbar_selected_slot"), Some(&Value::Int(1)));
+
+        // Appui sur la touche 1 pour revenir au slot 0
+        let mut input1 = InputState::new();
+        input1.on_key_down(KeyCode::Digit1);
+        state.update(0.016, &input1);
+
+        assert_eq!(state.inventory.selected_hotbar_index, 0);
+        assert_eq!(state.kvl_context.get_var("hotbar_selected_slot"), Some(&Value::Int(0)));
+    }
+
+    #[test]
+    fn test_potion_consumption_restores_player_health_and_kvl() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement scène");
+
+        let p_idx = state.player_index().expect("Joueur");
+        // Infliger des dégâts au joueur : 3.0 -> 1.0 PV
+        if let Some(ref mut h) = state.entities[p_idx].health {
+            h.current = 1.0;
+        }
+
+        assert_eq!(state.inventory.get_item_count("potion_heal"), 2);
+
+        // Consommer la potion sur le slot 0 via use_hotbar_item
+        let res = state.use_hotbar_item(0);
+        match res {
+            ItemUseResult::ConsumedHeal { amount, new_hp } => {
+                assert_eq!(amount, 1);
+                assert_eq!(new_hp, 2.0);
+            }
+            other => panic!("Attendu ConsumedHeal, obtenu {:?}", other),
+        }
+
+        // Vérifier les PV du joueur et la synchronisation KVL
+        let current_hp = state.entities[p_idx].health.as_ref().unwrap().current;
+        assert_eq!(current_hp, 2.0);
+        assert_eq!(state.kvl_context.get_var("player_hp"), Some(&Value::Int(2)));
+        assert_eq!(state.inventory.get_item_count("potion_heal"), 1);
+    }
+
+    #[test]
+    fn test_world_item_pickup_collection_and_kvl_synchronization() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement scène");
+
+        let p_idx = state.player_index().expect("Joueur");
+        let px = state.entities[p_idx].transform.x;
+        let py = state.entities[p_idx].transform.y;
+
+        // Spawner un cristal magique exactement sur la position du joueur
+        let crystal_item = Item::energy_crystal("crystal_test", "Cristal de Test");
+        let pickup_id = state.entities.len();
+        state.entities.push(Entity::spawn_item_pickup(pickup_id, px, py, crystal_item, 1));
+
+        let initial_crystals = state.inventory.get_item_count("crystal_test");
+        assert_eq!(initial_crystals, 0);
+
+        // Faire tourner une frame de simulation
+        let input = InputState::new();
+        state.update(0.016, &input);
+
+        // L'entité doit être désactivée et l'objet doit être dans l'inventaire
+        assert!(!state.entities[pickup_id].is_active, "Le pickup doit être collecté et désactivé");
+        assert_eq!(state.inventory.get_item_count("crystal_test"), 1);
+        assert_eq!(state.kvl_context.get_var("has_crystal_test"), Some(&Value::Bool(true)));
+        assert_eq!(state.kvl_context.get_var("item_count_crystal_test"), Some(&Value::Int(1)));
+        assert_eq!(state.kvl_context.get_var("last_picked_item"), Some(&Value::String("crystal_test".into())));
+    }
+
+    #[test]
+    fn test_mouse_click_hotbar_hitbox_interaction() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement scène");
+
+        // Rendu d'une frame pour calculer les hitboxes réelles
+        let mut canvas = Canvas::new(800, 600);
+        state.inventory.render_hotbar(&mut canvas, 800, 600);
+
+        // Récupérer la hitbox du slot 2 (index 1)
+        let (hx, hy, hw, hh) = state.inventory.hotbar_hitboxes[1].expect("Hitbox slot 2");
+
+        // Clic de la souris au centre du slot 2
+        let mut input_click = InputState::new();
+        input_click.on_mouse_move((hx + (hw / 2) as i32) as f32, (hy + (hh / 2) as i32) as f32);
+        input_click.on_mouse_down();
+        state.update(0.016, &input_click);
+
+        // Le slot 1 doit être sélectionné
+        assert_eq!(state.inventory.selected_hotbar_index, 1);
+        assert_eq!(state.kvl_context.get_var("hotbar_selected_slot"), Some(&Value::Int(1)));
+    }
+
+    #[test]
+    fn test_studio_spawn_item_presets() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement scène");
+
+        let p1 = state.spawn_entity("item_potion", 200.0, 200.0);
+        let p2 = state.spawn_entity("item_key", 250.0, 200.0);
+        let p3 = state.spawn_entity("item_crystal", 300.0, 200.0);
+
+        assert!(state.entities[p1].item_pickup.is_some());
+        assert_eq!(state.entities[p1].tag, "item_pickup");
+        assert!(state.entities[p2].item_pickup.is_some());
+        assert!(state.entities[p3].item_pickup.is_some());
     }
 }
 

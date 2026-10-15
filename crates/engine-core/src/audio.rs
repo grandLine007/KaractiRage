@@ -23,6 +23,9 @@ pub enum SoundType {
     PlayerDeath,
     Typewriter,
     QuestSuccess,
+    ItemPickup,
+    PotionDrink,
+    KeyUnlock,
 }
 
 struct ActiveVoice {
@@ -55,6 +58,9 @@ impl ActiveVoice {
             SoundType::PlayerDeath => 0.60,
             SoundType::Typewriter => 0.025,
             SoundType::QuestSuccess => 0.45,
+            SoundType::ItemPickup => 0.28,
+            SoundType::PotionDrink => 0.35,
+            SoundType::KeyUnlock => 0.25,
         };
 
         let duration_samples = (duration_secs * sample_rate as f32) as usize;
@@ -278,6 +284,41 @@ impl ActiveVoice {
                 let env = (1.0 - (progress * 3.0).fract()).powf(1.3) * (1.0 - progress * 0.2);
                 (sine * 0.7 + triangle * 0.3) * env * 0.65
             }
+
+            SoundType::ItemPickup => {
+                // Carillon ascendant étincelant : Ré5 (587 Hz), La5 (880 Hz), Ré6 (1174 Hz), La6 (1760 Hz)
+                let step = (progress * 4.0) as usize;
+                let freq = match step {
+                    0 => 587.33,
+                    1 => 880.00,
+                    2 => 1174.66,
+                    _ => 1760.00,
+                };
+                let sine = (t * freq * std::f32::consts::TAU).sin();
+                let bell_harmonic = (t * freq * 2.76 * std::f32::consts::TAU).sin() * 0.25;
+                let env = (1.0 - (progress * 4.0).fract()).powf(1.6) * (1.0 - progress * 0.25);
+                (sine * 0.75 + bell_harmonic) * env * 0.65
+            }
+
+            SoundType::PotionDrink => {
+                // Glouglou rafraîchissant de potion (modulation sinusoïdale 360 Hz -> 580 Hz avec vibrato doux)
+                let vibrato = (t * 26.0 * std::f32::consts::TAU).sin() * 90.0;
+                let base_freq = 360.0 + (progress * 220.0) + vibrato;
+                let sine = (t * base_freq * std::f32::consts::TAU).sin();
+                let env = (1.0 - progress).powf(1.4) * (0.6 + 0.4 * (t * 18.0 * std::f32::consts::TAU).sin().abs());
+                sine * env * 0.6
+            }
+
+            SoundType::KeyUnlock => {
+                // Déclic mécanique double de serrure déverrouillée (480 Hz puis 780 Hz)
+                let is_first = progress < 0.45;
+                let freq = if is_first { 480.0 } else { 780.0 };
+                let pulse_progress = if is_first { progress / 0.45 } else { (progress - 0.45) / 0.55 };
+                let square = if (t * freq).fract() < 0.5 { 0.6 } else { -0.6 };
+                let sine = (t * freq * std::f32::consts::TAU).sin();
+                let env = (1.0 - pulse_progress).powf(2.2);
+                (square * 0.4 + sine * 0.6) * env * 0.7
+            }
         };
 
         raw_wave * self.volume
@@ -415,6 +456,11 @@ mod tests {
             SoundType::PlayerDamage,
             SoundType::HealPickup,
             SoundType::PlayerDeath,
+            SoundType::Typewriter,
+            SoundType::QuestSuccess,
+            SoundType::ItemPickup,
+            SoundType::PotionDrink,
+            SoundType::KeyUnlock,
         ];
 
         let sample_rate = 44100.0;
