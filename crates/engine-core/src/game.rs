@@ -1,6 +1,6 @@
 use crate::adaptation::AdaptationManager;
 use crate::audio::{AudioEngine, SoundType};
-use crate::editor::{EditorMode, EditorState, SelectedEntity};
+use crate::editor::{EditorMode, EditorState, SelectedEntity, StudioTool};
 use crate::entity::{Entity, MovementMode, ShapeKind};
 use crate::input::InputState;
 use crate::renderer::Canvas;
@@ -881,6 +881,108 @@ impl GameState {
                 }
             }
 
+            // Raccourcis Outils Studio : V (Select), B (Pinceau), X (Gomme), T (Changer tuile)
+            if input.is_key_just_pressed(KeyCode::KeyV) {
+                self.editor.set_tool(StudioTool::Select);
+                self.audio.play(SoundType::UiClick);
+                self.status_message = "Outil [SELECT / INSPECT] actif (V) : Cliquez sur une entité pour inspecter ou déplacer.".into();
+                return;
+            }
+            if input.is_key_just_pressed(KeyCode::KeyB) {
+                self.editor.set_tool(StudioTool::Brush);
+                self.audio.play(SoundType::UiClick);
+                self.status_message = format!("Outil [PINCEAU] actif (B) : Peignez à la souris (Tuile : {} | T: Changer).", self.editor.brush_tile.label());
+                return;
+            }
+            if input.is_key_just_pressed(KeyCode::KeyX) {
+                self.editor.set_tool(StudioTool::Eraser);
+                self.audio.play(SoundType::UiClick);
+                self.status_message = "Outil [GOMME] actif (X) : Cliquez ou glissez pour effacer des blocs.".into();
+                return;
+            }
+            if input.is_key_just_pressed(KeyCode::KeyT) {
+                let next_tile = self.editor.cycle_brush_tile();
+                self.audio.play(SoundType::UiClick);
+                self.status_message = format!("Tuile active du pinceau : {} (T)", next_tile.label());
+                return;
+            }
+
+            let in_viewport = input.mouse_x >= 20.0 && input.mouse_x <= 810.0 && input.mouse_y >= 66.0 && input.mouse_y <= 536.0;
+
+            // Clic droit rapide : Effacement d'entité sous le curseur dans le viewport (quel que soit l'outil actif)
+            if input.mouse_right_just_clicked && in_viewport {
+                let mx = input.mouse_x;
+                let my = input.mouse_y;
+                let to_delete = self.entities.iter().enumerate().rposition(|(_, e)| {
+                    let is_player = e.movement.as_ref().map_or(false, |m| m.is_player_controlled);
+                    !is_player
+                        && mx >= e.transform.x - 4.0
+                        && mx <= e.transform.x + e.transform.w + 4.0
+                        && my >= e.transform.y - 4.0
+                        && my <= e.transform.y + e.transform.h + 4.0
+                });
+                if let Some(del_idx) = to_delete {
+                    let name = self.entities[del_idx].name.clone();
+                    let x = self.entities[del_idx].transform.x;
+                    let y = self.entities[del_idx].transform.y;
+                    self.entities.remove(del_idx);
+                    self.editor.selected = SelectedEntity::None;
+                    self.audio.play(SoundType::WireCut);
+                    self.spawn_particles(x, y, 14, 0x00EF4444);
+                    self.status_message = format!("Entité '{}' supprimée au clic droit.", name);
+                    return;
+                }
+            }
+
+            // Peinture continue au pinceau (StudioTool::Brush) sur grille 32x32 avec anti-doublon
+            if self.editor.active_tool == StudioTool::Brush && input.mouse_pressed && in_viewport {
+                let mx = input.mouse_x;
+                let my = input.mouse_y;
+                let cell_col = ((mx - 20.0) / 32.0).floor() as i32;
+                let cell_row = ((my - 66.0) / 32.0).floor() as i32;
+                if cell_col >= 0 && cell_row >= 0 && self.editor.last_painted_cell != Some((cell_col, cell_row)) {
+                    self.editor.last_painted_cell = Some((cell_col, cell_row));
+                    let grid_x = 20.0 + (cell_col as f32 * 32.0);
+                    let grid_y = 66.0 + (cell_row as f32 * 32.0);
+
+                    let occupied = self.entities.iter().any(|e| {
+                        (e.transform.x - grid_x).abs() < 16.0 && (e.transform.y - grid_y).abs() < 16.0
+                    });
+
+                    if !occupied {
+                        let tile_id = self.editor.brush_tile.id();
+                        self.spawn_entity(tile_id, grid_x, grid_y);
+                        self.editor.selected = SelectedEntity::None;
+                        self.editor.is_dragging = false;
+                        self.status_message = format!("Tuile '{}' peinte en ({:.0}, {:.0}) !", self.editor.brush_tile.label(), grid_x, grid_y);
+                    }
+                }
+            }
+
+            // Effacement continu à la gomme (StudioTool::Eraser)
+            if self.editor.active_tool == StudioTool::Eraser && input.mouse_pressed && in_viewport {
+                let mx = input.mouse_x;
+                let my = input.mouse_y;
+                let to_delete = self.entities.iter().enumerate().rposition(|(_, e)| {
+                    let is_player = e.movement.as_ref().map_or(false, |m| m.is_player_controlled);
+                    !is_player
+                        && mx >= e.transform.x - 4.0
+                        && mx <= e.transform.x + e.transform.w + 4.0
+                        && my >= e.transform.y - 4.0
+                        && my <= e.transform.y + e.transform.h + 4.0
+                });
+                if let Some(del_idx) = to_delete {
+                    let name = self.entities[del_idx].name.clone();
+                    let x = self.entities[del_idx].transform.x;
+                    let y = self.entities[del_idx].transform.y;
+                    self.entities.remove(del_idx);
+                    self.editor.selected = SelectedEntity::None;
+                    self.audio.play(SoundType::WireCut);
+                    self.spawn_particles(x, y, 14, 0x00EF4444);
+                    self.status_message = format!("Entité '{}' effacée à la gomme.", name);
+                }
+            }
+
             // Raccourci P : Basculer la palette de spawn d'entités
             if input.is_key_just_pressed(KeyCode::KeyP) {
                 self.editor.toggle_spawn_palette();
@@ -937,6 +1039,32 @@ impl GameState {
                     }
                     _ => None,
                 };
+
+                // 00. Clic sur les boutons d'outils studio (Select, Brush, Eraser, Cycle Tile)
+                if self.editor.is_tool_select_clicked(mx, my) {
+                    self.editor.set_tool(StudioTool::Select);
+                    self.audio.play(SoundType::UiClick);
+                    self.status_message = "Outil [SELECT / INSPECT] actif (V) : Cliquez sur une entité pour inspecter ou déplacer.".into();
+                    return;
+                }
+                if self.editor.is_tool_brush_clicked(mx, my) {
+                    self.editor.set_tool(StudioTool::Brush);
+                    self.audio.play(SoundType::UiClick);
+                    self.status_message = format!("Outil [PINCEAU] actif (B) : Peignez à la souris (Tuile : {} | T: Changer).", self.editor.brush_tile.label());
+                    return;
+                }
+                if self.editor.is_tool_eraser_clicked(mx, my) {
+                    self.editor.set_tool(StudioTool::Eraser);
+                    self.audio.play(SoundType::UiClick);
+                    self.status_message = "Outil [GOMME] actif (X) : Cliquez ou glissez pour effacer des blocs.".into();
+                    return;
+                }
+                if self.editor.is_tool_tile_cycle_clicked(mx, my) {
+                    let tile = self.editor.cycle_brush_tile();
+                    self.audio.play(SoundType::UiClick);
+                    self.status_message = format!("Tuile active du pinceau : {} (T)", tile.label());
+                    return;
+                }
 
                 // 0. Clic sur le bouton Sauvegarder
                 if self.editor.is_save_btn_clicked(mx, my) {
@@ -1197,37 +1325,40 @@ impl GameState {
                     }
                 }
 
-                // 5. Sélection universelle d'entité à la souris
-                let mut found_idx = None;
-                for (idx, ent) in self.entities.iter().enumerate().rev() {
-                    let t = &ent.transform;
-                    if mx >= t.x - 8.0 && mx <= t.x + t.w + 8.0 && my >= t.y - 8.0 && my <= t.y + t.h + 8.0 {
-                        found_idx = Some(idx);
-                        break;
+                // 5. Sélection universelle d'entité à la souris (Outil Select uniquement)
+                if self.editor.active_tool == StudioTool::Select {
+                    let mut found_idx = None;
+                    for (idx, ent) in self.entities.iter().enumerate().rev() {
+                        let t = &ent.transform;
+                        if mx >= t.x - 8.0 && mx <= t.x + t.w + 8.0 && my >= t.y - 8.0 && my <= t.y + t.h + 8.0 {
+                            found_idx = Some(idx);
+                            break;
+                        }
                     }
-                }
 
-                if let Some(idx) = found_idx {
-                    self.editor.selected = SelectedEntity::Entity(idx);
-                    self.editor.is_dragging = true;
-                    self.editor.drag_offset_x = self.entities[idx].transform.x - mx;
-                    self.editor.drag_offset_y = self.entities[idx].transform.y - my;
-                    self.status_message = format!("Entité '{}' ({}) sélectionnée.", self.entities[idx].name, self.entities[idx].tag);
-                    return;
-                }
+                    if let Some(idx) = found_idx {
+                        self.editor.selected = SelectedEntity::Entity(idx);
+                        self.editor.is_dragging = true;
+                        self.editor.drag_offset_x = self.entities[idx].transform.x - mx;
+                        self.editor.drag_offset_y = self.entities[idx].transform.y - my;
+                        self.status_message = format!("Entité '{}' ({}) sélectionnée.", self.entities[idx].name, self.entities[idx].tag);
+                        return;
+                    }
 
-                // Clic dans la zone de jeu vide -> désélectionner
-                if mx < 720.0 && my >= 65.0 && my <= 620.0 {
-                    self.editor.selected = SelectedEntity::None;
+                    // Clic dans la zone de jeu vide -> désélectionner
+                    if mx < 720.0 && my >= 65.0 && my <= 620.0 {
+                        self.editor.selected = SelectedEntity::None;
+                    }
                 }
             }
 
             if input.mouse_just_released {
                 self.editor.is_dragging = false;
+                self.editor.last_painted_cell = None;
             }
 
-            // Déplacement universel de l'entité sélectionnée à la souris
-            if self.editor.is_dragging && input.mouse_pressed {
+            // Déplacement universel de l'entité sélectionnée à la souris (Outil Select uniquement)
+            if self.editor.active_tool == StudioTool::Select && self.editor.is_dragging && input.mouse_pressed {
                 if let SelectedEntity::Entity(idx) = self.editor.selected {
                     if idx < self.entities.len() {
                         let new_x = (input.mouse_x + self.editor.drag_offset_x).clamp(20.0, 1150.0);
@@ -2313,44 +2444,75 @@ impl GameState {
             self.editor.duplicate_btn_hitbox = None;
             self.editor.delete_btn_hitbox = None;
             self.editor.help_btn_hitbox = None;
+            self.editor.tool_select_btn_hitbox = None;
+            self.editor.tool_brush_btn_hitbox = None;
+            self.editor.tool_eraser_btn_hitbox = None;
+            self.editor.tool_tile_cycle_btn_hitbox = None;
 
             // Brand Badge Studio
-            canvas.draw_badge(16, 12, 130, 32, 0x002E1065, 0x00A855F7, "STUDIO ECS", 0x00F3E8FF, 2);
+            canvas.draw_badge(16, 12, 105, 32, 0x002E1065, 0x00A855F7, "STUDIO ECS", 0x00F3E8FF, 2);
 
-            // Bouton 1 : [+ SPAWN (P)]
-            let spawn_x = 156;
+            // Outil 1 : [V: SELECT]
+            let sel_bg = if self.editor.active_tool == StudioTool::Select { 0x001E3A8A } else { 0x000F172A };
+            let sel_bd = if self.editor.active_tool == StudioTool::Select { 0x003B82F6 } else { 0x00334155 };
+            let sel_fg = if self.editor.active_tool == StudioTool::Select { 0x00EFF6FF } else { 0x0094A3B8 };
+            canvas.draw_badge(129, 12, 88, 32, sel_bg, sel_bd, "[V: SELECT]", sel_fg, 2);
+            self.editor.tool_select_btn_hitbox = Some((129, 12, 88, 32));
+
+            // Outil 2 : [B: PINCEAU]
+            let bru_bg = if self.editor.active_tool == StudioTool::Brush { 0x007C2D12 } else { 0x000F172A };
+            let bru_bd = if self.editor.active_tool == StudioTool::Brush { 0x00F97316 } else { 0x00334155 };
+            let bru_fg = if self.editor.active_tool == StudioTool::Brush { 0x00FFEDD5 } else { 0x0094A3B8 };
+            canvas.draw_badge(223, 12, 96, 32, bru_bg, bru_bd, "[B: PINCEAU]", bru_fg, 2);
+            self.editor.tool_brush_btn_hitbox = Some((223, 12, 96, 32));
+
+            // Sélecteur cyclique de Tuile : [T: <Nom> >]
+            let tile_col = self.editor.brush_tile.color();
+            let tile_lbl = format!("[T: {} >]", self.editor.brush_tile.short_label());
+            canvas.draw_badge(325, 12, 108, 32, 0x0018181B, tile_col, &tile_lbl, tile_col, 2);
+            self.editor.tool_tile_cycle_btn_hitbox = Some((325, 12, 108, 32));
+
+            // Outil 3 : [X: GOMME]
+            let era_bg = if self.editor.active_tool == StudioTool::Eraser { 0x007F1D1D } else { 0x000F172A };
+            let era_bd = if self.editor.active_tool == StudioTool::Eraser { 0x00EF4444 } else { 0x00334155 };
+            let era_fg = if self.editor.active_tool == StudioTool::Eraser { 0x00FEE2E2 } else { 0x0094A3B8 };
+            canvas.draw_badge(439, 12, 85, 32, era_bg, era_bd, "[X: GOMME]", era_fg, 2);
+            self.editor.tool_eraser_btn_hitbox = Some((439, 12, 85, 32));
+
+            // Action : [+ SPAWN (P)]
+            let spawn_x = 530;
             let spawn_y = 12;
-            let spawn_w = 125;
+            let spawn_w = 112;
             let spawn_h = 32;
             let spawn_bg = if self.editor.show_spawn_palette { 0x007C3AED } else { 0x003730A3 };
             canvas.draw_badge(spawn_x, spawn_y, spawn_w as u32, spawn_h as u32, spawn_bg, 0x00818CF8, "[+ SPAWN (P)]", 0x00FFFFFF, 2);
             self.editor.spawn_btn_hitbox = Some((spawn_x, spawn_y, spawn_w as u32, spawn_h as u32));
 
-            // Bouton 2 : [SAUVER (C+S)]
-            let save_x = 290;
+            // Action : [SAUVER (C+S)]
+            let save_x = 648;
             let save_y = 12;
-            let save_w = 135;
+            let save_w = 118;
             let save_h = 32;
             canvas.draw_badge(save_x, save_y, save_w as u32, save_h as u32, 0x00064E3B, 0x0010B981, "[SAUVER (C+S)]", 0x00D1FAE5, 2);
             self.editor.top_save_btn_hitbox = Some((save_x, save_y, save_w as u32, save_h as u32));
 
-            // Boutons contextuels si une entité est sélectionnée
+            // Actions contextuelles si une entité est sélectionnée
             if let SelectedEntity::Entity(idx) = self.editor.selected {
                 if idx < self.entities.len() {
-                    let dup_x = 434;
+                    let dup_x = 772;
                     let dup_y = 12;
-                    let dup_w = 150;
+                    let dup_w = 105;
                     let dup_h = 32;
-                    canvas.draw_badge(dup_x, dup_y, dup_w as u32, dup_h as u32, 0x0078350F, 0x00F59E0B, "[DUPLIQUER (C+D)]", 0x00FEF3C7, 2);
+                    canvas.draw_badge(dup_x, dup_y, dup_w as u32, dup_h as u32, 0x0078350F, 0x00F59E0B, "[DUP (C+D)]", 0x00FEF3C7, 2);
                     self.editor.duplicate_btn_hitbox = Some((dup_x, dup_y, dup_w as u32, dup_h as u32));
 
                     let is_player = self.entities[idx].movement.as_ref().map_or(false, |m| m.is_player_controlled);
                     if !is_player {
-                        let del_x = 592;
+                        let del_x = 883;
                         let del_y = 12;
-                        let del_w = 135;
+                        let del_w = 85;
                         let del_h = 32;
-                        canvas.draw_badge(del_x, del_y, del_w as u32, del_h as u32, 0x007F1D1D, 0x00EF4444, "[SUPPR (DEL)]", 0x00FEE2E2, 2);
+                        canvas.draw_badge(del_x, del_y, del_w as u32, del_h as u32, 0x007F1D1D, 0x00EF4444, "[SUPPR]", 0x00FEE2E2, 2);
                         self.editor.delete_btn_hitbox = Some((del_x, del_y, del_w as u32, del_h as u32));
                     }
                 }
@@ -2509,7 +2671,11 @@ impl GameState {
 
         // Légende discrète de zone de jeu
         let viewport_tag = if is_edit_mode {
-            "STUDIO VIEWPORT (CLIQUEZ / GLISSEZ UNE ENTITE | P: SPAWN)"
+            match self.editor.active_tool {
+                StudioTool::Select => "STUDIO [SELECT] : CLIQUEZ POUR INSPECTER | GLISSEZ POUR DEPLACER | V / B / X",
+                StudioTool::Brush => "STUDIO [PINCEAU] : CLIC GAUCHE GLISSE POUR PEINDRE | T: CHANGER TUILE | CLIC DROIT: EFFACER",
+                StudioTool::Eraser => "STUDIO [GOMME] : CLIC GAUCHE GLISSE POUR EFFACER LES BLOCS | V: SELECT | B: PINCEAU",
+            }
         } else if self.scene_path.contains("platformer") {
             "PLATEFORME 2D (Q/D/FLECHES : COURIR | ESPACE/Z/HAUT : SAUTER | F : TIRER | F4/L : GENRE)"
         } else if self.scene_path.contains("space") {
@@ -3003,6 +3169,38 @@ impl GameState {
             }
         }
 
+        // Curseur fantôme (Ghost Preview) pour le Pinceau, la Gomme et la Sélection
+        if is_edit_mode {
+            let mx = self.editor.mouse_x;
+            let my = self.editor.mouse_y;
+            if mx >= vx as f32 && mx < (vx + vw) as f32 && my >= vy as f32 && my < (vy + vh) as f32 {
+                let cell_col = ((mx - vx as f32) / 32.0).floor() as i32;
+                let cell_row = ((my - vy as f32) / 32.0).floor() as i32;
+                let gx = vx + cell_col * 32;
+                let gy = vy + cell_row * 32;
+
+                match self.editor.active_tool {
+                    StudioTool::Brush => {
+                        let col = self.editor.brush_tile.color();
+                        canvas.draw_rect_outline(gx, gy, 32, 32, col, 2);
+                        canvas.draw_corner_brackets(gx, gy, 32, 32, 6, col);
+                        let short_lbl = self.editor.brush_tile.short_label();
+                        canvas.draw_text(gx + 3, gy + 11, short_lbl, col, 1);
+                    }
+                    StudioTool::Eraser => {
+                        canvas.draw_rect_outline(gx, gy, 32, 32, 0x00EF4444, 2);
+                        canvas.draw_line(gx + 4, gy + 4, gx + 28, gy + 28, 0x00EF4444);
+                        canvas.draw_line(gx + 28, gy + 4, gx + 4, gy + 28, 0x00EF4444);
+                    }
+                    StudioTool::Select => {
+                        if self.editor.selected == SelectedEntity::None {
+                            canvas.draw_rect_outline(gx, gy, 32, 32, 0x0038BDF8, 1);
+                        }
+                    }
+                }
+            }
+        }
+
         // ========================================================
         // PANNEAU INSPECTEUR KVL UNIVERSEL (EN MODE ÉDITION) : Largeur 450px
         // ========================================================
@@ -3273,6 +3471,10 @@ impl GameState {
         // Ruban de commandes rapides claires et pédagogiques
         if is_edit_mode {
             let pills = [
+                ("V: Select", 0x001E3A8A, 0x0093C5FD),
+                ("B: Pinceau", 0x007C2D12, 0x00FDBA74),
+                ("T: Tuile", 0x00065F46, 0x006EE7B7),
+                ("X: Gomme", 0x007F1D1D, 0x00FCA5A5),
                 ("P: Spawn", 0x007C3AED, 0x00C084FC),
                 ("C+D: Dupliquer", 0x00B45309, 0x00FDE68A),
                 ("Del: Suppr", 0x00B91C1C, 0x00FECACA),
@@ -3743,6 +3945,7 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::BrushTile;
     use crate::entity::*;
 
     fn get_test_scene_path() -> &'static str {
@@ -4728,6 +4931,189 @@ mod tests {
         state.render(&mut canvas);
         assert!(state.editor.spawn_palette_hitboxes.iter().any(|h| h.template_id == "hazard"));
         assert!(state.editor.spawn_palette_hitboxes.iter().any(|h| h.template_id == "heart"));
+    }
+
+    #[test]
+    fn test_studio_tool_switching_and_tile_cycling() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Scène chargée");
+        state.editor.toggle_mode();
+        assert_eq!(state.editor.active_tool, StudioTool::Select);
+
+        // Raccourci B : Pinceau
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyB);
+        state.update(0.016, &input);
+        assert_eq!(state.editor.active_tool, StudioTool::Brush);
+
+        // Raccourci T : Cycle des tuiles (Mur -> Piège -> Pièce -> Cœur -> Caisse -> Dalle -> Mur)
+        assert_eq!(state.editor.brush_tile, BrushTile::Wall);
+        assert_eq!(state.editor.brush_tile.id(), "wall");
+        assert_eq!(state.editor.brush_tile.short_label(), "Mur");
+        assert_eq!(state.editor.brush_tile.color(), 0x0094A3B8);
+
+        let mut input_t = InputState::new();
+        input_t.on_key_down(KeyCode::KeyT);
+        state.update(0.016, &input_t);
+        assert_eq!(state.editor.brush_tile, BrushTile::Hazard);
+        assert_eq!(state.editor.brush_tile.id(), "hazard");
+        assert_eq!(state.editor.brush_tile.color(), 0x00EF4444);
+
+        state.editor.cycle_brush_tile();
+        assert_eq!(state.editor.brush_tile, BrushTile::Collectible);
+        state.editor.cycle_brush_tile();
+        assert_eq!(state.editor.brush_tile, BrushTile::Heart);
+        state.editor.cycle_brush_tile();
+        assert_eq!(state.editor.brush_tile, BrushTile::Crate);
+        state.editor.cycle_brush_tile();
+        assert_eq!(state.editor.brush_tile, BrushTile::Plate);
+        state.editor.cycle_brush_tile();
+        assert_eq!(state.editor.brush_tile, BrushTile::Wall);
+
+        // Raccourci X : Gomme
+        let mut input_x = InputState::new();
+        input_x.on_key_down(KeyCode::KeyX);
+        state.update(0.016, &input_x);
+        assert_eq!(state.editor.active_tool, StudioTool::Eraser);
+
+        // Raccourci V : Select
+        let mut input_v = InputState::new();
+        input_v.on_key_down(KeyCode::KeyV);
+        state.update(0.016, &input_v);
+        assert_eq!(state.editor.active_tool, StudioTool::Select);
+    }
+
+    #[test]
+    fn test_tile_brush_continuous_painting_no_duplicates() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Scène chargée");
+        state.editor.toggle_mode();
+        state.editor.set_tool(StudioTool::Brush);
+        state.editor.brush_tile = BrushTile::Wall;
+
+        let initial_count = state.entities.len();
+
+        // 1. Clic à l'intérieur du viewport (ex: x=148.0, y=162.0)
+        let mut input = InputState::new();
+        input.on_mouse_move(148.0, 162.0);
+        input.on_mouse_down();
+        state.update(0.016, &input);
+
+        // Entité créée
+        assert_eq!(state.entities.len(), initial_count + 1);
+        let spawned = &state.entities[initial_count];
+        assert_eq!(spawned.tag, "wall");
+
+        // 2. Maintien du clic sur la même cellule au frame suivant (anti-doublon)
+        input.clear_transient();
+        state.update(0.016, &input);
+        assert_eq!(state.entities.len(), initial_count + 1, "Ne doit pas créer de doublons sur la même cellule");
+
+        // 3. Glissement vers la cellule voisine (+32px sur x)
+        input.on_mouse_move(180.0, 162.0);
+        state.update(0.016, &input);
+        assert_eq!(state.entities.len(), initial_count + 2, "Doit peindre la cellule voisine");
+
+        // 4. Relâchement de la souris
+        input.on_mouse_up();
+        state.update(0.016, &input);
+        assert_eq!(state.editor.last_painted_cell, None);
+    }
+
+    #[test]
+    fn test_tile_eraser_tool_and_right_click() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Scène chargée");
+        state.editor.toggle_mode();
+
+        // Créer un mur de test à une coordonnée précise
+        let test_wall_idx = state.spawn_entity("wall", 212.0, 194.0);
+        let wall_id = state.entities[test_wall_idx].id;
+        assert!(state.entities.iter().any(|e| e.id == wall_id));
+
+        // 1. Gomme avec StudioTool::Eraser
+        state.editor.set_tool(StudioTool::Eraser);
+        let mut input = InputState::new();
+        input.on_mouse_move(215.0, 198.0);
+        input.on_mouse_down();
+        state.update(0.016, &input);
+
+        // Le mur doit avoir été effacé
+        assert!(!state.entities.iter().any(|e| e.id == wall_id));
+
+        // 2. Créer une caisse et l'effacer par Clic Droit rapide (en mode Select)
+        let crate_idx = state.spawn_entity("crate", 244.0, 194.0);
+        let crate_id = state.entities[crate_idx].id;
+        state.editor.set_tool(StudioTool::Select);
+
+        let mut right_click_input = InputState::new();
+        right_click_input.on_mouse_move(248.0, 198.0);
+        right_click_input.on_mouse_right_click();
+        state.update(0.016, &right_click_input);
+
+        // La caisse doit avoir été effacée
+        assert!(!state.entities.iter().any(|e| e.id == crate_id));
+
+        // 3. Sécurité : le clic droit sur le joueur ne doit JAMAIS effacer le joueur
+        let p_idx = state.player_index().unwrap();
+        let px = state.entities[p_idx].transform.x;
+        let py = state.entities[p_idx].transform.y;
+
+        let mut click_player = InputState::new();
+        click_player.on_mouse_move(px + 4.0, py + 4.0);
+        click_player.on_mouse_right_click();
+        state.update(0.016, &click_player);
+
+        assert!(state.player_index().is_some(), "Le joueur doit être protégé contre l'effacement");
+    }
+
+    #[test]
+    fn test_studio_tool_hitboxes_and_canvas_render() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Scène chargée");
+        state.editor.toggle_mode();
+
+        let mut canvas = Canvas::new(1280, 720);
+        state.render(&mut canvas);
+
+        // Vérification des hitboxes des outils dans le bandeau supérieur
+        assert!(state.editor.tool_select_btn_hitbox.is_some());
+        assert!(state.editor.tool_brush_btn_hitbox.is_some());
+        assert!(state.editor.tool_tile_cycle_btn_hitbox.is_some());
+        assert!(state.editor.tool_eraser_btn_hitbox.is_some());
+
+        // Clic sur l'outil Pinceau via hitbox
+        let (bx, by, ..) = state.editor.tool_brush_btn_hitbox.unwrap();
+        let mut click_brush = InputState::new();
+        click_brush.on_mouse_move(bx as f32 + 5.0, by as f32 + 5.0);
+        click_brush.on_mouse_down();
+        state.update(0.016, &click_brush);
+        assert_eq!(state.editor.active_tool, StudioTool::Brush);
+
+        // Clic sur l'outil Gomme via hitbox
+        let (ex, ey, ..) = state.editor.tool_eraser_btn_hitbox.unwrap();
+        let mut click_eraser = InputState::new();
+        click_eraser.on_mouse_move(ex as f32 + 5.0, ey as f32 + 5.0);
+        click_eraser.on_mouse_down();
+        state.update(0.016, &click_eraser);
+        assert_eq!(state.editor.active_tool, StudioTool::Eraser);
+
+        // Clic sur le cycleur de tuile via hitbox
+        let (tx, ty, ..) = state.editor.tool_tile_cycle_btn_hitbox.unwrap();
+        let prev_tile = state.editor.brush_tile;
+        let mut click_tile = InputState::new();
+        click_tile.on_mouse_move(tx as f32 + 5.0, ty as f32 + 5.0);
+        click_tile.on_mouse_down();
+        state.update(0.016, &click_tile);
+        assert_ne!(state.editor.brush_tile, prev_tile);
+
+        // Clic sur Select via hitbox
+        let (sx, sy, ..) = state.editor.tool_select_btn_hitbox.unwrap();
+        let mut click_select = InputState::new();
+        click_select.on_mouse_move(sx as f32 + 5.0, sy as f32 + 5.0);
+        click_select.on_mouse_down();
+        state.update(0.016, &click_select);
+        assert_eq!(state.editor.active_tool, StudioTool::Select);
     }
 }
 

@@ -460,6 +460,28 @@
   * **0 avertissement de compilation** (`cargo check --all-targets`).
   * Export WebAssembly synchronisé via `./scripts/build_web.sh`.
 
+### Étape 25 : Outil Pinceau de Tuiles (*Tile Painting & Eraser*) dans le Studio *(15 Octobre 2026)*
+* **Constat** : La création rapide de niveaux (murs, pièges, pièces, caisses, dalles) nécessitait de passer par des créations unitaires ou des duplications manuelles. Les auteurs avaient besoin d'un outil de peinture fluide de type *Mario Maker / Tiled*.
+* **Réalisations** :
+  * **Outil Pinceau de Tuiles (`StudioTool::Brush`) & Gomme (`StudioTool::Eraser`)** :
+    * `StudioTool` : `Select`, `Brush`, `Eraser`.
+    * `BrushTile` : `Wall`, `Hazard`, `Collectible`, `Heart`, `Crate`, `Plate`.
+    * Peinture continue par maintien du clic gauche (`input.mouse_pressed`) sur une grille 32x32 avec anti-doublon spatial automatique évitant la superposition d'entités identiques.
+    * Réinitialisation propre de `last_painted_cell` au relâchement de la souris.
+  * **Gomme Continue & Effacement Rapide au Clic Droit** :
+    * Outil Gomme dédié avec réticule rouge d'effacement.
+    * **Clic droit universel dans le viewport** : effacement direct de l'entité ciblée sans quitter son outil actif.
+    * Sécurité absolue : protection inviolable de l'entité Joueur contre la suppression.
+  * **Curseur Fantôme (*Ghost Cursor Preview*) & Ergonomie Studio** :
+    * Boîte de prévisualisation au survol du viewport avec crochets de coins, couleur thématique et libellé de tuile.
+    * Raccourcis clavier directs : `V` (Select), `B` (Pinceau), `X` (Gomme), `T` (Cycle rapide de la tuile active).
+    * Badges interactifs cliquables avec indicateurs d'état actif dans la barre d'outils supérieure (`[V: SELECT]`, `[B: PINCEAU]`, `[T: Tuile >]`, `[X: GOMME]`).
+    * Ruban inférieur pédagogique enrichi avec les pastilles des outils de peinture.
+* **Mesures & Benchmarks** :
+  * **90/90 tests unitaires validés à 100%** (+8 nouveaux tests dans engine-core).
+  * **0 avertissement de compilation** (`cargo check --all-targets`).
+  * Export WebAssembly synchronisé via `./scripts/build_web.sh`.
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

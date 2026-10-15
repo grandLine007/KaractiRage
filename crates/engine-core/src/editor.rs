@@ -5,6 +5,80 @@ pub enum EditorMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StudioTool {
+    Select,
+    Brush,
+    Eraser,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrushTile {
+    Wall,
+    Hazard,
+    Collectible,
+    Heart,
+    Crate,
+    Plate,
+}
+
+impl BrushTile {
+    pub fn id(&self) -> &'static str {
+        match self {
+            BrushTile::Wall => "wall",
+            BrushTile::Hazard => "hazard",
+            BrushTile::Collectible => "collectible",
+            BrushTile::Heart => "heart",
+            BrushTile::Crate => "crate",
+            BrushTile::Plate => "plate",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            BrushTile::Wall => "Mur Solide",
+            BrushTile::Hazard => "Piege Piques",
+            BrushTile::Collectible => "Piece KVL",
+            BrushTile::Heart => "Fiole Coeur",
+            BrushTile::Crate => "Bloc Poussable",
+            BrushTile::Plate => "Dalle Pression",
+        }
+    }
+
+    pub fn short_label(&self) -> &'static str {
+        match self {
+            BrushTile::Wall => "Mur",
+            BrushTile::Hazard => "Piege",
+            BrushTile::Collectible => "Piece",
+            BrushTile::Heart => "Coeur",
+            BrushTile::Crate => "Caisse",
+            BrushTile::Plate => "Dalle",
+        }
+    }
+
+    pub fn color(&self) -> u32 {
+        match self {
+            BrushTile::Wall => 0x0094A3B8,
+            BrushTile::Hazard => 0x00EF4444,
+            BrushTile::Collectible => 0x00F59E0B,
+            BrushTile::Heart => 0x00EC4899,
+            BrushTile::Crate => 0x00F4AF6A,
+            BrushTile::Plate => 0x0034D399,
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            BrushTile::Wall => BrushTile::Hazard,
+            BrushTile::Hazard => BrushTile::Collectible,
+            BrushTile::Collectible => BrushTile::Heart,
+            BrushTile::Heart => BrushTile::Crate,
+            BrushTile::Crate => BrushTile::Plate,
+            BrushTile::Plate => BrushTile::Wall,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectedEntity {
     None,
     Entity(usize),
@@ -52,6 +126,9 @@ pub struct PaletteItemHitbox {
 pub struct EditorState {
     pub mode: EditorMode,
     pub selected: SelectedEntity,
+    pub active_tool: StudioTool,
+    pub brush_tile: BrushTile,
+    pub last_painted_cell: Option<(i32, i32)>,
     pub is_detailed_view: bool,
     pub is_dragging: bool,
     pub drag_offset_x: f32,
@@ -72,6 +149,10 @@ pub struct EditorState {
     pub spawn_btn_hitbox: Option<(i32, i32, u32, u32)>,
     pub duplicate_btn_hitbox: Option<(i32, i32, u32, u32)>,
     pub delete_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub tool_select_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub tool_brush_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub tool_eraser_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub tool_tile_cycle_btn_hitbox: Option<(i32, i32, u32, u32)>,
     pub add_comp_hitboxes: Vec<(String, i32, i32, u32, u32)>,
     pub show_help_modal: bool,
     pub help_btn_hitbox: Option<(i32, i32, u32, u32)>,
@@ -82,6 +163,9 @@ impl EditorState {
         Self {
             mode: EditorMode::Play,
             selected: SelectedEntity::None,
+            active_tool: StudioTool::Select,
+            brush_tile: BrushTile::Wall,
+            last_painted_cell: None,
             is_detailed_view: false, // Vue simplifiée par défaut (Ergonomie KaractiRage)
             is_dragging: false,
             drag_offset_x: 0.0,
@@ -102,6 +186,10 @@ impl EditorState {
             spawn_btn_hitbox: None,
             duplicate_btn_hitbox: None,
             delete_btn_hitbox: None,
+            tool_select_btn_hitbox: None,
+            tool_brush_btn_hitbox: None,
+            tool_eraser_btn_hitbox: None,
+            tool_tile_cycle_btn_hitbox: None,
             add_comp_hitboxes: Vec::new(),
             show_help_modal: false,
             help_btn_hitbox: None,
@@ -118,9 +206,28 @@ impl EditorState {
                 self.show_node_palette = false;
                 self.show_spawn_palette = false;
                 self.show_help_modal = false;
+                self.active_tool = StudioTool::Select;
+                self.last_painted_cell = None;
                 EditorMode::Play
             }
         };
+    }
+
+    pub fn set_tool(&mut self, tool: StudioTool) {
+        self.active_tool = tool;
+        self.last_painted_cell = None;
+        if tool != StudioTool::Select {
+            self.selected = SelectedEntity::None;
+            self.is_dragging = false;
+            self.active_wire = None;
+            self.show_node_palette = false;
+            self.show_spawn_palette = false;
+        }
+    }
+
+    pub fn cycle_brush_tile(&mut self) -> BrushTile {
+        self.brush_tile = self.brush_tile.next();
+        self.brush_tile
     }
 
     pub fn toggle_help(&mut self) {
@@ -249,6 +356,38 @@ impl EditorState {
 
     pub fn is_help_btn_clicked(&self, mx: f32, my: f32) -> bool {
         if let Some((bx, by, bw, bh)) = self.help_btn_hitbox {
+            mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_tool_select_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((bx, by, bw, bh)) = self.tool_select_btn_hitbox {
+            mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_tool_brush_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((bx, by, bw, bh)) = self.tool_brush_btn_hitbox {
+            mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_tool_eraser_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((bx, by, bw, bh)) = self.tool_eraser_btn_hitbox {
+            mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_tool_tile_cycle_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((bx, by, bw, bh)) = self.tool_tile_cycle_btn_hitbox {
             mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
         } else {
             false
