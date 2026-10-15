@@ -178,6 +178,8 @@ impl GameState {
             "enemy" => Entity::spawn_enemy(id, x, y, 28.0, 80.0, (y - 100.0).max(80.0), (y + 100.0).min(560.0), "assets/scripts/guard_alert.kvl.json"),
             "portal" => Entity::spawn_portal(id, x, y, 36.0, 48.0, "assets/scripts/coin_pickup.kvl.json"),
             "torch" => Entity::spawn_torch(id, x, y),
+            "crate" => Entity::spawn_crate(id, x, y, 44.0),
+            "plate" => Entity::spawn_plate(id, x, y, 48.0),
             _ => Entity::spawn_wall(id, x, y, 32.0, 32.0),
         };
         self.entities.push(entity);
@@ -296,6 +298,33 @@ impl GameState {
                     self.status_message = format!("Composant ParticleEmitter2D (Torche) attaché à '{}'.", ent.name);
                 } else {
                     return false;
+                }
+            }
+            "CycleMovementMode" => {
+                // Change le modèle physique de l'entité sans toucher au reste de ses composants
+                match ent.movement {
+                    Some(ref mut mov) => {
+                        mov.mode = mov.mode.next_preset();
+                        mov.vx = 0.0;
+                        mov.vy = 0.0;
+                        ent.transform.rotation = 0.0;
+                        self.status_message = format!("Physique de '{}' : mode {}.", ent.name, mov.mode.label());
+                    }
+                    None => return false,
+                }
+            }
+            "TogglePushable" => {
+                match ent.collider {
+                    Some(ref mut col) if col.is_solid || col.is_pushable => {
+                        col.is_pushable = !col.is_pushable;
+                        col.is_solid = true;
+                        self.status_message = if col.is_pushable {
+                            format!("'{}' est maintenant un bloc poussable.", ent.name)
+                        } else {
+                            format!("'{}' redevient un solide fixe.", ent.name)
+                        };
+                    }
+                    _ => return false,
                 }
             }
             _ => return false,
@@ -2073,14 +2102,21 @@ impl GameState {
             // Brand Badge Jeu
             canvas.draw_badge(16, 12, 140, 32, 0x00082F49, 0x000284C7, "KARACTIRAGE", 0x00E0F2FE, 2);
 
-            let (genre_badge, genre_col, genre_bd) = if self.scene_path.contains("platformer") {
-                ("PLATEFORME 2D", 0x0010B981, 0x0034D399)
-            } else if self.scene_path.contains("space") {
-                ("ESPACE SHMUP", 0x00A855F7, 0x00C084FC)
-            } else if self.scene_path.contains("puzzle") {
-                ("PUZZLE SOKOBAN", 0x00F59E0B, 0x00FBBF24)
-            } else {
-                ("TOP-DOWN RPG", 0x000284C7, 0x0038BDF8)
+            // Genre déduit des composants réels (agnostique du nom de fichier de scène)
+            let player_mode = self
+                .player_index()
+                .and_then(|i| self.entities[i].movement.as_ref().map(|m| m.mode))
+                .unwrap_or_default();
+            let has_pushables = self
+                .entities
+                .iter()
+                .any(|e| e.is_active && e.collider.map_or(false, |c| c.is_pushable));
+            let (genre_badge, genre_col, genre_bd) = match player_mode {
+                MovementMode::Platformer { .. } => ("PLATEFORME 2D", 0x0010B981, 0x0034D399),
+                MovementMode::SpaceInertia { .. } => ("ESPACE SHMUP", 0x00A855F7, 0x00C084FC),
+                MovementMode::Grid { .. } => ("GRILLE / TACTIQUE", 0x00F59E0B, 0x00FBBF24),
+                MovementMode::TopDown if has_pushables => ("PUZZLE SOKOBAN", 0x00F59E0B, 0x00FBBF24),
+                MovementMode::TopDown => ("TOP-DOWN RPG", 0x000284C7, 0x0038BDF8),
             };
             canvas.draw_badge(164, 12, 120, 32, 0x001E293B, genre_bd, genre_badge, genre_col, 2);
 
@@ -2643,15 +2679,33 @@ impl GameState {
                         canvas.draw_text(insp_x + 18, insp_y + 128, "COMPOSANTS ACTIFS (ECS) :", 0x00FBBF24, 2);
 
                         let mut comp_y = insp_y + 154;
+                        let row_w = (insp_w - 36) as u32;
                         if let Some(ref col) = ent.collider {
-                            let col_desc = if col.is_solid { "Collider2D : Solide AABB (Bloquant)" } else { "Collider2D : Trigger (Zone detection)" };
-                            canvas.draw_badge(insp_x + 18, comp_y, (insp_w - 36) as u32, 24, 0x00064E3B, 0x0010B981, col_desc, 0x00A7F3D0, 1);
-                            comp_y += 30;
+                            let col_desc = if col.is_pushable {
+                                "Collider2D : Bloc Poussable (Puzzle / Sokoban)"
+                            } else if col.is_solid {
+                                "Collider2D : Solide AABB (Bloquant)"
+                            } else {
+                                "Collider2D : Trigger (Zone detection)"
+                            };
+                            canvas.draw_badge(insp_x + 18, comp_y, row_w, 24, 0x00064E3B, 0x0010B981, col_desc, 0x00A7F3D0, 1);
+                            comp_y += 28;
+                            if col.is_solid {
+                                let push_txt = if col.is_pushable { "[ POUSSABLE : OUI  > rendre fixe ]" } else { "[ POUSSABLE : NON  > rendre poussable ]" };
+                                canvas.draw_badge(insp_x + 30, comp_y, row_w - 12, 22, 0x00131C2E, 0x0034D399, push_txt, 0x006EE7B7, 1);
+                                self.editor.add_comp_hitboxes.push(("TogglePushable".into(), insp_x + 30, comp_y, row_w - 12, 22));
+                                comp_y += 28;
+                            }
                         }
                         if let Some(ref mov) = ent.movement {
-                            let mov_desc = if mov.is_player_controlled { "Movement2D : Joueur (Controle par ZQSD)" } else { "Movement2D : Patrouille IA autonome" };
-                            canvas.draw_badge(insp_x + 18, comp_y, (insp_w - 36) as u32, 24, 0x000C4A6E, 0x000284C7, mov_desc, 0x00BAE6FD, 1);
-                            comp_y += 30;
+                            let role = if mov.is_player_controlled { "Joueur" } else { "IA" };
+                            let mov_desc = format!("Movement2D : {} | Physique {}", role, mov.mode.label());
+                            canvas.draw_badge(insp_x + 18, comp_y, row_w, 24, 0x000C4A6E, 0x000284C7, &mov_desc, 0x00BAE6FD, 1);
+                            comp_y += 28;
+                            let next_txt = format!("[ CHANGER PHYSIQUE > {} ]", mov.mode.next_preset().label());
+                            canvas.draw_badge(insp_x + 30, comp_y, row_w - 12, 22, 0x00131C2E, 0x0038BDF8, &next_txt, 0x0038BDF8, 1);
+                            self.editor.add_comp_hitboxes.push(("CycleMovementMode".into(), insp_x + 30, comp_y, row_w - 12, 22));
+                            comp_y += 28;
                         }
                         if let Some(ref vis) = ent.vision {
                             let vis_desc = format!("VisionSensing : Radar Raycast (Portee: {:.0}px)", vis.range);
@@ -2712,7 +2766,7 @@ impl GameState {
         // Overlay de la palette de spawn d'entités (Touche P ou Bouton [+ SPAWN])
         if is_edit_mode && self.editor.show_spawn_palette {
             let pal_w = 440;
-            let pal_h = 370;
+            let pal_h = 458;
             let pal_x = 160;
             let pal_y = 80;
 
@@ -2730,6 +2784,8 @@ impl GameState {
                 ("enemy", "+ Sentinelle Patrouilleuse (Vision)", 0x00DC2626),
                 ("portal", "+ Portail Quantique (Teleporteur)", 0x0006B6D4),
                 ("torch", "+ Torche Brulante (Emetteur Flammes)", 0x00F97316),
+                ("crate", "+ Bloc Poussable (Puzzle / Sokoban)", 0x00F4AF6A),
+                ("plate", "+ Dalle de Pression (Ouvre les portes)", 0x0034D399),
                 ("cancel", "[ Fermer la palette (Echap) ]", 0x0064748B),
             ];
 
@@ -3888,6 +3944,42 @@ mod tests {
         // Le joueur s'est déplacé d'exactement 40 pixels (une case de grille)
         let new_x = state.entities[p_idx].transform.x;
         assert_eq!(new_x, initial_x + 40.0, "Le joueur en mode Grille doit avancer d'une case complète");
+    }
+
+    #[test]
+    fn test_studio_genre_authoring_tools() {
+        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène chargée");
+
+        // 1. Cycle complet du modèle physique du joueur depuis l'inspecteur
+        let p_idx = state.player_index().unwrap();
+        state.editor.selected = SelectedEntity::Entity(p_idx);
+        let expected = ["PLATEFORME", "INERTIE SPATIALE", "GRILLE", "TOP-DOWN"];
+        for label in expected {
+            assert!(state.add_component_to_selected("CycleMovementMode"));
+            assert_eq!(state.entities[p_idx].movement.unwrap().mode.label(), label);
+        }
+
+        // 2. Gabarits puzzle de la palette
+        let crate_idx = state.spawn_entity("crate", 300.0, 300.0);
+        assert!(state.entities[crate_idx].collider.unwrap().is_pushable);
+        let plate_idx = state.spawn_entity("plate", 400.0, 300.0);
+        assert!(state.entities[plate_idx].collider.unwrap().is_trigger);
+
+        // 3. Bascule poussable sur un bloc puis refus sur une dalle (trigger)
+        state.editor.selected = SelectedEntity::Entity(crate_idx);
+        assert!(state.add_component_to_selected("TogglePushable"));
+        assert!(!state.entities[crate_idx].collider.unwrap().is_pushable);
+        state.editor.selected = SelectedEntity::Entity(plate_idx);
+        assert!(!state.add_component_to_selected("TogglePushable"), "Un trigger ne peut pas devenir poussable");
+
+        // 4. Rendu Studio sans panique avec les nouveaux boutons d'inspecteur
+        state.editor.selected = SelectedEntity::Entity(p_idx);
+        state.editor.toggle_mode();
+        let mut canvas = Canvas::new(1200, 800);
+        state.render(&mut canvas);
+        assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "CycleMovementMode"));
+        assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "TogglePushable"));
     }
 }
 

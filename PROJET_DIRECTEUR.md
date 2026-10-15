@@ -399,6 +399,15 @@
   * **0 avertissement de compilation** (`cargo check --all-targets`).
   * WebAssembly recompilé et opérationnel (`./scripts/build_web.sh`).
 
+### Étape 22 : Outils Studio de Création Multi-Genres (le genre devient un choix d'édition) *(15 Octobre 2026)*
+* **Constat** : À l'étape 21, les genres existaient surtout via 4 scènes préfabriquées ; le HUD déduisait même le genre du *nom de fichier* de la scène. Un créateur ne pouvait pas changer de genre depuis le Studio.
+* **Réalisations** :
+  * **Inspecteur ECS** : le badge `Movement2D` affiche le rôle (Joueur/IA) et le modèle physique actif ; bouton `[ CHANGER PHYSIQUE > ... ]` qui fait défiler TopDown → Plateforme → Inertie spatiale → Grille avec des réglages par défaut sûrs (`MovementMode::next_preset()`).
+  * **Collider poussable éditable** : badge `Bloc Poussable` et bouton `[ POUSSABLE : OUI/NON ]` sur tout solide (refusé pour les triggers).
+  * **Palette de spawn** : nouveaux gabarits `Bloc Poussable` et `Dalle de Pression` (`Entity::spawn_crate`, `Entity::spawn_plate`).
+  * **HUD agnostique** : le badge de genre est calculé à partir des composants réels (physique du joueur, présence de blocs poussables) et non plus du nom de fichier ; ajout du genre `GRILLE / TACTIQUE`.
+* **Mesures** : 68/68 tests (+1 `test_studio_genre_authoring_tools`), 0 avertissement, Wasm recompilé.
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

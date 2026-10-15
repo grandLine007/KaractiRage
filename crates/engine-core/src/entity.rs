@@ -119,7 +119,6 @@ impl Collider2D {
     }
 
     /// Bloc poussable pour mécaniques de puzzles, Sokoban et obstacles dynamiques
-    #[allow(dead_code)]
     pub fn pushable(w: f32, h: f32) -> Self {
         Self {
             offset_x: 0.0,
@@ -170,6 +169,41 @@ pub enum MovementMode {
 impl Default for MovementMode {
     fn default() -> Self {
         Self::TopDown
+    }
+}
+
+impl MovementMode {
+    /// Libellé court et pédagogique du modèle physique (affiché dans le Studio et le HUD)
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::TopDown => "TOP-DOWN",
+            Self::Platformer { .. } => "PLATEFORME",
+            Self::SpaceInertia { .. } => "INERTIE SPATIALE",
+            Self::Grid { .. } => "GRILLE",
+        }
+    }
+
+    /// Modèle physique suivant dans le cycle d'édition, avec des réglages par défaut sûrs
+    pub fn next_preset(&self) -> Self {
+        match self {
+            Self::TopDown => Self::Platformer {
+                gravity: 920.0,
+                jump_force: 480.0,
+                is_grounded: false,
+                max_fall_speed: 650.0,
+            },
+            Self::Platformer { .. } => Self::SpaceInertia {
+                angular_speed: 4.0,
+                thrust: 520.0,
+                drag: 0.985,
+            },
+            Self::SpaceInertia { .. } => Self::Grid {
+                cell_size: 40.0,
+                cooldown: 0.12,
+                timer: 0.0,
+            },
+            Self::Grid { .. } => Self::TopDown,
+        }
     }
 }
 
@@ -584,5 +618,19 @@ impl Entity {
         Self::new(id, format!("torch_{}", id), "torch", Transform2D::new(x, y, 16.0, 24.0))
             .with_renderable(Renderable2D::rect(0x0078350F, 3).with_outline(0x00B45309, 1))
             .with_emitter(ParticleEmitter2D::torch_fire())
+    }
+
+    /// Gabarit : Bloc poussable (puzzles, Sokoban, obstacles dynamiques)
+    pub fn spawn_crate(id: usize, x: f32, y: f32, size: f32) -> Self {
+        Self::new(id, format!("crate_{}", id), "crate", Transform2D::new(x, y, size, size))
+            .with_renderable(Renderable2D::rect(0x00B45309, 5).with_outline(0x00F4AF6A, 2))
+            .with_collider(Collider2D::pushable(size, size))
+    }
+
+    /// Gabarit : Dalle de pression (s'active quand un bloc poussable la recouvre)
+    pub fn spawn_plate(id: usize, x: f32, y: f32, size: f32) -> Self {
+        Self::new(id, format!("plate_{}", id), "plate", Transform2D::new(x, y, size, size))
+            .with_renderable(Renderable2D::rect(0x00082F49, 2).with_outline(0x000284C7, 2))
+            .with_collider(Collider2D::trigger(size, size))
     }
 }
