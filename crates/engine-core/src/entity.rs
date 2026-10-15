@@ -214,6 +214,116 @@ impl KVLScriptComponent {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EmitterMode {
+    Continuous,
+    Burst,
+}
+
+/// Composant Émetteur de Particules Déclaratif ECS
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParticleEmitter2D {
+    pub mode: EmitterMode,
+    pub rate: f32,
+    pub accumulator: f32,
+    pub lifetime_min: f32,
+    pub lifetime_max: f32,
+    pub speed_min: f32,
+    pub speed_max: f32,
+    pub angle: f32,
+    pub spread: f32,
+    pub gravity_x: f32,
+    pub gravity_y: f32,
+    pub color_start: u32,
+    pub color_end: u32,
+    pub is_emitting: bool,
+}
+
+impl ParticleEmitter2D {
+    /// Gabarit : Flammes vives ascendantes de torche ou brasier
+    pub fn torch_fire() -> Self {
+        Self {
+            mode: EmitterMode::Continuous,
+            rate: 28.0,
+            accumulator: 0.0,
+            lifetime_min: 0.4,
+            lifetime_max: 0.85,
+            speed_min: 35.0,
+            speed_max: 75.0,
+            angle: -std::f32::consts::FRAC_PI_2, // Vers le haut
+            spread: 0.65,
+            gravity_x: 0.0,
+            gravity_y: -45.0, // Flottabilité thermique
+            color_start: 0x00FDE047, // Jaune d'or chaud
+            color_end: 0x00DC2626,   // Rouge braise
+            is_emitting: true,
+        }
+    }
+
+    /// Gabarit : Aura magique mystique cyan vers pourpre
+    #[allow(dead_code)]
+    pub fn magic_aura() -> Self {
+        Self {
+            mode: EmitterMode::Continuous,
+            rate: 20.0,
+            accumulator: 0.0,
+            lifetime_min: 0.6,
+            lifetime_max: 1.2,
+            speed_min: 15.0,
+            speed_max: 45.0,
+            angle: -std::f32::consts::FRAC_PI_2,
+            spread: std::f32::consts::TAU, // Omnidirectionnel
+            gravity_x: 0.0,
+            gravity_y: -15.0,
+            color_start: 0x0038BDF8, // Cyan éclatant
+            color_end: 0x00A855F7,   // Violet arcanique
+            is_emitting: true,
+        }
+    }
+
+    /// Gabarit : Panache de fumée vaporeux grisâtre
+    #[allow(dead_code)]
+    pub fn smoke_plume() -> Self {
+        Self {
+            mode: EmitterMode::Continuous,
+            rate: 15.0,
+            accumulator: 0.0,
+            lifetime_min: 0.8,
+            lifetime_max: 1.6,
+            speed_min: 20.0,
+            speed_max: 50.0,
+            angle: -std::f32::consts::FRAC_PI_2,
+            spread: 0.85,
+            gravity_x: 10.0, // Léger vent vers la droite
+            gravity_y: -30.0,
+            color_start: 0x0094A3B8, // Gris clair
+            color_end: 0x00334155,   // Ardoise sombre
+            is_emitting: true,
+        }
+    }
+
+    /// Gabarit : Gerbe d'étincelles instantanée (Burst KVL)
+    #[allow(dead_code)]
+    pub fn spark_burst() -> Self {
+        Self {
+            mode: EmitterMode::Burst,
+            rate: 0.0,
+            accumulator: 0.0,
+            lifetime_min: 0.3,
+            lifetime_max: 0.7,
+            speed_min: 80.0,
+            speed_max: 200.0,
+            angle: -std::f32::consts::FRAC_PI_2,
+            spread: std::f32::consts::TAU,
+            gravity_x: 0.0,
+            gravity_y: 120.0, // Gravité retombante
+            color_start: 0x00FDE047,
+            color_end: 0x00EA580C,
+            is_emitting: true,
+        }
+    }
+}
+
 /// Modèle d'Entité Universel du moteur KaractiRage
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
@@ -226,6 +336,7 @@ pub struct Entity {
     pub movement: Option<Movement2D>,
     pub vision: Option<VisionSensing>,
     pub script: Option<KVLScriptComponent>,
+    pub emitter: Option<ParticleEmitter2D>,
     pub is_active: bool,
 }
 
@@ -241,6 +352,7 @@ impl Entity {
             movement: None,
             vision: None,
             script: None,
+            emitter: None,
             is_active: true,
         }
     }
@@ -267,6 +379,11 @@ impl Entity {
 
     pub fn with_script(mut self, s: KVLScriptComponent) -> Self {
         self.script = Some(s);
+        self
+    }
+
+    pub fn with_emitter(mut self, e: ParticleEmitter2D) -> Self {
+        self.emitter = Some(e);
         self
     }
 
@@ -309,5 +426,12 @@ impl Entity {
             .with_renderable(Renderable2D::rect(0x0006B6D4, 3).with_outline(0x0038BDF8, 2))
             .with_collider(Collider2D::trigger(w, h))
             .with_script(KVLScriptComponent::new(script_path).with_overlap("OnPlayerOverlap"))
+    }
+
+    /// Gabarit : Torche murale avec émetteur de flammes ascendantes
+    pub fn spawn_torch(id: usize, x: f32, y: f32) -> Self {
+        Self::new(id, format!("torch_{}", id), "torch", Transform2D::new(x, y, 16.0, 24.0))
+            .with_renderable(Renderable2D::rect(0x0078350F, 3).with_outline(0x00B45309, 1))
+            .with_emitter(ParticleEmitter2D::torch_fire())
     }
 }

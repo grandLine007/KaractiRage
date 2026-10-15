@@ -293,6 +293,28 @@
   * 0 avertissement de compilation (`cargo check --all-targets`).
   * WebAssembly recompilé avec succès (539 Ko).
 
+### Étape 18 : Système d'Émetteurs de Particules Déclaratif ECS & Pilotage KVL *(15 Octobre 2026)*
+* **Réalisations** :
+  * **Composant Déclaratif `ParticleEmitter2D`** :
+    * Modes d'émission : `Continuous` (flux régulier asservi au temps delta $\Delta t$) et `Burst` (gerbes instantanées).
+    * Paramètres physiques et esthétiques complets : cadence (`rate` particules/s), durée de vie (`lifetime`), cône d'orientation et d'ouverture angulaire (`spread_rad`), vitesse (`speed_min`, `speed_max`), accélération gravitationnelle/poussée (`ax`, `ay`), et dégradé chromatique (`color_start`, `color_end`).
+    * Presets prêts à l'emploi : `torch_fire` (flamme ascendante jaune $\rightarrow$ rouge), `magic_aura` (aura mystique violette $\rightarrow$ cyan), `smoke_plume` (volutes de fumée grise avec retombée douce), `spark_burst` (étincelles vives).
+  * **Simulation Physique Logicielle Haute Performance (Zero-Alloc Hot Path)** :
+    * Extension de la structure `Particle` avec accélération $a_x, a_y$, temps de vie maximum et gradient dynamique de couleur.
+    * Fonction d'interpolation chromatique bitwise ultra-rapide `lerp_color(c1, c2, t)` sans allocations heap.
+    * Respect strict et dynamique du plafond adaptatif (`max_particles`) selon le profil matériel actif (`Compatibility: 10`, `Balanced: 35`, `High: 100`).
+  * **Pilotage Événementiel par le Langage Visuel KVL** :
+    * Nouvelles actions natives dans `kvl-runtime` : `EmitBurst`, `EmitBurst:count`, `ToggleEmitter`, `ToggleEmitter:state`.
+    * Bus d'événements moteur réactif (`emitter_burst`, `emitter_active`) permettant à tout script KVL de déclencher des gerbes ou de moduler l'émission des torches/auras.
+  * **Intégration Studio & Authoring ECS** :
+    * Nouveau gabarit dans la Spawn Palette : `Torche / Brasero (Émetteur de Flammes)`.
+    * Bouton d'ajout contextuel dans l'inspecteur : `[ + PARTICLE EMITTER 2D ]`.
+    * Affichage dynamique des caractéristiques de l'émetteur dans le panneau latéral (mode, cadence, durée de vie, gradient de couleur).
+* **Mesures & Benchmarks** :
+  * 50/50 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+3 tests dédiés à la simulation continue, au cap adaptatif et aux triggers KVL).
+  * 0 avertissement de compilation (`cargo check --all-targets`).
+  * WebAssembly recompilé et optimisé (543 Ko).
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

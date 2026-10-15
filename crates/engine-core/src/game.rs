@@ -13,13 +13,49 @@ use std::collections::HashMap;
 use std::fs;
 use winit::keyboard::KeyCode;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Particle {
     pub x: f32,
     pub y: f32,
     pub vx: f32,
     pub vy: f32,
+    pub ax: f32,
+    pub ay: f32,
     pub life: f32,
-    pub color: u32,
+    pub max_life: f32,
+    pub color_start: u32,
+    pub color_end: u32,
+}
+
+/// Interpolation linéaire rapide de deux couleurs ARGB 32-bit sans allocation
+#[inline]
+pub fn lerp_color(c1: u32, c2: u32, t: f32) -> u32 {
+    let t = t.clamp(0.0, 1.0);
+    let r1 = ((c1 >> 16) & 0xFF) as f32;
+    let g1 = ((c1 >> 8) & 0xFF) as f32;
+    let b1 = (c1 & 0xFF) as f32;
+
+    let r2 = ((c2 >> 16) & 0xFF) as f32;
+    let g2 = ((c2 >> 8) & 0xFF) as f32;
+    let b2 = (c2 & 0xFF) as f32;
+
+    let r = (r1 + (r2 - r1) * t) as u32;
+    let g = (g1 + (g2 - g1) * t) as u32;
+    let b = (b1 + (b2 - b1) * t) as u32;
+
+    (r << 16) | (g << 8) | b
+}
+
+impl Particle {
+    #[inline]
+    pub fn current_color(&self) -> u32 {
+        if self.color_start == self.color_end || self.max_life <= 0.0 {
+            self.color_start
+        } else {
+            let t = 1.0 - (self.life / self.max_life).clamp(0.0, 1.0);
+            lerp_color(self.color_start, self.color_end, t)
+        }
+    }
 }
 
 /// Algorithme de Liang-Barsky ultra-rapide et déterministe pour l'intersection segment de vue / AABB
@@ -133,6 +169,7 @@ impl GameState {
             "door" => Entity::spawn_door(id, x, y, 40.0, 56.0, "assets/scripts/door_interaction.kvl.json"),
             "enemy" => Entity::spawn_enemy(id, x, y, 28.0, 80.0, (y - 100.0).max(80.0), (y + 100.0).min(560.0), "assets/scripts/guard_alert.kvl.json"),
             "portal" => Entity::spawn_portal(id, x, y, 36.0, 48.0, "assets/scripts/coin_pickup.kvl.json"),
+            "torch" => Entity::spawn_torch(id, x, y),
             _ => Entity::spawn_wall(id, x, y, 32.0, 32.0),
         };
         self.entities.push(entity);
@@ -245,6 +282,14 @@ impl GameState {
                     return false;
                 }
             }
+            "Emitter" => {
+                if ent.emitter.is_none() {
+                    ent.emitter = Some(crate::entity::ParticleEmitter2D::torch_fire());
+                    self.status_message = format!("Composant ParticleEmitter2D (Torche) attaché à '{}'.", ent.name);
+                } else {
+                    return false;
+                }
+            }
             _ => return false,
         }
         self.audio.play(SoundType::UiClick);
@@ -329,10 +374,15 @@ impl GameState {
 
     pub fn save_scene_and_scripts(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // 1. Sauvegarder la scène JSON universelle avec les entités génériques
+        let mut saved_entities = self.entities.clone();
+        for ent in &mut saved_entities {
+            ent.is_active = true;
+        }
+
         let scene_data = SceneData {
             name: self.scene_name.clone(),
             description: "Scène universelle KaractiRage avec entités ECS et scripts KVL.".into(),
-            entities: self.entities.clone(),
+            entities: saved_entities,
             player: None,
             coins: Vec::new(),
             doors: Vec::new(),
@@ -366,6 +416,7 @@ impl GameState {
     pub fn spawn_particles(&mut self, x: f32, y: f32, count: usize, color: u32) {
         let max_allowed = self.adaptation.current_profile.max_particles();
         let to_spawn = count.min(max_allowed.saturating_sub(self.particles.len()));
+        let end_col = lerp_color(color, 0x000F172A, 0.75);
 
         for i in 0..to_spawn {
             let angle = (i as f32) * (std::f32::consts::TAU / (to_spawn as f32));
@@ -375,8 +426,36 @@ impl GameState {
                 y,
                 vx: angle.cos() * speed,
                 vy: angle.sin() * speed,
+                ax: 0.0,
+                ay: 35.0,
                 life: 1.0,
-                color,
+                max_life: 1.0,
+                color_start: color,
+                color_end: end_col,
+            });
+        }
+    }
+
+    /// Émet une gerbe particulaire instantanée avec gradient de couleur et physique retombante
+    pub fn emit_burst_at(&mut self, x: f32, y: f32, count: usize, color_start: u32, color_end: u32) {
+        let max_allowed = self.adaptation.current_profile.max_particles();
+        let to_spawn = count.min(max_allowed.saturating_sub(self.particles.len()));
+
+        for i in 0..to_spawn {
+            let angle = (i as f32) * (std::f32::consts::TAU / (to_spawn as f32));
+            let speed = 75.0 + (i as f32 % 6.0) * 32.0;
+            let life = 0.5 + (i as f32 % 4.0) * 0.15;
+            self.particles.push(Particle {
+                x,
+                y,
+                vx: angle.cos() * speed,
+                vy: angle.sin() * speed,
+                ax: 0.0,
+                ay: 65.0,
+                life,
+                max_life: life,
+                color_start,
+                color_end,
             });
         }
     }
@@ -977,11 +1056,65 @@ impl GameState {
             }
         }
 
-        // Particules
+        // ==========================================
+        // SYSTEM : SIMULATION DES ÉMETTEURS DE PARTICULES ECS
+        // ==========================================
+        let max_particles = self.adaptation.current_profile.max_particles();
+        for ent in &mut self.entities {
+            if !ent.is_active {
+                continue;
+            }
+            if let Some(ref mut emitter) = ent.emitter {
+                if !emitter.is_emitting {
+                    continue;
+                }
+                match emitter.mode {
+                    crate::entity::EmitterMode::Continuous => {
+                        emitter.accumulator += dt;
+                        let interval = 1.0 / emitter.rate.max(0.1);
+                        let center_x = ent.transform.center_x();
+                        let center_y = ent.transform.center_y();
+
+                        while emitter.accumulator >= interval {
+                            emitter.accumulator -= interval;
+                            if self.particles.len() >= max_particles {
+                                break;
+                            }
+                            // Pseudo-aléatoire déterministe inline sans allocation
+                            let count_f = self.particles.len() as f32;
+                            let seed1 = ((count_f * 29.3 + emitter.accumulator * 137.9).sin() * 43758.547).fract();
+                            let seed2 = ((count_f * 47.1 + emitter.accumulator * 211.3).cos() * 43758.547).fract();
+
+                            let spread_angle = emitter.angle + (seed1 - 0.5) * emitter.spread;
+                            let speed = emitter.speed_min + seed2.abs() * (emitter.speed_max - emitter.speed_min);
+                            let life = emitter.lifetime_min + seed1.abs() * (emitter.lifetime_max - emitter.lifetime_min);
+
+                            self.particles.push(Particle {
+                                x: center_x,
+                                y: center_y,
+                                vx: spread_angle.cos() * speed,
+                                vy: spread_angle.sin() * speed,
+                                ax: emitter.gravity_x,
+                                ay: emitter.gravity_y,
+                                life,
+                                max_life: life,
+                                color_start: emitter.color_start,
+                                color_end: emitter.color_end,
+                            });
+                        }
+                    }
+                    crate::entity::EmitterMode::Burst => {}
+                }
+            }
+        }
+
+        // Mise à jour physique des particules (Vitesse, Accélération gravitationnelle, Durée de vie)
         for p in &mut self.particles {
+            p.vx += p.ax * dt;
+            p.vy += p.ay * dt;
             p.x += p.vx * dt;
             p.y += p.vy * dt;
-            p.life -= dt * 1.5;
+            p.life -= dt;
         }
         self.particles.retain(|p| p.life > 0.0);
 
@@ -1147,6 +1280,29 @@ impl GameState {
                     spawn_requests.push((px + pw * 0.5, py + ph * 0.5, (*sparkles as usize) * 35, 0x00FDE047));
                 }
                 self.kvl_context.set_var("sparkle_burst", Value::Int(0));
+            }
+        }
+
+        // Traitement des gerbes d'émetteur déclenchées par KVL (EmitBurst)
+        if let Some(Value::Int(burst)) = self.kvl_context.get_var("emitter_burst").cloned() {
+            if burst > 0 {
+                self.audio.play(SoundType::Sparkles);
+                let (bx, by) = if let Some((_p_idx, px, py, pw, ph)) = player_pos {
+                    (px + pw * 0.5, py + ph * 0.5)
+                } else {
+                    (400.0, 300.0)
+                };
+                self.emit_burst_at(bx, by, burst as usize, 0x00FDE047, 0x00EA580C);
+                self.kvl_context.set_var("emitter_burst", Value::Int(0));
+            }
+        }
+
+        // Traitement de l'activation/désactivation d'émetteur déclenchée par KVL (ToggleEmitter)
+        if let Some(Value::Bool(active)) = self.kvl_context.get_var("emitter_active").cloned() {
+            for ent in &mut self.entities {
+                if let Some(ref mut em) = ent.emitter {
+                    em.is_emitting = active;
+                }
             }
         }
 
@@ -1488,7 +1644,7 @@ impl GameState {
 
         // Particules
         for p in &self.particles {
-            canvas.draw_rect(p.x as i32, p.y as i32, 3, 3, p.color);
+            canvas.draw_rect(p.x as i32, p.y as i32, 3, 3, p.current_color());
         }
 
         // 4. Rendu du Radar Tactique 2D Universel (Minimap)
@@ -1544,6 +1700,9 @@ impl GameState {
                         let wh = ((ent.transform.h * scale_y) as u32).max(2);
                         canvas.draw_rect(ex, ey, ww, wh, 0x00475569);
                     }
+                    "torch" => {
+                        canvas.draw_rect(ex - 1, ey - 1, 3, 3, 0x00F97316);
+                    }
                     _ => {
                         canvas.draw_rect(ex, ey, 3, 3, 0x0094A3B8);
                     }
@@ -1590,7 +1749,7 @@ impl GameState {
                         let p = script_comp.script_path.clone();
                         self.render_entity_inspector(canvas, insp_x, insp_y, insp_w, &ent_title, ent_col, &pos_str, &p);
                     } else {
-                        // Inspecteur de composant pour entité non scriptée (ex: mur solide)
+                        // Inspecteur de composant pour entité non scriptée (ex: mur solide, torche)
                         canvas.draw_text(insp_x + 18, insp_y + 60, &ent_title, ent_col, 2);
                         canvas.draw_text(insp_x + 18, insp_y + 88, &pos_str, 0x00F8FAFC, 2);
 
@@ -1611,6 +1770,12 @@ impl GameState {
                         if let Some(ref vis) = ent.vision {
                             let vis_desc = format!("- VisionSensing (Portée: {:.0})", vis.range);
                             canvas.draw_text(insp_x + 18, comp_y, &vis_desc, 0x00F87171, 2);
+                            comp_y += 28;
+                        }
+                        if let Some(ref em) = ent.emitter {
+                            let em_status = if em.is_emitting { "Actif" } else { "En Pause" };
+                            let em_desc = format!("- ParticleEmitter2D ({:.0} p/s, {})", em.rate, em_status);
+                            canvas.draw_text(insp_x + 18, comp_y, &em_desc, 0x00F97316, 2);
                             comp_y += 28;
                         }
                         if ent.renderable.is_some() {
@@ -1649,6 +1814,13 @@ impl GameState {
                             self.editor.add_comp_hitboxes.push(("Vision".into(), insp_x + 18, comp_y, btn_w, btn_h));
                             comp_y += 34;
                         }
+                        if ent.emitter.is_none() {
+                            canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
+                            canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x00F97316, 1);
+                            canvas.draw_text(insp_x + 26, comp_y + 6, "[ + PARTICLE EMITTER 2D (FLAMMES) ]", 0x00F97316, 2);
+                            self.editor.add_comp_hitboxes.push(("Emitter".into(), insp_x + 18, comp_y, btn_w, btn_h));
+                            comp_y += 34;
+                        }
                         if ent.script.is_none() {
                             canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
                             canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x00A78BFA, 1);
@@ -1664,9 +1836,9 @@ impl GameState {
         // Overlay de la palette de spawn d'entités (Touche P ou Bouton [+ SPAWN])
         if is_edit_mode && self.editor.show_spawn_palette {
             let pal_w = 420;
-            let pal_h = 320;
+            let pal_h = 365;
             let pal_x = 160;
-            let pal_y = 100;
+            let pal_y = 90;
 
             canvas.draw_rect(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x000F172A);
             canvas.draw_rect_outline(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x0038BDF8, 3);
@@ -1680,6 +1852,7 @@ impl GameState {
                 ("door", "+ Porte Interactive Securisee", 0x00EF4444),
                 ("enemy", "+ Sentinelle Patrouilleuse (Vision)", 0x00DC2626),
                 ("portal", "+ Portail Quantique (Teleporteur)", 0x0006B6D4),
+                ("torch", "+ Torche Brulante (Emetteur Flammes)", 0x00F97316),
                 ("cancel", "[ Fermer la palette (Echap) ]", 0x0064748B),
             ];
 
@@ -2395,6 +2568,97 @@ mod tests {
         // Attacher un composant déjà présent -> doit renvoyer false
         let readded = state.add_component_to_selected("Movement");
         assert!(!readded);
+    }
+
+    #[test]
+    fn test_particle_lerp_color() {
+        let white = 0x00FFFFFF;
+        let black = 0x00000000;
+        assert_eq!(lerp_color(white, black, 0.0), white);
+        assert_eq!(lerp_color(white, black, 1.0), black);
+
+        // Mi-chemin : ~127 (0x7F)
+        let mid = lerp_color(white, black, 0.5);
+        let r = (mid >> 16) & 0xFF;
+        let g = (mid >> 8) & 0xFF;
+        let b = mid & 0xFF;
+        assert!((r as i32 - 127).abs() <= 1);
+        assert!((g as i32 - 127).abs() <= 1);
+        assert!((b as i32 - 127).abs() <= 1);
+    }
+
+    #[test]
+    fn test_particle_emitter_continuous_simulation() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        // Profil High pour permettre jusqu'à 100 particules pour les tests de flux continu
+        state.adaptation.current_profile = crate::adaptation::QualityProfile::High;
+        state.adaptation.auto_adapt = false;
+
+        // Spawner une torche avec émetteur de flammes
+        let torch_idx = state.spawn_entity("torch", 300.0, 300.0);
+        assert!(state.entities[torch_idx].emitter.is_some());
+        assert_eq!(state.particles.len(), 15); // Particules initiales de spawn
+
+        let input = InputState::new();
+        // Simuler 10 frames de 16ms
+        for _ in 0..10 {
+            state.update(0.016, &input);
+        }
+
+        // L'émetteur doit avoir injecté des particules de flammes
+        assert!(state.particles.len() > 15, "L'émetteur de particules doit générer un flux continu");
+        let flame = state.particles.last().unwrap();
+        assert!(flame.life > 0.0);
+        assert!(flame.max_life > 0.0);
+        assert_eq!(flame.color_start, 0x00FDE047);
+        assert_eq!(flame.color_end, 0x00DC2626);
+    }
+
+    #[test]
+    fn test_particle_emitter_adaptation_cap() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        // Spawner plusieurs torches pour pousser l'émission
+        for i in 0..5 {
+            state.spawn_entity("torch", 100.0 + (i as f32 * 50.0), 300.0);
+        }
+
+        let max_cap = state.adaptation.current_profile.max_particles();
+        let input = InputState::new();
+
+        // Simuler 60 frames (1 seconde)
+        for _ in 0..60 {
+            state.update(0.016, &input);
+            assert!(state.particles.len() <= max_cap, "Le budget de particules adaptatif ne doit JAMAIS être dépassé");
+        }
+    }
+
+    #[test]
+    fn test_kvl_emitter_burst_and_toggle() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        state.adaptation.current_profile = crate::adaptation::QualityProfile::High;
+        state.adaptation.auto_adapt = false;
+
+        let torch_idx = state.spawn_entity("torch", 250.0, 250.0);
+        state.particles.clear();
+
+        // Déclencher une gerbe KVL (EmitBurst)
+        state.kvl_context.set_var("emitter_burst", Value::Int(40));
+        let input = InputState::new();
+        state.update(0.016, &input);
+
+        assert!(state.particles.len() >= 40, "La gerbe KVL doit injecter 40 particules");
+        assert_eq!(state.kvl_context.get_var("emitter_burst"), Some(&Value::Int(0)), "Le trigger burst doit être consommé");
+
+        // Désactiver les émetteurs via KVL (ToggleEmitter)
+        state.kvl_context.set_var("emitter_active", Value::Bool(false));
+        state.update(0.016, &input);
+        assert!(!state.entities[torch_idx].emitter.as_ref().unwrap().is_emitting, "L'émetteur doit être mis en pause");
     }
 }
 

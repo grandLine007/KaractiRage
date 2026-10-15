@@ -224,6 +224,37 @@ impl Interpreter {
                         "DestroySelf" => {
                             ctx.record_step(&next_node.id, &next_node.name, "Objet marqué pour destruction");
                         }
+                        "EmitBurst" => {
+                            let current = match ctx.get_var("emitter_burst") {
+                                Some(Value::Int(c)) => *c,
+                                _ => 0,
+                            };
+                            ctx.set_var("emitter_burst", Value::Int(current + 25));
+                            ctx.record_step(&next_node.id, &next_node.name, "Gerbe de particules (Burst) déclenchée !");
+                        }
+                        op if op.starts_with("EmitBurst:") => {
+                            let count = op.trim_start_matches("EmitBurst:").parse::<i64>().unwrap_or(25);
+                            let current = match ctx.get_var("emitter_burst") {
+                                Some(Value::Int(c)) => *c,
+                                _ => 0,
+                            };
+                            ctx.set_var("emitter_burst", Value::Int(current + count));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Gerbe de {} particules déclenchée !", count));
+                        }
+                        "ToggleEmitter" => {
+                            let active = match ctx.get_var("emitter_active") {
+                                Some(Value::Bool(b)) => *b,
+                                _ => true,
+                            };
+                            ctx.set_var("emitter_active", Value::Bool(!active));
+                            ctx.record_step(&next_node.id, &next_node.name, if !active { "Émetteur de particules activé !" } else { "Émetteur de particules éteint." });
+                        }
+                        op if op.starts_with("ToggleEmitter:") => {
+                            let state_str = op.trim_start_matches("ToggleEmitter:");
+                            let state = state_str == "true" || state_str == "1" || state_str == "on";
+                            ctx.set_var("emitter_active", Value::Bool(state));
+                            ctx.record_step(&next_node.id, &next_node.name, if state { "Émetteur de particules allumé !" } else { "Émetteur de particules éteint." });
+                        }
                         _ => {
                             ctx.record_step(&next_node.id, &next_node.name, format!("Action personnalisée {}", action_type));
                         }

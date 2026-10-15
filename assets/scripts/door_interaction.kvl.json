@@ -22,32 +22,6 @@
     }
   },
   "nodes": {
-    "evt_door_interact": {
-      "id": "evt_door_interact",
-      "name": "Interaction Joueur",
-      "category": "Interactions",
-      "description": "Déclenché lors de l'appui sur E ou Espace près de la porte.",
-      "kind": {
-        "Event": {
-          "event_type": "OnDoorInteract"
-        }
-      },
-      "inputs": [],
-      "outputs": [
-        {
-          "id": "out_trigger",
-          "name": "Exécution",
-          "direction": "Output",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "ui": {
-        "position_x": 0.0,
-        "position_y": 0.0,
-        "color_tag": null
-      }
-    },
     "act_deny_access": {
       "id": "act_deny_access",
       "name": "Alerte Accès Refusé",
@@ -96,6 +70,32 @@
       "outputs": [],
       "ui": {
         "position_x": 340.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "evt_door_interact": {
+      "id": "evt_door_interact",
+      "name": "Interaction Joueur",
+      "category": "Interactions",
+      "description": "Déclenché lors de l'appui sur E ou Espace près de la porte.",
+      "kind": {
+        "Event": {
+          "event_type": "OnDoorInteract"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
         "position_y": 0.0,
         "color_tag": null
       }

@@ -103,6 +103,9 @@ impl SceneData {
     pub fn to_entities(&self) -> Vec<Entity> {
         let mut list = self.entities.clone();
         if !list.is_empty() {
+            for ent in &mut list {
+                ent.is_active = true;
+            }
             return list;
         }
 
