@@ -430,6 +430,36 @@
   * **0 avertissement de compilation** (`cargo check --all-targets`).
   * Export WebAssembly synchronisé via `./scripts/build_web.sh`.
 
+### Étape 24 : Système de Vitalité, Dégâts, Soins & Santé Universelle (`Health2D`) *(15 Octobre 2026)*
+* **Constat** : Le moteur multi-genres ne possédait pas encore de système universel de points de vie, de dangers environnementaux (pièges), de ramassage de soins, d'invulnérabilité temporaire (*i-frames*), ni de boucle de mort et réapparition sécurisée.
+* **Réalisations** :
+  * **Composant ECS universel `Health2D`** :
+    * `current`, `max`, `invulnerability_timer`, `is_dead`.
+    * Méthodes `damage(amount)` (avec 800ms d'*i-frames* protectrices) et `heal(amount)` (avec réanimation dès que PV > 0).
+    * Zéro allocation mémoire par frame dans `update()` et `render()`.
+  * **Boucle de gameplay, Dangers & Soins** :
+    * Dangers environnementaux (`"hazard"` : pièges à piques) et collisions hostiles (`"enemy"`).
+    * Fioles de vitalité (`"heart"` : ramassage +1 PV, particules émeraudes, consommation de l'entité).
+    * En cas de coup fatal : réapparition instantanée à `player_spawn_pos`, restauration des PV, 1.5s d'immunité et gerbe de 40 particules dorées.
+    * Synchronisation temps réel vers le contexte KVL (`player_hp`, `player_max_hp`).
+  * **Synthèse Sonore Rétro Procédurale** :
+    * `SoundType::PlayerDamage`, `HealPickup`, `PlayerDeath`.
+  * **Rendu Visuel & Interface Ergonomique** :
+    * Carte HUD de vitalité avec cœurs stylisés `♥` / `♡` (nouveaux glyphes 5x7 intégrés).
+    * Mini-barres de vie au-dessus des entités blessées dans le monde.
+    * Clignotement visuel à 20 Hz de l'exosquelette du joueur sous *i-frames*.
+    * Rendu procédural des piques en acier pour les pièges et des cœurs pulsants.
+    * Marqueurs radar minimap rouge (pièges) et rose (cœurs).
+  * **Outils Studio & Langage KVL** :
+    * Inspecteur ECS : affichage des PV, boutons `[- 1 PV]`, `[+ 1 PV]`, `[- Max]`, `[+ Max]`, et bouton `[+ SANTE / VIE (HEALTH2D)]`.
+    * Palette de création `P` : ajout des gabarits `Piege a Piques` et `Fiole de Coeur`.
+    * Nœuds KVL : actions `DamagePlayer`, `HealPlayer` et conditions `IsPlayerAlive`, `HealthLessThan`, `HealthGte`.
+    * Documentation intégrée à la fenêtre modale d'aide (`H`).
+* **Mesures & Benchmarks** :
+  * **82/82 tests unitaires validés à 100%** (+8 nouveaux tests : 4 dans kvl-runtime et 4 dans engine-core).
+  * **0 avertissement de compilation** (`cargo check --all-targets`).
+  * Export WebAssembly synchronisé via `./scripts/build_web.sh`.
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

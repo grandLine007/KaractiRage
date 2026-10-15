@@ -486,6 +486,53 @@ impl Projectile2D {
     }
 }
 
+/// Composant universel de Vitalité, Dégâts et Points de Vie (HP)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Health2D {
+    pub current: f32,
+    pub max: f32,
+    #[serde(default)]
+    pub invulnerability_timer: f32,
+    #[serde(default)]
+    pub is_dead: bool,
+}
+
+impl Health2D {
+    pub fn new(max: f32) -> Self {
+        Self {
+            current: max,
+            max,
+            invulnerability_timer: 0.0,
+            is_dead: false,
+        }
+    }
+
+    /// Inflige des dégâts avec période d'invulnérabilité protectrice (i-frames)
+    pub fn damage(&mut self, amount: f32) -> bool {
+        if self.is_dead || self.invulnerability_timer > 0.0 {
+            return false;
+        }
+        self.current = (self.current - amount).max(0.0);
+        self.invulnerability_timer = 0.8; // 800ms de frames d'invulnérabilité
+        if self.current <= 0.0 {
+            self.is_dead = true;
+        }
+        true
+    }
+
+    /// Restaure des points de vie sans dépasser le maximum
+    pub fn heal(&mut self, amount: f32) -> bool {
+        if amount <= 0.0 || self.current >= self.max {
+            return false;
+        }
+        self.current = (self.current + amount).min(self.max);
+        if self.current > 0.0 {
+            self.is_dead = false;
+        }
+        true
+    }
+}
+
 /// Modèle d'Entité Universel du moteur KaractiRage
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
@@ -500,6 +547,7 @@ pub struct Entity {
     pub script: Option<KVLScriptComponent>,
     pub emitter: Option<ParticleEmitter2D>,
     pub projectile: Option<Projectile2D>,
+    pub health: Option<Health2D>,
     pub is_active: bool,
 }
 
@@ -517,8 +565,14 @@ impl Entity {
             script: None,
             emitter: None,
             projectile: None,
+            health: None,
             is_active: true,
         }
+    }
+
+    pub fn with_health(mut self, h: Health2D) -> Self {
+        self.health = Some(h);
+        self
     }
 
     pub fn with_renderable(mut self, r: Renderable2D) -> Self {
@@ -632,5 +686,19 @@ impl Entity {
         Self::new(id, format!("plate_{}", id), "plate", Transform2D::new(x, y, size, size))
             .with_renderable(Renderable2D::rect(0x00082F49, 2).with_outline(0x000284C7, 2))
             .with_collider(Collider2D::trigger(size, size))
+    }
+
+    /// Gabarit : Piège à piques / Danger environnemental (inflige des dégâts au joueur)
+    pub fn spawn_hazard(id: usize, x: f32, y: f32, size: f32) -> Self {
+        Self::new(id, format!("trap_{}", id), "hazard", Transform2D::new(x, y, size, size))
+            .with_renderable(Renderable2D::rect(0x00450A0A, 3).with_outline(0x00EF4444, 2))
+            .with_collider(Collider2D::trigger(size, size))
+    }
+
+    /// Gabarit : Fiole de vitalité / Cœur (restaure de la santé)
+    pub fn spawn_heart(id: usize, x: f32, y: f32, radius: f32) -> Self {
+        Self::new(id, format!("heart_{}", id), "heart", Transform2D::new(x - radius, y - radius, radius * 2.0, radius * 2.0))
+            .with_renderable(Renderable2D::circle(radius, 0x00EF4444, 6).with_outline(0x00FECACA, 1))
+            .with_collider(Collider2D::trigger(radius * 2.0, radius * 2.0))
     }
 }

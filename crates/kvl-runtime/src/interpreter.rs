@@ -159,6 +159,52 @@ impl Interpreter {
                             ctx.set_var("score", Value::Int(0));
                             ctx.record_step(&next_node.id, &next_node.name, "Score réinitialisé à 0 !");
                         }
+                        "DamagePlayer" => {
+                            let current_hp = match ctx.get_var("player_hp") {
+                                Some(Value::Int(hp)) => *hp,
+                                _ => 3,
+                            };
+                            let new_hp = (current_hp - 1).max(0);
+                            ctx.set_var("player_hp", Value::Int(new_hp));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Dégâts infligés au joueur : -1 PV (Reste: {})", new_hp));
+                        }
+                        op if op.starts_with("DamagePlayer:") => {
+                            let amount = op.trim_start_matches("DamagePlayer:").parse::<i64>().unwrap_or(1);
+                            let current_hp = match ctx.get_var("player_hp") {
+                                Some(Value::Int(hp)) => *hp,
+                                _ => 3,
+                            };
+                            let new_hp = (current_hp - amount).max(0);
+                            ctx.set_var("player_hp", Value::Int(new_hp));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Dégâts infligés au joueur : -{} PV (Reste: {})", amount, new_hp));
+                        }
+                        "HealPlayer" => {
+                            let current_hp = match ctx.get_var("player_hp") {
+                                Some(Value::Int(hp)) => *hp,
+                                _ => 3,
+                            };
+                            let max_hp = match ctx.get_var("player_max_hp") {
+                                Some(Value::Int(m)) => *m,
+                                _ => 3,
+                            };
+                            let new_hp = (current_hp + 1).min(max_hp);
+                            ctx.set_var("player_hp", Value::Int(new_hp));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Soin accordé au joueur : +1 PV (Total: {})", new_hp));
+                        }
+                        op if op.starts_with("HealPlayer:") => {
+                            let amount = op.trim_start_matches("HealPlayer:").parse::<i64>().unwrap_or(1);
+                            let current_hp = match ctx.get_var("player_hp") {
+                                Some(Value::Int(hp)) => *hp,
+                                _ => 3,
+                            };
+                            let max_hp = match ctx.get_var("player_max_hp") {
+                                Some(Value::Int(m)) => *m,
+                                _ => 3,
+                            };
+                            let new_hp = (current_hp + amount).min(max_hp);
+                            ctx.set_var("player_hp", Value::Int(new_hp));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Soin accordé au joueur : +{} PV (Total: {})", amount, new_hp));
+                        }
                         "TeleportPlayer" => {
                             ctx.set_var("teleport_target_x", Value::Int(120));
                             ctx.set_var("teleport_target_y", Value::Int(480));
@@ -271,6 +317,33 @@ impl Interpreter {
                     };
 
                     let is_true = match operator.as_str() {
+                        "IsPlayerAlive" => {
+                            let hp = match ctx.get_var("player_hp") {
+                                Some(Value::Int(h)) => *h,
+                                _ => 3,
+                            };
+                            hp > 0
+                        }
+                        op if op.starts_with("HealthLessThan:") || op.starts_with("HealthLt:") => {
+                            let threshold = if op.starts_with("HealthLessThan:") {
+                                op.trim_start_matches("HealthLessThan:")
+                            } else {
+                                op.trim_start_matches("HealthLt:")
+                            }.parse::<i64>().unwrap_or(1);
+                            let hp = match ctx.get_var("player_hp") {
+                                Some(Value::Int(h)) => *h,
+                                _ => 3,
+                            };
+                            hp < threshold
+                        }
+                        op if op.starts_with("HealthGte:") => {
+                            let threshold = op.trim_start_matches("HealthGte:").parse::<i64>().unwrap_or(1);
+                            let hp = match ctx.get_var("player_hp") {
+                                Some(Value::Int(h)) => *h,
+                                _ => 3,
+                            };
+                            hp >= threshold
+                        }
                         "ScoreAtLeast50" | "ScoreGte50" => current_score >= 50,
                         "ScoreAtLeast20" | "ScoreGte20" => current_score >= 20,
                         "ScoreAtLeast10" | "ScoreGte10" => current_score >= 10,

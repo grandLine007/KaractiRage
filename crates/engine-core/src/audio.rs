@@ -18,6 +18,9 @@ pub enum SoundType {
     PlayerJump,
     LaserShoot,
     BlockPush,
+    PlayerDamage,
+    HealPickup,
+    PlayerDeath,
 }
 
 struct ActiveVoice {
@@ -45,6 +48,9 @@ impl ActiveVoice {
             SoundType::PlayerJump => 0.20,
             SoundType::LaserShoot => 0.15,
             SoundType::BlockPush => 0.16,
+            SoundType::PlayerDamage => 0.22,
+            SoundType::HealPickup => 0.32,
+            SoundType::PlayerDeath => 0.60,
         };
 
         let duration_samples = (duration_secs * sample_rate as f32) as usize;
@@ -208,6 +214,44 @@ impl ActiveVoice {
                 let env = (1.0 - progress).powf(1.8);
                 (wave * 0.7 + noise * 0.3) * env * 0.6
             }
+
+            SoundType::PlayerDamage => {
+                // Impact sourd et rugueux avec bruit granuleux
+                let freq = 280.0 - (progress * 200.0);
+                let square = if (t * freq).fract() < 0.5 { 0.7 } else { -0.7 };
+                let noise = (((self.cursor * 1664525 + 1013904223) % 100) as f32 / 50.0) - 1.0;
+                let env = (1.0 - progress).powf(2.2);
+                (square * 0.6 + noise * 0.4) * env * 0.7
+            }
+
+            SoundType::HealPickup => {
+                // Arpège ascendant pur et étincelant (Do5 -> Mi5 -> Sol5 -> Do6)
+                let step = (progress * 4.0) as usize;
+                let freq = match step {
+                    0 => 523.25,
+                    1 => 659.25,
+                    2 => 783.99,
+                    _ => 1046.50,
+                };
+                let sine = (t * freq * std::f32::consts::TAU).sin();
+                let env = (1.0 - (progress * 4.0).fract()).powf(1.4) * (1.0 - progress * 0.3);
+                sine * env * 0.6
+            }
+
+            SoundType::PlayerDeath => {
+                // Chute dramatique de gamme rétro (défaite)
+                let step = (progress * 5.0) as usize;
+                let freq = match step {
+                    0 => 440.0,
+                    1 => 370.0,
+                    2 => 293.0,
+                    3 => 220.0,
+                    _ => 110.0,
+                };
+                let saw = 2.0 * (t * freq).fract() - 1.0;
+                let env = (1.0 - progress).powf(1.1);
+                saw * env * 0.65
+            }
         };
 
         raw_wave * self.volume
@@ -342,6 +386,9 @@ mod tests {
             SoundType::PlayerJump,
             SoundType::LaserShoot,
             SoundType::BlockPush,
+            SoundType::PlayerDamage,
+            SoundType::HealPickup,
+            SoundType::PlayerDeath,
         ];
 
         let sample_rate = 44100.0;

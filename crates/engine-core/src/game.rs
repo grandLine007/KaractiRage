@@ -126,6 +126,7 @@ pub struct GameState {
     pub show_minimap: bool,
     pub spatial_grid: SpatialHashGrid,
     pub elapsed_time: f32,
+    pub player_spawn_pos: (f32, f32),
 }
 
 impl GameState {
@@ -181,6 +182,8 @@ impl GameState {
             "torch" => Entity::spawn_torch(id, x, y),
             "crate" => Entity::spawn_crate(id, x, y, 44.0),
             "plate" => Entity::spawn_plate(id, x, y, 48.0),
+            "hazard" => Entity::spawn_hazard(id, x, y, 32.0),
+            "heart" => Entity::spawn_heart(id, x, y, 12.0),
             _ => Entity::spawn_wall(id, x, y, 32.0, 32.0),
         };
         self.entities.push(entity);
@@ -424,6 +427,52 @@ impl GameState {
                     _ => return false,
                 }
             }
+            "Health" => {
+                if ent.health.is_none() {
+                    ent.health = Some(crate::entity::Health2D::new(3.0));
+                    self.status_message = format!("Composant Health2D (3 PV) attaché à '{}'.", ent.name);
+                } else {
+                    return false;
+                }
+            }
+            "DamageSelected" => {
+                match ent.health {
+                    Some(ref mut h) => {
+                        let _ = h.damage(1.0);
+                        self.status_message = format!("1 dégât infligé à '{}' : {:.0}/{:.0} PV", ent.name, h.current, h.max);
+                    }
+                    None => return false,
+                }
+            }
+            "HealSelected" => {
+                match ent.health {
+                    Some(ref mut h) => {
+                        let _ = h.heal(1.0);
+                        self.status_message = format!("1 PV soigné sur '{}' : {:.0}/{:.0} PV", ent.name, h.current, h.max);
+                    }
+                    None => return false,
+                }
+            }
+            "MaxHpInc" => {
+                match ent.health {
+                    Some(ref mut h) => {
+                        h.max = (h.max + 1.0).min(20.0);
+                        h.current = (h.current + 1.0).min(h.max);
+                        self.status_message = format!("Points de vie max de '{}' : {:.0} PV", ent.name, h.max);
+                    }
+                    None => return false,
+                }
+            }
+            "MaxHpDec" => {
+                match ent.health {
+                    Some(ref mut h) => {
+                        h.max = (h.max - 1.0).max(1.0);
+                        h.current = h.current.min(h.max);
+                        self.status_message = format!("Points de vie max de '{}' : {:.0} PV", ent.name, h.max);
+                    }
+                    None => return false,
+                }
+            }
             _ => return false,
         }
         self.audio.play(SoundType::UiClick);
@@ -452,7 +501,7 @@ impl GameState {
             }
         };
 
-        let entities = scene_data.to_entities();
+        let mut entities = scene_data.to_entities();
 
         let mut kvl_graphs = HashMap::new();
         let mut kvl_context = ExecutionContext::new();
@@ -495,6 +544,25 @@ impl GameState {
 
         let scene_objective = scene_data.objective.clone();
 
+        let mut spawn_x = 100.0;
+        let mut spawn_y = 100.0;
+        for ent in &mut entities {
+            if ent.movement.as_ref().map_or(false, |m| m.is_player_controlled) {
+                spawn_x = ent.transform.x;
+                spawn_y = ent.transform.y;
+                if ent.health.is_none() {
+                    ent.health = Some(crate::entity::Health2D::new(3.0));
+                }
+            }
+        }
+
+        if let Some(player) = entities.iter().find(|e| e.movement.as_ref().map_or(false, |m| m.is_player_controlled)) {
+            if let Some(ref h) = player.health {
+                kvl_context.set_var("player_hp", Value::Int(h.current as i64));
+                kvl_context.set_var("player_max_hp", Value::Int(h.max as i64));
+            }
+        }
+
         Ok(Self {
             scene_path: path.to_string(),
             scene_name: scene_data.name,
@@ -511,6 +579,7 @@ impl GameState {
             show_minimap: true,
             spatial_grid: SpatialHashGrid::new(64.0, 256),
             elapsed_time: 0.0,
+            player_spawn_pos: (spawn_x, spawn_y),
         })
     }
 
@@ -1211,6 +1280,15 @@ impl GameState {
             self.fire_player_projectile();
         }
 
+        // Gestion de l'invulnérabilité (i-frames) pour tous les composants Health2D
+        for ent in &mut self.entities {
+            if let Some(ref mut h) = ent.health {
+                if h.invulnerability_timer > 0.0 {
+                    h.invulnerability_timer = (h.invulnerability_timer - dt).max(0.0);
+                }
+            }
+        }
+
         // Déplacement joueur via vecteur d'entrée
         let mut move_x: f32 = 0.0;
         let mut move_y: f32 = 0.0;
@@ -1742,10 +1820,12 @@ impl GameState {
         let mut spawn_requests = Vec::new();
 
         // ==========================================
-        // SYSTEM 4 : TRIGGER OVERLAP & COLLECTIBLES (PIÈCES, BONUS)
+        // SYSTEM 4 : TRIGGER OVERLAP & COLLECTIBLES (PIÈCES, CŒURS, PIÈGES)
         // ==========================================
-        if let Some((_p_idx, px, py, pw, ph)) = player_pos {
+        if let Some((p_idx, px, py, pw, ph)) = player_pos {
             let mut collected_indices = Vec::new();
+            let mut heart_indices = Vec::new();
+            let mut hazard_hit = false;
             {
                 let candidates = self.spatial_grid.query_aabb(px - 2.0, py - 2.0, pw + 4.0, ph + 4.0);
                 for item in candidates {
@@ -1762,10 +1842,94 @@ impl GameState {
 
                             let max_reach = (pw.max(ph) * 0.5) + (ent.transform.w.max(ent.transform.h) * 0.5);
                             let is_collectible = ent.tag == "collectible" || ent.tag == "coin";
-                            if dist < max_reach && is_collectible {
-                                collected_indices.push(idx);
+                            let is_heart = ent.tag == "heart" || ent.name.contains("heart");
+                            let is_hazard = ent.tag == "hazard" || ent.tag == "trap" || ent.tag == "spike";
+
+                            if dist < max_reach {
+                                if is_collectible {
+                                    collected_indices.push(idx);
+                                } else if is_heart {
+                                    heart_indices.push(idx);
+                                } else if is_hazard {
+                                    hazard_hit = true;
+                                }
                             }
                         }
+                    }
+                }
+            }
+
+            // Contact hostile direct avec les ennemis patrouilleurs ou sentinelles
+            let mut enemy_contact = false;
+            for (idx, ent) in self.entities.iter().enumerate() {
+                if idx != p_idx && ent.is_active && ent.tag == "enemy" {
+                    let ex = ent.transform.x;
+                    let ey = ent.transform.y;
+                    let ew = ent.transform.w;
+                    let eh = ent.transform.h;
+                    if px < ex + ew && px + pw > ex && py < ey + eh && py + ph > ey {
+                        enemy_contact = true;
+                        break;
+                    }
+                }
+            }
+
+            // Gestion de l'absorption des cœurs de santé
+            for idx in heart_indices {
+                let (ent_name, ent_cx, ent_cy) = {
+                    let ent = &mut self.entities[idx];
+                    ent.is_active = false;
+                    (ent.name.clone(), ent.transform.center_x(), ent.transform.center_y())
+                };
+
+                if let Some(ref mut h) = self.entities[p_idx].health {
+                    h.heal(1.0);
+                    self.audio.play(SoundType::HealPickup);
+                    spawn_requests.push((ent_cx, ent_cy, 22, 0x0010B981));
+                    self.status_message = format!("Fiole de vitalité '{}' absorbée ! ({:.0}/{:.0} PV)", ent_name, h.current, h.max);
+                }
+            }
+
+            // Gestion des dégâts subis (Pièges ou Ennemis)
+            if hazard_hit || enemy_contact {
+                let p_cx = px + pw * 0.5;
+                let p_cy = py + ph * 0.5;
+                let mut took_damage = false;
+                let mut is_dead = false;
+                let mut cur_hp = 0.0;
+                let mut max_hp = 0.0;
+
+                if let Some(ref mut h) = self.entities[p_idx].health {
+                    if h.damage(1.0) {
+                        took_damage = true;
+                        is_dead = h.is_dead;
+                        if is_dead {
+                            h.current = h.max;
+                            h.is_dead = false;
+                            h.invulnerability_timer = 1.5;
+                        }
+                        cur_hp = h.current;
+                        max_hp = h.max;
+                    }
+                }
+
+                if took_damage {
+                    self.audio.play(SoundType::PlayerDamage);
+                    spawn_requests.push((p_cx, p_cy, 25, 0x00EF4444));
+
+                    if is_dead {
+                        self.audio.play(SoundType::PlayerDeath);
+                        self.entities[p_idx].transform.x = self.player_spawn_pos.0;
+                        self.entities[p_idx].transform.y = self.player_spawn_pos.1;
+                        if let Some(ref mut mov) = self.entities[p_idx].movement {
+                            mov.vx = 0.0;
+                            mov.vy = 0.0;
+                        }
+                        spawn_requests.push((self.player_spawn_pos.0, self.player_spawn_pos.1, 40, 0x00F59E0B));
+                        self.status_message = "VOUS AVEZ PÉRI ! Réapparition au point de départ...".into();
+                    } else {
+                        let source = if hazard_hit { "Piège" } else { "Contact hostile" };
+                        self.status_message = format!("AÏE ! Dégâts subis ({}) ! Santé restante : {:.0}/{:.0} PV", source, cur_hp, max_hp);
                     }
                 }
             }
@@ -1816,6 +1980,12 @@ impl GameState {
                 }
 
                 self.status_message = format!("Entité '{}' collectée ! Score KVL : {}", ent_name, score);
+            }
+
+            // Synchronisation de la santé joueur avec le contexte KVL
+            if let Some(ref h) = self.entities[p_idx].health {
+                self.kvl_context.set_var("player_hp", Value::Int(h.current as i64));
+                self.kvl_context.set_var("player_max_hp", Value::Int(h.max as i64));
             }
         }
 
@@ -2351,6 +2521,35 @@ impl GameState {
         };
         canvas.draw_text(30, 72, viewport_tag, 0x00475569, 1);
 
+        // Jauge de Vitalité / Santé Joueur en overlay élégant dans le viewport (zéro-allocation tas)
+        if !is_edit_mode {
+            if let Some(p_idx) = self.player_index() {
+                if let Some(ref h) = self.entities[p_idx].health {
+                    let hp_card_x = 30;
+                    let hp_card_y = if self.spatial_grid.debug_visible { 108 } else { 86 };
+                    let cur = h.current.ceil() as i32;
+                    let max = h.max.ceil() as i32;
+                    let hearts_count = max.clamp(1, 10);
+                    let hp_card_w = (hearts_count * 16 + 22).max(110) as u32;
+                    let hp_card_h = 34;
+
+                    canvas.draw_rect(hp_card_x, hp_card_y, hp_card_w, hp_card_h, 0x000F172A);
+                    canvas.draw_rect_outline(hp_card_x, hp_card_y, hp_card_w, hp_card_h, 0x00334155, 1);
+                    canvas.draw_corner_brackets(hp_card_x, hp_card_y, hp_card_w, hp_card_h, 6, 0x00EF4444);
+
+                    let label = if cur > 0 { "VITALITE" } else { "MORT !" };
+                    let lbl_col = if cur > 0 { 0x0094A3B8 } else { 0x00EF4444 };
+                    canvas.draw_text(hp_card_x + 8, hp_card_y + 4, label, lbl_col, 1);
+
+                    for i in 0..hearts_count {
+                        let heart_icon = if i < cur { "♥" } else { "♡" };
+                        let heart_col = if i < cur { 0x00EF4444 } else { 0x00475569 };
+                        canvas.draw_text(hp_card_x + 8 + i * 16, hp_card_y + 16, heart_icon, heart_col, 2);
+                    }
+                }
+            }
+        }
+
         // Visualisation de débogage de la Grille Spatiale (Touche G)
         if self.spatial_grid.debug_visible {
             let cs = self.spatial_grid.cell_size as i32;
@@ -2442,16 +2641,21 @@ impl GameState {
                             }
                         }
                         "player" => {
-                            // Joueur Cyber-Exosquelette
-                            canvas.draw_rect(rx, ry, rw, rh, rend.color);
+                            // Joueur Cyber-Exosquelette (avec clignotement i-frames)
+                            let is_invulnerable = ent.health.as_ref().map_or(false, |h| h.invulnerability_timer > 0.0);
+                            let flash_white = is_invulnerable && (((ent.health.as_ref().unwrap().invulnerability_timer * 20.0) as i32 % 2) == 0);
+                            let body_col = if flash_white { 0x00FFFFFF } else { rend.color };
+                            let border_col = if flash_white { 0x00EF4444 } else { 0x0038BDF8 };
+
+                            canvas.draw_rect(rx, ry, rw, rh, body_col);
                             // Biseau armure
-                            canvas.draw_rect_outline(rx, ry, rw, rh, 0x0038BDF8, 2);
+                            canvas.draw_rect_outline(rx, ry, rw, rh, border_col, 2);
 
                             // Visière HUD cyan brillante
                             let visor_y = ry + 8;
                             let visor_h = 7.min(rh.saturating_sub(12));
                             if rw > 12 && visor_h > 2 {
-                                canvas.draw_rect(rx + 6, visor_y, rw - 12, visor_h, 0x00E0F2FE);
+                                canvas.draw_rect(rx + 6, visor_y, rw - 12, visor_h, if flash_white { 0x00EF4444 } else { 0x00E0F2FE });
                                 canvas.draw_line(rx + 7, visor_y + 1, rx + rw as i32 - 8, visor_y + 1, 0x00FFFFFF);
                             }
 
@@ -2546,6 +2750,37 @@ impl GameState {
                             canvas.draw_rect(rx, ry + 8, rw, rh.saturating_sub(8), 0x0078350F);
                             canvas.draw_rect_outline(rx, ry + 8, rw, rh.saturating_sub(8), 0x00F59E0B, 1);
                         }
+                        "hazard" => {
+                            // Piège à piques / Danger environnemental
+                            canvas.draw_rect(rx, ry, rw, rh, 0x001E293B);
+                            canvas.draw_rect_outline(rx, ry, rw, rh, 0x00991B1B, 1);
+                            // Base métallique
+                            canvas.draw_rect(rx, ry + rh as i32 - 6, rw, 6, 0x00334155);
+                            canvas.draw_line(rx, ry + rh as i32 - 3, rx + rw as i32 - 1, ry + rh as i32 - 3, 0x00EF4444);
+
+                            // Piques acérées
+                            let spike_count = ((rw / 10).max(2)) as i32;
+                            let spike_step = rw as f32 / spike_count as f32;
+                            for s in 0..spike_count {
+                                let sx1 = rx + (s as f32 * spike_step) as i32;
+                                let sx_mid = rx + ((s as f32 + 0.5) * spike_step) as i32;
+                                let sx2 = rx + ((s as f32 + 1.0) * spike_step) as i32;
+                                let sy_base = ry + rh as i32 - 6;
+                                let sy_peak = ry + 2;
+                                canvas.draw_line(sx1, sy_base, sx_mid, sy_peak, 0x00E2E8F0);
+                                canvas.draw_line(sx_mid, sy_peak, sx2, sy_base, 0x0094A3B8);
+                                canvas.draw_line(sx_mid, sy_peak, sx_mid, sy_base, 0x00EF4444);
+                            }
+                        }
+                        "heart" => {
+                            // Fiole ou cristal de vitalité
+                            let pulse = ((self.elapsed_time * 6.0).sin() * 2.0) as i32;
+                            canvas.draw_rect(rx, ry, rw, rh, 0x00831843);
+                            canvas.draw_rect_outline(rx, ry, rw, rh, 0x00EC4899, 1);
+                            let hx = rx + (rw as i32 / 2) - 5;
+                            let hy = ry + (rh as i32 / 2) - 6 + (pulse / 2);
+                            canvas.draw_text(hx, hy, "♥", 0x00F472B6, 2);
+                        }
                         _ => {
                             // Entité rectangulaire générique
                             canvas.draw_rect(rx, ry, rw, rh, rend.color);
@@ -2604,6 +2839,14 @@ impl GameState {
                             canvas.draw_circle(cx, cy, (radius * 0.7) as i32, col2);
                             canvas.draw_circle(cx, cy, (radius * 0.4) as i32, 0x00FFFFFF);
                         }
+                        "heart" => {
+                            // Fiole de Vitalité / Cœur Énergétique pulsant
+                            let pulse = ((self.elapsed_time * 6.0).sin() * 2.0) as i32;
+                            let heart_r = (radius as i32 + pulse).max(6);
+                            canvas.draw_circle(cx, cy, heart_r + 2, 0x00831843);
+                            canvas.draw_circle(cx, cy, heart_r, 0x00EC4899);
+                            canvas.draw_text(cx - 5, cy - 6, "♥", 0x00FFFFFF, 2);
+                        }
                         _ => {
                             // Rendu circulaire par défaut
                             canvas.draw_circle(cx, cy, radius as i32, rend.color);
@@ -2627,6 +2870,32 @@ impl GameState {
                 }
                 ShapeKind::Text { ref label, scale } => {
                     canvas.draw_text(ent.transform.x as i32, ent.transform.y as i32, label, rend.color, scale as usize);
+                }
+            }
+
+            // Mini barre de vie au-dessus de toute entité blessée (joueur, ennemi, boss)
+            if let Some(ref h) = ent.health {
+                if h.current < h.max && !h.is_dead {
+                    let bar_w = (ent.transform.w as u32).max(24);
+                    let bar_h = 4;
+                    let bar_x = ent.transform.x as i32 + ((ent.transform.w as i32 - bar_w as i32) / 2);
+                    let bar_y = ent.transform.y as i32 - 7;
+
+                    canvas.draw_rect(bar_x, bar_y, bar_w, bar_h, 0x000F172A);
+                    canvas.draw_rect_outline(bar_x, bar_y, bar_w, bar_h, 0x00334155, 1);
+
+                    let pct = (h.current / h.max).clamp(0.0, 1.0);
+                    let fill_w = ((bar_w.saturating_sub(2)) as f32 * pct) as u32;
+                    let hp_col = if pct > 0.5 {
+                        0x0010B981 // Vert
+                    } else if pct > 0.25 {
+                        0x00F59E0B // Jaune / Orange
+                    } else {
+                        0x00EF4444 // Rouge critique
+                    };
+                    if fill_w > 0 {
+                        canvas.draw_rect(bar_x + 1, bar_y + 1, fill_w, bar_h.saturating_sub(2), hp_col);
+                    }
                 }
             }
 
@@ -2720,6 +2989,12 @@ impl GameState {
                     }
                     "torch" => {
                         canvas.draw_rect(ex - 1, ey - 1, 3, 3, 0x00F97316);
+                    }
+                    "hazard" => {
+                        canvas.draw_rect(ex - 1, ey - 1, 3, 3, 0x00EF4444);
+                    }
+                    "heart" => {
+                        canvas.draw_rect(ex - 1, ey - 1, 3, 3, 0x00EC4899);
                     }
                     _ => {
                         canvas.draw_rect(ex, ey, 3, 3, 0x0094A3B8);
@@ -2879,6 +3154,26 @@ impl GameState {
                             canvas.draw_badge(insp_x + 18, comp_y, (insp_w - 36) as u32, 24, 0x002E1065, 0x007C3AED, "Renderable2D : Forme Vectorielle Logique", 0x00EDE9FE, 1);
                             comp_y += 30;
                         }
+                        if let Some(ref h) = ent.health {
+                            let health_desc = format!("Health2D : {:.0} / {:.0} PV", h.current, h.max);
+                            canvas.draw_badge(insp_x + 18, comp_y, row_w, 24, 0x004C0519, 0x00E11D48, &health_desc, 0x00FECDD3, 1);
+                            comp_y += 28;
+
+                            let sub_w = row_w - 12;
+                            canvas.draw_badge(insp_x + 30, comp_y, sub_w / 2 - 4, 20, 0x001E293B, 0x00EF4444, " - 1 PV ", 0x00FCA5A5, 1);
+                            self.editor.add_comp_hitboxes.push(("DamageSelected".into(), insp_x + 30, comp_y, sub_w / 2 - 4, 20));
+
+                            canvas.draw_badge(insp_x + 30 + (sub_w / 2) as i32 + 4, comp_y, sub_w / 2 - 4, 20, 0x001E293B, 0x0010B981, " + 1 PV ", 0x0086EFAC, 1);
+                            self.editor.add_comp_hitboxes.push(("HealSelected".into(), insp_x + 30 + (sub_w / 2) as i32 + 4, comp_y, sub_w / 2 - 4, 20));
+                            comp_y += 24;
+
+                            canvas.draw_badge(insp_x + 30, comp_y, sub_w / 2 - 4, 20, 0x001E293B, 0x0094A3B8, " - Max PV ", 0x00CBD5E1, 1);
+                            self.editor.add_comp_hitboxes.push(("MaxHpDec".into(), insp_x + 30, comp_y, sub_w / 2 - 4, 20));
+
+                            canvas.draw_badge(insp_x + 30 + (sub_w / 2) as i32 + 4, comp_y, sub_w / 2 - 4, 20, 0x001E293B, 0x0038BDF8, " + Max PV ", 0x00BAE6FD, 1);
+                            self.editor.add_comp_hitboxes.push(("MaxHpInc".into(), insp_x + 30 + (sub_w / 2) as i32 + 4, comp_y, sub_w / 2 - 4, 20));
+                            comp_y += 26;
+                        }
 
                         // Boutons d'ajout de composants manquants
                         comp_y += 8;
@@ -2910,6 +3205,11 @@ impl GameState {
                             self.editor.add_comp_hitboxes.push(("Emitter".into(), insp_x + 18, comp_y, btn_w, btn_h));
                             comp_y += 34;
                         }
+                        if ent.health.is_none() {
+                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x00F43F5E, "[ + SANTE / VIE (HEALTH2D) ]", 0x00FDA4AF, 2);
+                            self.editor.add_comp_hitboxes.push(("Health".into(), insp_x + 18, comp_y, btn_w, btn_h));
+                            comp_y += 34;
+                        }
                         if ent.script.is_none() {
                             canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x00A78BFA, "[ + SCRIPT KVL (LOGIQUE) ]", 0x00A78BFA, 2);
                             self.editor.add_comp_hitboxes.push(("Script".into(), insp_x + 18, comp_y, btn_w, btn_h));
@@ -2923,9 +3223,9 @@ impl GameState {
         // Overlay de la palette de spawn d'entités (Touche P ou Bouton [+ SPAWN])
         if is_edit_mode && self.editor.show_spawn_palette {
             let pal_w = 440;
-            let pal_h = 458;
+            let pal_h = 540;
             let pal_x = 160;
-            let pal_y = 80;
+            let pal_y = 50;
 
             canvas.draw_rect(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x000F172A);
             canvas.draw_rect_outline(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x0038BDF8, 2);
@@ -2939,6 +3239,8 @@ impl GameState {
                 ("collectible", "+ Objet Collectible (Piece KVL)", 0x00F59E0B),
                 ("door", "+ Porte Interactive Securisee", 0x00EF4444),
                 ("enemy", "+ Sentinelle Patrouilleuse (Vision)", 0x00DC2626),
+                ("hazard", "+ Piege a Piques (Degats -1 PV)", 0x00EF4444),
+                ("heart", "+ Fiole de Coeur (Soin +1 PV)", 0x00EC4899),
                 ("portal", "+ Portail Quantique (Teleporteur)", 0x0006B6D4),
                 ("torch", "+ Torche Brulante (Emetteur Flammes)", 0x00F97316),
                 ("crate", "+ Bloc Poussable (Puzzle / Sokoban)", 0x00F4AF6A),
@@ -3132,6 +3434,8 @@ impl GameState {
         canvas.draw_text(mx + 36, cy, "* Movement2D (TopDown, Platformer, SpaceInertia, Grid) | VisionSensing", 0x0094A3B8, 1);
         cy += 18;
         canvas.draw_text(mx + 36, cy, "* Projectile2D (Balistique & degats) | ParticleEmitter2D | KVLScriptComponent", 0x0094A3B8, 1);
+        cy += 18;
+        canvas.draw_text(mx + 36, cy, "* Health2D (Vitalite, degats, soins, i-frames, mort & respawn automatique)", 0x00F43F5E, 1);
         cy += 28;
 
         // Section 3 : LANGAGE VISUEL KVL
@@ -3139,9 +3443,9 @@ impl GameState {
         cy += 30;
         canvas.draw_text(mx + 24, cy, "- EVENT : Declenche par le moteur (OnOverlap, OnInteract, OnSeen, OnHit...).", 0x00FDE047, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "- CONDITION : Logique orientant l'execution vers [Vrai:Out] ou [Faux:Out].", 0x00FDE047, 1);
+        canvas.draw_text(mx + 24, cy, "- CONDITION : Logique orientant vers [Vrai/Faux] (ex: Score, Cle, IsPlayerAlive...).", 0x00FDE047, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "- ACTION : Effet de jeu (BonusPoints, BoostSpeed, ToggleDoor, EmitBurst...).", 0x00FDE047, 1);
+        canvas.draw_text(mx + 24, cy, "- ACTION : Effet de jeu (BonusPoints, BoostSpeed, Damage/HealPlayer, Burst...).", 0x00FDE047, 1);
         cy += 28;
 
         // Section 4 : RACCOURCIS CLAVIER & CONTROLES
@@ -4268,6 +4572,162 @@ mod tests {
         assert_eq!(state.kvl_context.get_var("plates_pressed"), Some(&Value::Int(2)));
         assert_eq!(state.kvl_context.get_var("puzzle_solved"), Some(&Value::Bool(true)));
         assert_eq!(state.kvl_context.get_var("objective"), Some(&Value::String("OBJECTIF: ENIGME RESOLUE ! SORTIE DU SANCTUAIRE".into())));
+    }
+
+    #[test]
+    fn test_health2d_damage_invulnerability_and_heal() {
+        let mut h = crate::entity::Health2D::new(3.0);
+        assert_eq!(h.current, 3.0);
+        assert_eq!(h.max, 3.0);
+        assert!(!h.is_dead);
+        assert_eq!(h.invulnerability_timer, 0.0);
+
+        // 1. Dégât initial : -1 PV et activation des i-frames (0.8s)
+        assert!(h.damage(1.0));
+        assert_eq!(h.current, 2.0);
+        assert_eq!(h.invulnerability_timer, 0.8);
+
+        // 2. Dégât consécutif sous i-frames : ignoré
+        assert!(!h.damage(1.0));
+        assert_eq!(h.current, 2.0);
+
+        // 3. Écoulement du temps
+        h.invulnerability_timer = 0.0;
+        assert!(h.damage(1.5));
+        assert_eq!(h.current, 0.5);
+
+        // 4. Coup fatal
+        h.invulnerability_timer = 0.0;
+        assert!(h.damage(1.0));
+        assert_eq!(h.current, 0.0);
+        assert!(h.is_dead);
+
+        // 5. Soin et rétablissement
+        h.heal(2.0);
+        assert_eq!(h.current, 2.0);
+        assert!(!h.is_dead);
+
+        // 6. Plafonnement à la santé max
+        h.heal(10.0);
+        assert_eq!(h.current, 3.0);
+    }
+
+    #[test]
+    fn test_player_hazard_damage_and_respawn() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Scène chargée");
+        let input = InputState::new();
+        let p_idx = state.player_index().unwrap();
+
+        state.player_spawn_pos = (50.0, 50.0);
+        state.entities[p_idx].transform.x = 50.0;
+        state.entities[p_idx].transform.y = 50.0;
+        state.entities[p_idx].health = Some(crate::entity::Health2D::new(3.0));
+
+        // Placer un piège de piques à (150, 150)
+        let trap_idx = state.spawn_entity("hazard", 150.0, 150.0);
+
+        // Joueur marche sur le piège
+        state.entities[p_idx].transform.x = state.entities[trap_idx].transform.x;
+        state.entities[p_idx].transform.y = state.entities[trap_idx].transform.y;
+        state.update(0.016, &input);
+
+        // Vérification des dégâts et de la synchronisation KVL
+        let h = state.entities[p_idx].health.as_ref().unwrap();
+        assert_eq!(h.current, 2.0);
+        assert!(h.invulnerability_timer > 0.0);
+        assert_eq!(state.kvl_context.get_var("player_hp"), Some(&Value::Int(2)));
+
+        // Coup fatal infligé par le piège lors de la frame pour tester la boucle de réapparition sûre
+        state.entities[p_idx].health.as_mut().unwrap().current = 1.0;
+        state.entities[p_idx].health.as_mut().unwrap().invulnerability_timer = 0.0;
+        state.entities[p_idx].health.as_mut().unwrap().is_dead = false;
+        state.entities[p_idx].transform.x = state.entities[trap_idx].transform.x;
+        state.entities[p_idx].transform.y = state.entities[trap_idx].transform.y;
+        state.update(0.016, &input);
+
+        // Le joueur a péri et a réapparu au point de départ avec 3 PV et 1.5s d'i-frames
+        assert_eq!(state.entities[p_idx].transform.x, 50.0);
+        assert_eq!(state.entities[p_idx].transform.y, 50.0);
+        let respawned_h = state.entities[p_idx].health.as_ref().unwrap();
+        assert_eq!(respawned_h.current, 3.0);
+        assert!(!respawned_h.is_dead);
+        assert!(respawned_h.invulnerability_timer > 1.0);
+    }
+
+    #[test]
+    fn test_heart_pickup_healing() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Scène chargée");
+        let input = InputState::new();
+        let p_idx = state.player_index().unwrap();
+
+        // Joueur blessé à 1 PV / 3 PV
+        state.entities[p_idx].health = Some(crate::entity::Health2D::new(3.0));
+        state.entities[p_idx].health.as_mut().unwrap().current = 1.0;
+        state.entities[p_idx].transform.x = 80.0;
+        state.entities[p_idx].transform.y = 80.0;
+
+        // Fiole de cœur spawnée à (120, 80)
+        let heart_idx = state.spawn_entity("heart", 120.0, 80.0);
+        assert!(state.entities[heart_idx].is_active);
+
+        // Déplacement du joueur sur la fiole
+        state.entities[p_idx].transform.x = 120.0;
+        state.entities[p_idx].transform.y = 80.0;
+        state.update(0.016, &input);
+
+        // Fiole absorbée et PV passés à 2
+        assert!(!state.entities[heart_idx].is_active);
+        let h = state.entities[p_idx].health.as_ref().unwrap();
+        assert_eq!(h.current, 2.0);
+        assert_eq!(state.kvl_context.get_var("player_hp"), Some(&Value::Int(2)));
+    }
+
+    #[test]
+    fn test_studio_health_authoring_tools() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Scène chargée");
+        let p_idx = state.player_index().unwrap();
+        state.editor.selected = SelectedEntity::Entity(p_idx);
+
+        // Mode édition et rendu
+        state.editor.toggle_mode();
+        let mut canvas = Canvas::new(1200, 800);
+        state.render(&mut canvas);
+
+        // Vérification des boutons de santé dans l'inspecteur
+        assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "DamageSelected"));
+        assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "HealSelected"));
+        assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "MaxHpInc"));
+        assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "MaxHpDec"));
+
+        // Actionner le bouton de dégât via add_component_to_selected
+        assert!(state.add_component_to_selected("DamageSelected"));
+        let cur = state.entities[p_idx].health.as_ref().unwrap().current;
+        assert_eq!(cur, 2.0);
+
+        // Actionner le bouton de soin
+        assert!(state.add_component_to_selected("HealSelected"));
+        assert_eq!(state.entities[p_idx].health.as_ref().unwrap().current, 3.0);
+
+        // Augmenter la santé max
+        assert!(state.add_component_to_selected("MaxHpInc"));
+        assert_eq!(state.entities[p_idx].health.as_ref().unwrap().max, 4.0);
+
+        // Attachement de composant Health2D à un mur neutre
+        let wall_idx = state.entities.iter().position(|e| e.tag == "wall").unwrap();
+        state.editor.selected = SelectedEntity::Entity(wall_idx);
+        state.entities[wall_idx].health = None;
+
+        assert!(state.add_component_to_selected("Health"));
+        assert!(state.entities[wall_idx].health.is_some());
+
+        // Palette de spawn : vérification de la présence de hazard et heart
+        state.editor.toggle_spawn_palette();
+        state.render(&mut canvas);
+        assert!(state.editor.spawn_palette_hitboxes.iter().any(|h| h.template_id == "hazard"));
+        assert!(state.editor.spawn_palette_hitboxes.iter().any(|h| h.template_id == "heart"));
     }
 }
 

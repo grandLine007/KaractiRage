@@ -118,7 +118,8 @@ impl SceneData {
             let ent = Entity::new(next_id, "Joueur", "player", Transform2D::new(p.x, p.y, p.size, p.size))
                 .with_renderable(Renderable2D::rect(0x0038BDF8, 10).with_outline(0x00FFFFFF, 2))
                 .with_collider(Collider2D::solid(p.size, p.size))
-                .with_movement(Movement2D::player(p.speed));
+                .with_movement(Movement2D::player(p.speed))
+                .with_health(Health2D::new(3.0));
             list.push(ent);
             next_id += 1;
         }
