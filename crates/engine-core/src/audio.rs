@@ -21,6 +21,8 @@ pub enum SoundType {
     PlayerDamage,
     HealPickup,
     PlayerDeath,
+    Typewriter,
+    QuestSuccess,
 }
 
 struct ActiveVoice {
@@ -51,6 +53,8 @@ impl ActiveVoice {
             SoundType::PlayerDamage => 0.22,
             SoundType::HealPickup => 0.32,
             SoundType::PlayerDeath => 0.60,
+            SoundType::Typewriter => 0.025,
+            SoundType::QuestSuccess => 0.45,
         };
 
         let duration_samples = (duration_secs * sample_rate as f32) as usize;
@@ -251,6 +255,28 @@ impl ActiveVoice {
                 let saw = 2.0 * (t * freq).fract() - 1.0;
                 let env = (1.0 - progress).powf(1.1);
                 saw * env * 0.65
+            }
+
+            SoundType::Typewriter => {
+                // Micro-impulsion subtile pour l'effet machine à écrire rétro (750 Hz)
+                let freq = 750.0 + ((self.cursor * 17) % 60) as f32;
+                let decay = (1.0 - progress).powf(3.5);
+                let sine = (t * freq * std::f32::consts::TAU).sin();
+                sine * decay * 0.35
+            }
+
+            SoundType::QuestSuccess => {
+                // Fanfare étincelante 3 notes majeures : Mi5 (659 Hz), La5 (880 Hz), Mi6 (1318 Hz)
+                let step = (progress * 3.0) as usize;
+                let freq = match step {
+                    0 => 659.25,
+                    1 => 880.00,
+                    _ => 1318.51,
+                };
+                let sine = (t * freq * std::f32::consts::TAU).sin();
+                let triangle = 2.0 * (2.0 * (t * freq - (t * freq + 0.5).floor()).abs()) - 1.0;
+                let env = (1.0 - (progress * 3.0).fract()).powf(1.3) * (1.0 - progress * 0.2);
+                (sine * 0.7 + triangle * 0.3) * env * 0.65
             }
         };
 

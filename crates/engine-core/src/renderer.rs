@@ -197,7 +197,15 @@ impl Canvas {
 
 /// Glyphes 5x7 basiques pour chiffres, lettres et symboles majeurs
 fn get_char_glyph(c: char) -> Option<[u8; 7]> {
-    let upper = c.to_ascii_uppercase();
+    let upper = match c {
+        'é' | 'è' | 'ê' | 'ë' | 'É' | 'È' | 'Ê' | 'Ë' => 'E',
+        'à' | 'â' | 'ä' | 'À' | 'Â' | 'Ä' => 'A',
+        'î' | 'ï' | 'Î' | 'Ï' => 'I',
+        'ô' | 'ö' | 'Ô' | 'Ö' => 'O',
+        'ù' | 'û' | 'ü' | 'Ù' | 'Û' | 'Ü' => 'U',
+        'ç' | 'Ç' => 'C',
+        other => other.to_ascii_uppercase(),
+    };
     match upper {
         '0' => Some([0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110]),
         '1' => Some([0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110]),

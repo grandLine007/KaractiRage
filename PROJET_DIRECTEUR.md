@@ -504,6 +504,35 @@
   * **0 avertissement de compilation** (`cargo check --all-targets`).
   * Export WebAssembly synchronisé via `./scripts/build_web.sh` (3.23s).
 
+### Étape 27 : Système de Dialogues KVL, Boîtes de Texte Rétro/Sci-Fi & Quêtes (*Dialogue & Quest Engine*) *(15 Octobre 2026)*
+* **Constat** : Le moteur disposait de physiques multi-genres, de caméra défilante et d'énigmes, mais manquait d'une dimension narrative interactive pour créer des RPG, jeux d'aventure et quêtes scénarisées avec des PNJ.
+* **Réalisations** :
+  * **Moteur de Boîte de Dialogue & Effet Machine à Écrire (`crates/engine-core/src/dialogue.rs`)** :
+    * `DialogueBox` à zéro allocation dynamique par frame : découpage sécurisé des caractères UTF-8 (`char_indices`) et retour à la ligne (*word-wrapping*) automatique.
+    * Effet machine à écrire fluide (38 car/s) avec accélération instantanée (*fast-forward*) sur Espace/Entrée/E/Clic.
+    * Choix interactifs multiples (`[1]`, `[2]`) avec touches numériques directes (`1`, `2`, pavé numérique) et hitboxes cliquables à la souris.
+    * Carte d'interface sci-fi rétro haut de gamme : coins biseautés technologiques, double bordure néon avec lueur cyan, portrait/avatar circulaire avec badge de rôle, plaque nominative de l'orateur dorée/cyan.
+  * **Gestionnaire de Suivi d'Objectifs & Quêtes (`QuestTracker`)** :
+    * Suivi de progression pas-à-pas, objectifs dynamiques, temporisation des alertes et widget HUD dédié en haut à droite.
+  * **Synthèse Sonore Procédurale Dédiée (`audio.rs`)** :
+    * `SoundType::Typewriter` : micro-impulsions chirps à 750 Hz imitant le cliquetis caractéristique des dialogues de RPG 16-bit.
+    * `SoundType::QuestSuccess` : fanfare triomphale 3 notes (Mi5, La5, Mi6) accompagnée d'une pluie d'étincelles dorées et émeraudes.
+  * **Normalisation Typographique Bitmap Française (`renderer.rs`)** :
+    * Prise en charge transparente des accents français (`é`, `è`, `ê`, `à`, `ç`, etc.) projetés sans perte vers la matrice de glyphes bitmap 5x7.
+  * **Architecture ECS Universelle & Gabarit PNJ (`entity.rs`)** :
+    * `DialogueComponent` avec rayon de proximité (`interact_radius`), options de choix et identifiants de quête.
+    * Constructeur de gabarit `Entity::spawn_npc(id, name, x, y, color, speaker, text, choices)`.
+    * Bouton `[+ DIALOGUE PNJ & QUETE]` dans l'inspecteur ECS du Studio et option PNJ intégrée à la palette de spawn (`P`).
+  * **Intégration Réactive KVL Runtime (`crates/kvl-runtime/src/interpreter.rs`)** :
+    * Actions KVL : `ShowDialogue:speaker:text`, `ShowDialogueChoice:speaker:text:c1:c2`, `CloseDialogue`, `SetQuest:qid:step`, `AdvanceQuest:qid`, `CompleteQuest:qid`.
+    * Conditions KVL : `IsDialogueOpen`, `DialogueChoiceEq:idx`, `QuestGte:qid:step`, `QuestEq:qid:step`, `IsQuestCompleted:qid`.
+    * Événements déclenchés : `"OnDialogueStart"`, `"OnDialogueChoice"`, `"OnDialogueClose"`.
+    * Immobilisation automatique du joueur pendant les phases d'échange dialogué.
+* **Mesures & Benchmarks** :
+  * **119 tests unitaires validés à 100% (0 échec)** (+11 nouveaux tests unitaires : 2 dans kvl-runtime, 3 dans dialogue, 4 dans audio/entity, 2 dans game).
+  * **0 avertissement de compilation** (`cargo check --all-targets`).
+  * Export WebAssembly synchronisé via `./scripts/build_web.sh` (3.42s).
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

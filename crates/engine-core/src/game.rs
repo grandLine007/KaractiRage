@@ -1,6 +1,7 @@
 use crate::adaptation::AdaptationManager;
 use crate::audio::{AudioEngine, SoundType};
 use crate::camera::Camera2D;
+use crate::dialogue::{DialogueAction, DialogueBox, QuestTracker};
 use crate::editor::{EditorMode, EditorState, SelectedEntity, StudioTool};
 use crate::entity::{Entity, MovementMode, ShapeKind};
 use crate::input::InputState;
@@ -130,6 +131,8 @@ pub struct GameState {
     pub player_spawn_pos: (f32, f32),
     pub camera: Camera2D,
     pub world_bounds: (f32, f32, f32, f32),
+    pub dialogue: DialogueBox,
+    pub quest: Option<QuestTracker>,
 }
 
 impl GameState {
@@ -187,6 +190,16 @@ impl GameState {
             "plate" => Entity::spawn_plate(id, x, y, 48.0),
             "hazard" => Entity::spawn_hazard(id, x, y, 32.0),
             "heart" => Entity::spawn_heart(id, x, y, 12.0),
+            "npc" => Entity::spawn_npc(
+                id,
+                format!("gardien_{}", id),
+                x,
+                y,
+                0x0038BDF8,
+                "Gardien",
+                "Bienvenue voyageur ! Le sanctuaire ancien requiert votre aide pour retrouver les 3 runes sacrees.",
+                vec!["Accepter la quete".into(), "Plus tard".into()],
+            ),
             _ => Entity::spawn_wall(id, x, y, 32.0, 32.0),
         };
         self.entities.push(entity);
@@ -303,6 +316,17 @@ impl GameState {
                 if ent.emitter.is_none() {
                     ent.emitter = Some(crate::entity::ParticleEmitter2D::torch_fire());
                     self.status_message = format!("Composant ParticleEmitter2D (Torche) attaché à '{}'.", ent.name);
+                } else {
+                    return false;
+                }
+            }
+            "Dialogue" => {
+                if ent.dialogue.is_none() {
+                    ent.dialogue = Some(crate::entity::DialogueComponent::new(
+                        "Gardien",
+                        "Salutations voyageur ! Que puis-je faire pour vous ?",
+                    ).with_choices(vec!["Demander conseil".into(), "Partir".into()]));
+                    self.status_message = format!("Composant DialogueComponent attaché à '{}'.", ent.name);
                 } else {
                     return false;
                 }
@@ -588,6 +612,10 @@ impl GameState {
         camera.target_y = spawn_y;
         camera.snap_to_target();
 
+        let quest = scene_objective.as_ref().map(|obj| {
+            QuestTracker::new("main_quest", "Objectif Principal", obj, 1)
+        });
+
         Ok(Self {
             scene_path: path.to_string(),
             scene_name: scene_data.name,
@@ -607,6 +635,8 @@ impl GameState {
             player_spawn_pos: (spawn_x, spawn_y),
             camera,
             world_bounds,
+            dialogue: DialogueBox::new(),
+            quest,
         })
     }
 
@@ -875,6 +905,55 @@ impl GameState {
                 EditorMode::Edit => "Mode Édition actif ! Cliquez sur une entité pour inspecter ou relier ses blocs KVL.".into(),
             };
             return;
+        }
+
+        // ==========================================
+        // GESTION DU SYSTÈME DE DIALOGUE (MACHINE À ÉCRIRE ET CHOIX MULTIPLES)
+        // ==========================================
+        if self.dialogue.is_active {
+            self.dialogue.update(dt, &mut self.audio);
+            let dlg_action = self.dialogue.handle_input(input);
+            match dlg_action {
+                DialogueAction::ChoiceSelected(choice_idx) => {
+                    self.kvl_context.set_var("dialogue_selected_choice", Value::Int(choice_idx as i64));
+                    self.kvl_context.set_var("dialogue_active", Value::Bool(false));
+                    self.audio.play(SoundType::UiClick);
+                    self.status_message = format!("Choix [{}] validé auprès de {} !", choice_idx, self.dialogue.speaker);
+
+                    // Si choix 1 (ex: acceptation quête), faire avancer l'étape de quête
+                    if choice_idx == 1 {
+                        if let Some(ref mut q) = self.quest {
+                            let next = q.current_step + 1;
+                            q.set_step(next);
+                            self.kvl_context.set_var(format!("quest_{}", q.id), Value::Int(next));
+                        }
+                    }
+
+                    // Déclencher l'événement KVL OnDialogueChoice sur tous les graphes chargés
+                    for graph in self.kvl_graphs.values() {
+                        if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnDialogueChoice") {
+                            kvl_steps_this_frame += steps;
+                        }
+                    }
+                }
+                DialogueAction::Closed => {
+                    self.kvl_context.set_var("dialogue_active", Value::Bool(false));
+                    self.audio.play(SoundType::UiClick);
+                    self.status_message = "Discussion terminée.".into();
+
+                    for graph in self.kvl_graphs.values() {
+                        if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnDialogueClose") {
+                            kvl_steps_this_frame += steps;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Mise à jour du timer de notification de quête HUD
+        if let Some(ref mut q) = self.quest {
+            q.update(dt);
         }
 
         // ==========================================
@@ -1502,6 +1581,12 @@ impl GameState {
         if len > 0.0 {
             move_x /= len;
             move_y /= len;
+        }
+
+        // Si une discussion est active, le joueur reste attentif et immobile
+        if self.dialogue.is_active {
+            move_x = 0.0;
+            move_y = 0.0;
         }
 
         let speed_boost = match self.kvl_context.get_var("speed_boost") {
@@ -2332,6 +2417,99 @@ impl GameState {
                             }
                         }
                     }
+
+                    // Interaction PNJ avec DialogueComponent
+                    if !self.dialogue.is_active {
+                        if let Some(ref dlg_comp) = ent.dialogue {
+                            let dx = p_cx - ent.transform.center_x();
+                            let dy = p_cy - ent.transform.center_y();
+                            let dist = (dx * dx + dy * dy).sqrt();
+
+                            if dist < dlg_comp.interact_radius {
+                                self.dialogue.open(
+                                    &dlg_comp.speaker,
+                                    &dlg_comp.text,
+                                    dlg_comp.choices.clone(),
+                                    &dlg_comp.avatar_label,
+                                    dlg_comp.avatar_color,
+                                );
+                                self.kvl_context.set_var("dialogue_active", Value::Bool(true));
+                                self.kvl_context.set_var("dialogue_speaker", Value::String(dlg_comp.speaker.clone()));
+                                self.kvl_context.set_var("dialogue_text", Value::String(dlg_comp.text.clone()));
+                                self.kvl_context.set_var("dialogue_has_choices", Value::Bool(!dlg_comp.choices.is_empty()));
+                                self.kvl_context.set_var("dialogue_selected_choice", Value::Int(0));
+                                if let Some(c1) = dlg_comp.choices.first() {
+                                    self.kvl_context.set_var("dialogue_choice_1", Value::String(c1.clone()));
+                                }
+                                if dlg_comp.choices.len() >= 2 {
+                                    self.kvl_context.set_var("dialogue_choice_2", Value::String(dlg_comp.choices[1].clone()));
+                                }
+
+                                // Quête associée au PNJ
+                                if let Some(ref qid) = dlg_comp.quest_id {
+                                    if let Some(step) = dlg_comp.quest_step {
+                                        self.kvl_context.set_var(format!("quest_{}", qid), Value::Int(step));
+                                        if let Some(ref mut q) = self.quest {
+                                            if &q.id == qid {
+                                                q.set_step(step);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                self.audio.play(SoundType::UiClick);
+                                self.status_message = format!("Discussion engagée avec {} (ESPACE / E : passer)", dlg_comp.speaker);
+
+                                for graph in self.kvl_graphs.values() {
+                                    if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnDialogueStart") {
+                                        kvl_steps_this_frame += steps;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Synchronisation KVL -> Boîte de dialogue (actions ShowDialogue de scripts)
+        if let Some(Value::Bool(true)) = self.kvl_context.get_var("dialogue_active") {
+            if !self.dialogue.is_active {
+                let spk = match self.kvl_context.get_var("dialogue_speaker") {
+                    Some(Value::String(s)) => s.clone(),
+                    _ => "PNJ".into(),
+                };
+                let txt = match self.kvl_context.get_var("dialogue_text") {
+                    Some(Value::String(t)) => t.clone(),
+                    _ => "...".into(),
+                };
+                let mut choices = Vec::new();
+                if let Some(Value::String(c1)) = self.kvl_context.get_var("dialogue_choice_1") {
+                    if !c1.is_empty() {
+                        choices.push(c1.clone());
+                    }
+                }
+                if let Some(Value::String(c2)) = self.kvl_context.get_var("dialogue_choice_2") {
+                    if !c2.is_empty() {
+                        choices.push(c2.clone());
+                    }
+                }
+                self.dialogue.open(spk, txt, choices, "NPC", 0x0038BDF8);
+            }
+        }
+
+        // Vérification d'accomplissement de quête KVL (CompleteQuest:)
+        let mut completed_any_quest = false;
+        if let Some(Value::Bool(true)) = self.kvl_context.get_var("quest_completed_main_quest") {
+            completed_any_quest = true;
+        }
+        if completed_any_quest {
+            if let Some(ref mut q) = self.quest {
+                if !q.is_completed {
+                    q.complete();
+                    self.audio.play(SoundType::QuestSuccess);
+                    self.emit_burst_at(600.0, 300.0, 40, 0x00FDE047, 0x0010B981);
+                    self.status_message = "QUÊTE PRINCIPALE ACCOMPLIE ! Félicitations !".into();
                 }
             }
         }
@@ -3519,6 +3697,11 @@ impl GameState {
                         if ent.script.is_none() {
                             canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x00A78BFA, "[ + SCRIPT KVL (LOGIQUE) ]", 0x00A78BFA, 2);
                             self.editor.add_comp_hitboxes.push(("Script".into(), insp_x + 18, comp_y, btn_w, btn_h));
+                            comp_y += 34;
+                        }
+                        if ent.dialogue.is_none() {
+                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x0038BDF8, "[ + DIALOGUE PNJ & QUETE ]", 0x0038BDF8, 2);
+                            self.editor.add_comp_hitboxes.push(("Dialogue".into(), insp_x + 18, comp_y, btn_w, btn_h));
                         }
                     }
                 }
@@ -3529,9 +3712,9 @@ impl GameState {
         // Overlay de la palette de spawn d'entités (Touche P ou Bouton [+ SPAWN])
         if is_edit_mode && self.editor.show_spawn_palette {
             let pal_w = 440;
-            let pal_h = 540;
+            let pal_h = 580;
             let pal_x = 160;
-            let pal_y = 50;
+            let pal_y = 40;
 
             canvas.draw_rect(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x000F172A);
             canvas.draw_rect_outline(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x0038BDF8, 2);
@@ -3551,6 +3734,7 @@ impl GameState {
                 ("torch", "+ Torche Brulante (Emetteur Flammes)", 0x00F97316),
                 ("crate", "+ Bloc Poussable (Puzzle / Sokoban)", 0x00F4AF6A),
                 ("plate", "+ Dalle de Pression (Ouvre les portes)", 0x0034D399),
+                ("npc", "+ PNJ / Gardien (Dialogues KVL & Quetes)", 0x0038BDF8),
                 ("cancel", "[ Fermer la palette (Echap) ]", 0x0064748B),
             ];
 
@@ -3689,6 +3873,20 @@ impl GameState {
                     canvas.draw_rect(bar_x, graph_y + graph_h - (bar_h as i32) - 2, 2, bar_h.max(2), bar_color);
                 }
             }
+        }
+
+        // 4. Suivi de quête HUD (en haut à droite sous le bandeau en Mode Jeu)
+        if !is_edit_mode {
+            if let Some(ref q) = self.quest {
+                let q_x = if self.telemetry.show_overlay { 24 } else { (w - 296).max(20) };
+                let q_y = 66;
+                q.render(canvas, q_x, q_y);
+            }
+        }
+
+        // 5. Boîte de Dialogue, Effet Machine à Écrire & Choix Multiples (au premier plan)
+        if self.dialogue.is_active {
+            self.dialogue.render(canvas);
         }
 
         // Fenêtre Modale de Guide Pédagogique Interactif (Touche H ou Bouton ? AIDE)
@@ -5292,6 +5490,80 @@ mod tests {
         state.update(0.1, &input);
         assert!(state.camera.shake_intensity < 12.0);
         assert!(state.camera.shake_intensity > 0.0);
+    }
+
+    #[test]
+    fn test_npc_interaction_proximity_and_dialogue_choices() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        let p_idx = state.player_index().expect("Joueur présent");
+        let px = state.entities[p_idx].transform.x;
+        let py = state.entities[p_idx].transform.y;
+
+        // Spawner un PNJ à proximité immédiate (à 30px du joueur)
+        let npc = Entity::spawn_npc(
+            999,
+            "Sage du Donjon",
+            px + 30.0,
+            py,
+            0x00A855F7,
+            "Sage",
+            "Bienvenue noble aventurier ! Acceptez-vous d'explorer ces ruines ?",
+            vec!["Oui, j'accepte !".into(), "Non, j'ai peur.".into()],
+        );
+        state.entities.push(npc);
+
+        assert!(!state.dialogue.is_active);
+
+        // 1. Appui sur E à proximité -> Ouverture de la boîte de dialogue
+        let mut input_e = InputState::new();
+        input_e.on_key_down(KeyCode::KeyE);
+        state.update(0.016, &input_e);
+
+        assert!(state.dialogue.is_active, "Le dialogue doit s'ouvrir lors de l'interaction avec le PNJ");
+        assert_eq!(state.dialogue.speaker, "Sage");
+        assert_eq!(state.dialogue.choices.len(), 2);
+        assert_eq!(state.kvl_context.get_var("dialogue_active"), Some(&Value::Bool(true)));
+
+        // 2. Le joueur est immobilisé pendant le dialogue
+        let mut input_move = InputState::new();
+        input_move.on_key_down(KeyCode::KeyD);
+        let pos_before = state.entities[p_idx].transform.x;
+        state.update(0.016, &input_move);
+        let pos_after = state.entities[p_idx].transform.x;
+        assert_eq!(pos_before, pos_after, "Le joueur ne doit pas se déplacer pendant un dialogue actif");
+
+        // 3. Accélération machine à écrire puis sélection du Choix 1
+        state.dialogue.fast_forward();
+        let mut input_choice = InputState::new();
+        input_choice.on_key_down(KeyCode::Digit1);
+        state.update(0.016, &input_choice);
+
+        assert!(!state.dialogue.is_active, "Le dialogue doit se fermer après sélection du choix");
+        assert_eq!(state.kvl_context.get_var("dialogue_selected_choice"), Some(&Value::Int(1)));
+    }
+
+    #[test]
+    fn test_kvl_quest_synchronization_and_completion() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement scène");
+
+        // Vérification quête par défaut initialisée
+        assert!(state.quest.is_some());
+        if let Some(ref q) = state.quest {
+            assert_eq!(q.current_step, 0);
+            assert!(!q.is_completed);
+        }
+
+        // Action KVL CompleteQuest
+        state.kvl_context.set_var("quest_completed_main_quest", Value::Bool(true));
+        let input = InputState::new();
+        state.update(0.016, &input);
+
+        // La quête doit être passée à terminée
+        let q = state.quest.as_ref().unwrap();
+        assert!(q.is_completed);
     }
 }
 

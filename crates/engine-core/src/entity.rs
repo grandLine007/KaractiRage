@@ -533,6 +533,52 @@ impl Health2D {
     }
 }
 
+/// Composant Dialogue et Quête pour PNJ (Personnages Non Joueurs) et narrateurs
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogueComponent {
+    pub speaker: String,
+    pub text: String,
+    pub choices: Vec<String>,
+    pub avatar_label: String,
+    pub avatar_color: u32,
+    pub interact_radius: f32,
+    pub quest_id: Option<String>,
+    pub quest_step: Option<i64>,
+}
+
+impl DialogueComponent {
+    pub fn new(speaker: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            speaker: speaker.into(),
+            text: text.into(),
+            choices: Vec::new(),
+            avatar_label: "NPC".to_string(),
+            avatar_color: 0x0038BDF8,
+            interact_radius: 80.0,
+            quest_id: None,
+            quest_step: None,
+        }
+    }
+
+    pub fn with_choices(mut self, choices: Vec<String>) -> Self {
+        self.choices = choices;
+        self
+    }
+
+    pub fn with_avatar(mut self, label: impl Into<String>, color: u32) -> Self {
+        self.avatar_label = label.into();
+        self.avatar_color = color;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_quest(mut self, quest_id: impl Into<String>, step: i64) -> Self {
+        self.quest_id = Some(quest_id.into());
+        self.quest_step = Some(step);
+        self
+    }
+}
+
 /// Modèle d'Entité Universel du moteur KaractiRage
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
@@ -548,6 +594,8 @@ pub struct Entity {
     pub emitter: Option<ParticleEmitter2D>,
     pub projectile: Option<Projectile2D>,
     pub health: Option<Health2D>,
+    #[serde(default)]
+    pub dialogue: Option<DialogueComponent>,
     pub is_active: bool,
 }
 
@@ -566,12 +614,18 @@ impl Entity {
             emitter: None,
             projectile: None,
             health: None,
+            dialogue: None,
             is_active: true,
         }
     }
 
     pub fn with_health(mut self, h: Health2D) -> Self {
         self.health = Some(h);
+        self
+    }
+
+    pub fn with_dialogue(mut self, d: DialogueComponent) -> Self {
+        self.dialogue = Some(d);
         self
     }
 
@@ -700,5 +754,32 @@ impl Entity {
         Self::new(id, format!("heart_{}", id), "heart", Transform2D::new(x - radius, y - radius, radius * 2.0, radius * 2.0))
             .with_renderable(Renderable2D::circle(radius, 0x00EF4444, 6).with_outline(0x00FECACA, 1))
             .with_collider(Collider2D::trigger(radius * 2.0, radius * 2.0))
+    }
+
+    /// Gabarit : PNJ / Gardien / Sage interactif avec dialogues et quêtes KVL
+    pub fn spawn_npc(
+        id: usize,
+        name: impl Into<String>,
+        x: f32,
+        y: f32,
+        color: u32,
+        speaker: impl Into<String>,
+        text: impl Into<String>,
+        choices: Vec<String>,
+    ) -> Self {
+        let speaker_str = speaker.into();
+        let av_lbl = if speaker_str.len() >= 3 {
+            speaker_str[..3].to_uppercase()
+        } else {
+            "NPC".to_string()
+        };
+        Self::new(id, name, "npc", Transform2D::new(x, y, 32.0, 32.0))
+            .with_renderable(Renderable2D::circle(16.0, color, 6).with_outline(0x00E0E7FF, 2))
+            .with_collider(Collider2D::solid(32.0, 32.0))
+            .with_dialogue(
+                DialogueComponent::new(speaker_str, text)
+                    .with_choices(choices)
+                    .with_avatar(av_lbl, color),
+            )
     }
 }

@@ -1,6 +1,7 @@
 pub mod adaptation;
 pub mod audio;
 pub mod camera;
+pub mod dialogue;
 pub mod editor;
 pub mod entity;
 pub mod game;

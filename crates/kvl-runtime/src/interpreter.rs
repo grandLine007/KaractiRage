@@ -301,6 +301,66 @@ impl Interpreter {
                             ctx.set_var("emitter_active", Value::Bool(state));
                             ctx.record_step(&next_node.id, &next_node.name, if state { "Émetteur de particules allumé !" } else { "Émetteur de particules éteint." });
                         }
+                        op if op.starts_with("ShowDialogue:") => {
+                            let rest = op.trim_start_matches("ShowDialogue:");
+                            let mut parts = rest.splitn(2, ':');
+                            let speaker = parts.next().unwrap_or("PNJ");
+                            let text = parts.next().unwrap_or("");
+                            ctx.set_var("dialogue_active", Value::Bool(true));
+                            ctx.set_var("dialogue_speaker", Value::String(speaker.to_string()));
+                            ctx.set_var("dialogue_text", Value::String(text.to_string()));
+                            ctx.set_var("dialogue_has_choices", Value::Bool(false));
+                            ctx.set_var("dialogue_choice_1", Value::String(String::new()));
+                            ctx.set_var("dialogue_choice_2", Value::String(String::new()));
+                            ctx.set_var("dialogue_selected_choice", Value::Int(0));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Ouverture dialogue [{}] : {}", speaker, text));
+                        }
+                        op if op.starts_with("ShowDialogueChoice:") => {
+                            let rest = op.trim_start_matches("ShowDialogueChoice:");
+                            let mut parts = rest.splitn(4, ':');
+                            let speaker = parts.next().unwrap_or("PNJ");
+                            let text = parts.next().unwrap_or("");
+                            let c1 = parts.next().unwrap_or("Option 1");
+                            let c2 = parts.next().unwrap_or("Option 2");
+                            ctx.set_var("dialogue_active", Value::Bool(true));
+                            ctx.set_var("dialogue_speaker", Value::String(speaker.to_string()));
+                            ctx.set_var("dialogue_text", Value::String(text.to_string()));
+                            ctx.set_var("dialogue_has_choices", Value::Bool(true));
+                            ctx.set_var("dialogue_choice_1", Value::String(c1.to_string()));
+                            ctx.set_var("dialogue_choice_2", Value::String(c2.to_string()));
+                            ctx.set_var("dialogue_selected_choice", Value::Int(0));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Dialogue à choix [{}] : {} ([1] {}, [2] {})", speaker, text, c1, c2));
+                        }
+                        "CloseDialogue" => {
+                            ctx.set_var("dialogue_active", Value::Bool(false));
+                            ctx.record_step(&next_node.id, &next_node.name, "Fermeture de la boîte de dialogue");
+                        }
+                        op if op.starts_with("SetQuest:") => {
+                            let rest = op.trim_start_matches("SetQuest:");
+                            let mut parts = rest.split(':');
+                            if let (Some(qid), Some(step_str)) = (parts.next(), parts.next()) {
+                                let step = step_str.parse::<i64>().unwrap_or(1);
+                                ctx.set_var(format!("quest_{}", qid), Value::Int(step));
+                                ctx.record_step(&next_node.id, &next_node.name, format!("Quête '{}' positionnée à l'étape {}", qid, step));
+                            }
+                        }
+                        op if op.starts_with("AdvanceQuest:") => {
+                            let qid = op.trim_start_matches("AdvanceQuest:");
+                            let key = format!("quest_{}", qid);
+                            let current = match ctx.get_var(&key) {
+                                Some(Value::Int(s)) => *s,
+                                _ => 0,
+                            };
+                            let next = current + 1;
+                            ctx.set_var(&key, Value::Int(next));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Quête '{}' avancée à l'étape {}", qid, next));
+                        }
+                        op if op.starts_with("CompleteQuest:") => {
+                            let qid = op.trim_start_matches("CompleteQuest:");
+                            ctx.set_var(format!("quest_{}", qid), Value::Int(100));
+                            ctx.set_var(format!("quest_completed_{}", qid), Value::Bool(true));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Quête '{}' accomplie avec succès !", qid));
+                        }
                         _ => {
                             ctx.record_step(&next_node.id, &next_node.name, format!("Action personnalisée {}", action_type));
                         }
@@ -402,6 +462,57 @@ impl Interpreter {
                                 Some(Value::Bool(b)) => *b,
                                 _ => false,
                             }
+                        }
+                        "IsDialogueOpen" => {
+                            match ctx.get_var("dialogue_active") {
+                                Some(Value::Bool(b)) => *b,
+                                _ => false,
+                            }
+                        }
+                        op if op.starts_with("DialogueChoiceEq:") => {
+                            let idx = op.trim_start_matches("DialogueChoiceEq:").parse::<i64>().unwrap_or(1);
+                            match ctx.get_var("dialogue_selected_choice") {
+                                Some(Value::Int(c)) => *c == idx,
+                                _ => false,
+                            }
+                        }
+                        op if op.starts_with("QuestGte:") => {
+                            let rest = op.trim_start_matches("QuestGte:");
+                            let mut parts = rest.split(':');
+                            if let (Some(qid), Some(step_str)) = (parts.next(), parts.next()) {
+                                let target_step = step_str.parse::<i64>().unwrap_or(1);
+                                match ctx.get_var(&format!("quest_{}", qid)) {
+                                    Some(Value::Int(s)) => *s >= target_step,
+                                    _ => false,
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        op if op.starts_with("QuestEq:") => {
+                            let rest = op.trim_start_matches("QuestEq:");
+                            let mut parts = rest.split(':');
+                            if let (Some(qid), Some(step_str)) = (parts.next(), parts.next()) {
+                                let target_step = step_str.parse::<i64>().unwrap_or(1);
+                                match ctx.get_var(&format!("quest_{}", qid)) {
+                                    Some(Value::Int(s)) => *s == target_step,
+                                    _ => false,
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        op if op.starts_with("IsQuestCompleted:") => {
+                            let qid = op.trim_start_matches("IsQuestCompleted:");
+                            let is_done_flag = match ctx.get_var(&format!("quest_completed_{}", qid)) {
+                                Some(Value::Bool(b)) => *b,
+                                _ => false,
+                            };
+                            let step_done = match ctx.get_var(&format!("quest_{}", qid)) {
+                                Some(Value::Int(s)) => *s >= 100,
+                                _ => false,
+                            };
+                            is_done_flag || step_done
                         }
                         _ => {
                             current_score > 0

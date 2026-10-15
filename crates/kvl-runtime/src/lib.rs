@@ -210,4 +210,77 @@ mod tests {
         assert_eq!(ctx.get_var("keys"), Some(&Value::Int(3)));
         assert_eq!(ctx.get_var("vault_open"), Some(&Value::Int(1)));
     }
+
+    #[test]
+    fn test_dialogue_and_quest_actions_and_conditions() {
+        let mut graph = Graph::new("test_dialogue_quest", "Dialogue & Quest", "Test Dialogue & Quête");
+
+        // Event : OnTalk
+        let evt = Node::new("evt_talk", "Parler au Gardien", Category::Interactions, "", NodeKind::Event { event_type: "OnTalk".into() })
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        // Action : ShowDialogueChoice
+        let act_dialogue = Node::new("act_dlg", "Dialogue", Category::Interactions, "", NodeKind::Action {
+            action_type: "ShowDialogueChoice:Gardien:Bienvenue voyageur ! Acceptez-vous la quete ?:Oui:Non".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        // Action : SetQuest
+        let act_quest = Node::new("act_quest", "Start Quest", Category::Progression, "", NodeKind::Action {
+            action_type: "SetQuest:main_quest:1".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        // Action : AdvanceQuest
+        let act_adv = Node::new("act_adv", "Advance Quest", Category::Progression, "", NodeKind::Action {
+            action_type: "AdvanceQuest:main_quest".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph.add_node(evt);
+        graph.add_node(act_dialogue);
+        graph.add_node(act_quest);
+        graph.add_node(act_adv);
+
+        graph.connect_pins("evt_talk", "out_trigger", "act_dlg", "in_trigger").unwrap();
+        graph.connect_pins("act_dlg", "out_trigger", "act_quest", "in_trigger").unwrap();
+        graph.connect_pins("act_quest", "out_trigger", "act_adv", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        let steps = Interpreter::trigger_event(&graph, &mut ctx, "OnTalk").unwrap();
+        assert_eq!(steps, 4);
+
+        // Vérification dialogue
+        assert_eq!(ctx.get_var("dialogue_active"), Some(&Value::Bool(true)));
+        assert_eq!(ctx.get_var("dialogue_speaker"), Some(&Value::String("Gardien".into())));
+        assert_eq!(ctx.get_var("dialogue_choice_1"), Some(&Value::String("Oui".into())));
+        assert_eq!(ctx.get_var("dialogue_choice_2"), Some(&Value::String("Non".into())));
+
+        // Vérification quête : étape 1 puis avancée à 2
+        assert_eq!(ctx.get_var("quest_main_quest"), Some(&Value::Int(2)));
+
+        // Test de conditions
+        let mut graph_cond = Graph::new("test_cond_dlg", "Test Conditions", "");
+        let evt_chk = Node::new("evt_chk", "Check", Category::Interactions, "", NodeKind::Event { event_type: "OnCheck".into() })
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let cond_open = Node::new("cond_open", "Is Open", Category::MathLogic, "", NodeKind::Condition { operator: "IsDialogueOpen".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+            .with_output(Pin::new_trigger("out_true", "Vrai", PinDirection::Output))
+            .with_output(Pin::new_trigger("out_false", "Faux", PinDirection::Output));
+        let act_flag = Node::new("act_flag", "Set Flag", Category::Progression, "", NodeKind::Action { action_type: "SetVar:open_confirmed:1".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph_cond.add_node(evt_chk);
+        graph_cond.add_node(cond_open);
+        graph_cond.add_node(act_flag);
+
+        graph_cond.connect_pins("evt_chk", "out_trigger", "cond_open", "in_trigger").unwrap();
+        graph_cond.connect_pins("cond_open", "out_true", "act_flag", "in_trigger").unwrap();
+
+        let steps_cond = Interpreter::trigger_event(&graph_cond, &mut ctx, "OnCheck").unwrap();
+        assert_eq!(steps_cond, 3);
+        assert_eq!(ctx.get_var("open_confirmed"), Some(&Value::Int(1)));
+    }
 }
