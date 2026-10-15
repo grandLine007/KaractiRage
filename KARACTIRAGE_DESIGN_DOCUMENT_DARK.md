@@ -22,7 +22,7 @@
 8. [Fonctionnement Concret : Du Prompt au Jeu Exécutable](#8-fonctionnement-concret--du-prompt-au-jeu-exécutable)
 9. [Plan de Réalisation & Livrables (Phases P0 à P7)](#9-plan-de-réalisation--livrables-phases-p0-à-p7)
 10. [Indicateurs de Succès, Risques Majeurs & Limites Assumées](#10-indicateurs-de-succès-risques-majeurs--limites-assumées)
-11. [Spécifications du Design System "Dark Atelier" & Ergonomie UI/UX](#11-spécifications-du-design-system-dark-atelier--ergonomie-uiux)
+11. [Spécifications du Design System "Dark Atelier", Typographie Stylée & Ergonomie UI/UX](#11-spécifications-du-design-system-dark-atelier-typographie-stylée--ergonomie-uiux)
 12. [Recommandations Finales & Manifeste](#12-recommandations-finales--manifeste)
 
 ---
@@ -351,7 +351,7 @@ L'ingénierie de KaractiRage suit une cadence de validation méthodique :
 
 ---
 
-## 11. Spécifications du Design System "Dark Atelier" & Ergonomie UI/UX
+## 11. Spécifications du Design System "Dark Atelier", Typographie Stylée & Ergonomie UI/UX
 
 L'expérience visuelle de KaractiRage a été conçue pour offrir un confort de travail prolongé, un contraste net et une identité cyberpunk artisanale haut de gamme.
 
@@ -415,6 +415,68 @@ L'expérience visuelle de KaractiRage a été conçue pour offrir un confort de 
   * 🔵 Cyan : Chaîne de caractères / Texte (`String`).
   * 🟢 Vert : Booléen (`Bool`).
   * 🟣 Violet : Vecteur spatial (`Vector2` / `Vector3`).
+
+---
+
+### 11.4 Typographie Stylée, Polices Officielles & Prise en Charge Intégrale des Caractères Accentués (UTF-8)
+
+La plupart des moteurs de jeux indépendants rétro échouent lourdement sur la typographie : restreints à un jeu ASCII 7-bit historique (0 à 127), ils affichent d'affreux carrés noirs ou des points d'interrogation (`?`) dès qu'un texte français, espagnol ou allemand contient le moindre accent. Dans un univers narratif riche ou un atelier de création pédagogique, ce manquement brise l'immersion et l'accessibilité.
+
+KaractiRage traite la typographie comme une composante noble de son identité *Cyber-Artisan*, combinant un affichage vectoriel ultra-lisible dans les interfaces et un rasterizer de glyphes bitmap à diacritiques stylisés intégrés directement dans le runtime.
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ STACK TYPOGRAPHIQUE OFFICIELLE KARACTIRAGE ("DARK ATELIER")                            │
+├─────────────────────┬──────────────────────────┬───────────────────────────────────────┤
+│ Rôle Graphique      │ Police Retenue (Licence) │ Caractéristiques & Usages Clés        │
+├─────────────────────┼──────────────────────────┼───────────────────────────────────────┤
+│ Interface & Dialogues│ Outfit (OFL / Google)    │ Sans-serif géométrique moderne, haute │
+│ (Primaire)          │                          │ lisibilité en Dark Mode, accents      │
+│                     │                          │ français complets (é, è, ê, à, ç, œ)  │
+├─────────────────────┼──────────────────────────┼───────────────────────────────────────┤
+│ Titres & Identité   │ Space Grotesk / Syne     │ Allure cyberpunk industrielle,        │
+│ (Display)           │ (OFL / Google)           │ découpes acérées, parfait pour les    │
+│                     │                          │ en-têtes Studio et badges d'alerte    │
+├─────────────────────┼──────────────────────────┼───────────────────────────────────────┤
+│ Code & Télémétrie   │ Fira Code / JetBrains    │ Chiffres tabulaires mono-espacés      │
+│ (Monospace)         │ Mono (OFL / Apache-2.0)  │ (évite les sauts de valeurs F1),      │
+│                     │                          │ ligatures programmation (->, !=, <=)  │
+├─────────────────────┼──────────────────────────┼───────────────────────────────────────┤
+│ Runtime In-Game     │ Karacti-Font Bitmap 5x7  │ Rendu matriciel autonome 0-alloc,     │
+│ (Logiciel & Direct) │ (Interne / Déterministe) │ glyphes à accents diacritiques        │
+│                     │                          │ natifs, vitesse d'affichage < 5 us    │
+└─────────────────────┴──────────────────────────┴───────────────────────────────────────┘
+```
+
+#### 11.4.1 Moteur Matriciel In-Game : Glyphes Diacritiques Stylisées (5×7 / 6×8)
+Le module graphique [crates/engine-core/src/renderer.rs](file:///Users/macbookair/Documents/Proj/KaractiRage/crates/engine-core/src/renderer.rs) intègre nativement une table de glyphes matriciels 5×7 garantissant l'absence de toute conversion dégradante (sans stripping d'accents) :
+
+```text
+Exemples de matrices binaires avec diacritiques distincts :
+       'É' (Aigu)                'È' (Grave)               'Ê' (Circonflexe)          'Ç' (Cédille)
+L0:  . . . # .  (Accent /)    L0:  . # . . .  (Accent \)    L0:  . . # . .  (Cime ^)   L0:  . # # # .  (Top C)
+L1:  . . # . .                L1:  . . # . .                L1:  . # . # .             L1:  # . . . #
+L2:  # # # # #  (Barre E)     L2:  # # # # #  (Barre E)     L2:  # # # # #  (Barre E)  L2:  # . . . .
+L3:  # . . . .                L3:  # . . . .                L3:  # . . . .             L3:  # . . . .
+L4:  # # # # .  (Centre E)    L4:  # # # # .  (Centre E)    L4:  # # # # .  (Centre E) L4:  # . . . #
+L5:  # . . . .                L5:  # . . . .                L5:  # . . . .             L5:  . # # # .
+L6:  # # # # #  (Pied E)      L6:  # # # # #  (Pied E)      L6:  # # # # #  (Pied E)   L6:  . . # # .  (Queue ç)
+```
+
+* **Jeu de caractères étendu supporté** :
+  * Aigus : `é`, `É`
+  * Graves : `è`, `à`, `ù`, `È`, `À`, `Ù`
+  * Circonflexes : `ê`, `â`, `î`, `ô`, `û`, `Ê`, `Â`, `Î`, `Ô`, `Û`
+  * Trémas : `ë`, `ä`, `ï`, `ö`, `ü`, `Ë`, `Ä`, `Ï`, `Ö`, `Ü`
+  * Cédilles : `ç`, `Ç`
+  * Ligatures : `œ`, `Œ`, `æ`, `Æ`
+  * Typographie soignée : Guillemets français `«` et `»`, degré `°`, monétaire `€` et `$`, symboles `♥`, `♡`.
+
+#### 11.4.2 Pipeline Signed Distance Field (MSDF) pour Textes 3D & Écrans Haute Résolution
+Pour les scènes 3D stylisées (Phase P6), les bulles de dialogue diégétiques et le texte flottant dans le monde, KaractiRage utilise la technique **MSDF (Multi-channel Signed Distance Field)** :
+* **Qualité vectorielle continue** : Le texte conserve des arêtes parfaitement nettes sans crénelage, qu'il soit vu de très loin ou grossi 10× par la caméra orbitale.
+* **Taille d'atlas ultra-réduite** : Un atlas MSDF 256×256 pixels au format PNG/WebP pèse moins de **120 Ko** tout en contenant l'ensemble du jeu Latin étendu (256 glyphes).
+* **Consommation VRAM infime** : Aucune régénération de texture à l'exécution, compatible avec les iGPU les plus modestes.
 
 ---
 

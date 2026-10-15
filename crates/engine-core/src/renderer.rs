@@ -195,17 +195,42 @@ impl Canvas {
     }
 }
 
-/// Glyphes 5x7 basiques pour chiffres, lettres et symboles majeurs
+/// Glyphes 5x7 stylisées pour chiffres, lettres, caractères accentués (UTF-8) et symboles majeurs
 fn get_char_glyph(c: char) -> Option<[u8; 7]> {
-    let upper = match c {
-        'é' | 'è' | 'ê' | 'ë' | 'É' | 'È' | 'Ê' | 'Ë' => 'E',
-        'à' | 'â' | 'ä' | 'À' | 'Â' | 'Ä' => 'A',
-        'î' | 'ï' | 'Î' | 'Ï' => 'I',
-        'ô' | 'ö' | 'Ô' | 'Ö' => 'O',
-        'ù' | 'û' | 'ü' | 'Ù' | 'Û' | 'Ü' => 'U',
-        'ç' | 'Ç' => 'C',
-        other => other.to_ascii_uppercase(),
-    };
+    // 1. Prise en charge directe et stylisée des caractères accentués (français / européen)
+    match c {
+        // Accents aigus (É, é)
+        'é' | 'É' => return Some([0b00010, 0b00100, 0b11111, 0b10000, 0b11110, 0b10000, 0b11111]),
+        // Accents graves (È, è, À, à, Ù, ù)
+        'è' | 'È' => return Some([0b01000, 0b00100, 0b11111, 0b10000, 0b11110, 0b10000, 0b11111]),
+        'à' | 'À' => return Some([0b01000, 0b00100, 0b01110, 0b10001, 0b11111, 0b10001, 0b10001]),
+        'ù' | 'Ù' => return Some([0b01000, 0b00100, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110]),
+        // Accents circonflexes (Ê, ê, Â, â, Î, î, Ô, ô, Û, û)
+        'ê' | 'Ê' => return Some([0b00100, 0b01010, 0b11111, 0b10000, 0b11110, 0b10000, 0b11111]),
+        'â' | 'Â' => return Some([0b00100, 0b01010, 0b01110, 0b10001, 0b11111, 0b10001, 0b10001]),
+        'î' | 'Î' => return Some([0b00100, 0b01010, 0b01110, 0b00100, 0b00100, 0b00100, 0b01110]),
+        'ô' | 'Ô' => return Some([0b00100, 0b01010, 0b01110, 0b10001, 0b10001, 0b10001, 0b01110]),
+        'û' | 'Û' => return Some([0b00100, 0b01010, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110]),
+        // Trémas (Ë, ë, Ä, ä, Ï, ï, Ö, ö, Ü, ü)
+        'ë' | 'Ë' => return Some([0b01010, 0b00000, 0b11111, 0b10000, 0b11110, 0b10000, 0b11111]),
+        'ä' | 'Ä' => return Some([0b01010, 0b00000, 0b01110, 0b10001, 0b11111, 0b10001, 0b10001]),
+        'ï' | 'Ï' => return Some([0b01010, 0b00000, 0b01110, 0b00100, 0b00100, 0b00100, 0b01110]),
+        'ö' | 'Ö' => return Some([0b01010, 0b00000, 0b01110, 0b10001, 0b10001, 0b10001, 0b01110]),
+        'ü' | 'Ü' => return Some([0b01010, 0b00000, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110]),
+        // Cédille (Ç, ç)
+        'ç' | 'Ç' => return Some([0b01110, 0b10001, 0b10000, 0b10000, 0b10001, 0b01110, 0b00110]),
+        // Ligatures (œ, Œ, æ, Æ)
+        'œ' | 'Œ' => return Some([0b01111, 0b10100, 0b10110, 0b10100, 0b10111, 0b10000, 0b01111]),
+        'æ' | 'Æ' => return Some([0b01111, 0b10100, 0b11110, 0b10100, 0b10111, 0b10100, 0b10111]),
+        // Symboles typographiques & monétaires
+        '«' => return Some([0b00000, 0b01010, 0b10100, 0b01010, 0b00000, 0b00000, 0b00000]),
+        '»' => return Some([0b00000, 0b01010, 0b00101, 0b01010, 0b00000, 0b00000, 0b00000]),
+        '°' => return Some([0b01100, 0b10010, 0b01100, 0b00000, 0b00000, 0b00000, 0b00000]),
+        '€' => return Some([0b01110, 0b10000, 0b11110, 0b10000, 0b11110, 0b10000, 0b01110]),
+        _ => {}
+    }
+
+    let upper = c.to_ascii_uppercase();
     match upper {
         '0' => Some([0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110]),
         '1' => Some([0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110]),
@@ -275,5 +300,46 @@ fn get_char_glyph(c: char) -> Option<[u8; 7]> {
         '♥' => Some([0b01010, 0b11111, 0b11111, 0b11111, 0b01110, 0b00100, 0b00000]),
         '♡' => Some([0b01010, 0b10101, 0b10001, 0b10001, 0b01010, 0b00100, 0b00000]),
         _ => Some([0b11111, 0b10001, 0b10101, 0b10101, 0b10001, 0b11111, 0b00000]), // Carré de fallback
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_accented_characters_glyphs_distinct_and_valid() {
+        // Vérifie que les caractères accentués français possèdent des glyphes spécifiques et valides
+        let accented = ['é', 'è', 'ê', 'ë', 'à', 'â', 'î', 'ï', 'ô', 'ù', 'û', 'ç', 'œ', '«', '»', '°', '€'];
+        for c in accented {
+            let glyph = get_char_glyph(c);
+            assert!(glyph.is_some(), "Le caractère '{}' doit avoir un glyphe défini", c);
+            let g = glyph.unwrap();
+            // Le glyphe ne doit pas être le carré de fallback plein
+            assert_ne!(
+                g,
+                [0b11111, 0b10001, 0b10101, 0b10101, 0b10001, 0b11111, 0b00000],
+                "Le caractère '{}' ne doit pas être le carré de repli",
+                c
+            );
+        }
+
+        // Vérifie la distinction entre 'é' (aigu) et 'è' (grave)
+        let glyph_e_acute = get_char_glyph('é').unwrap();
+        let glyph_e_grave = get_char_glyph('è').unwrap();
+        assert_ne!(glyph_e_acute, glyph_e_grave, "'é' et 'è' doivent avoir des glyphes distincts");
+
+        // Vérifie la distinction entre 'E' (sans accent) et 'é' (avec accent)
+        let glyph_e_standard = get_char_glyph('E').unwrap();
+        assert_ne!(glyph_e_acute, glyph_e_standard, "'é' doit être distinct de 'E' standard");
+    }
+
+    #[test]
+    fn test_draw_text_accented_string_no_crash() {
+        let mut canvas = Canvas::new(200, 100);
+        canvas.draw_text(10, 10, "HÉROS ÉPÉE CHÂTEAU FORÊT CŒUR «CLÉ» 25°C 50€", 0x00FFFFFF, 1);
+        // Vérifie qu'au moins un pixel a été allumé
+        let has_lit_pixels = canvas.buffer.iter().any(|&p| p == 0x00FFFFFF);
+        assert!(has_lit_pixels, "Le texte accentué doit produire des pixels allumés");
     }
 }
