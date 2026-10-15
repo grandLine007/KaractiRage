@@ -9,6 +9,7 @@ use winit::window::WindowBuilder;
 
 mod adaptation;
 mod audio;
+mod camera;
 mod editor;
 mod entity;
 mod game;

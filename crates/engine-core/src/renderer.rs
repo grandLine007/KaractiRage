@@ -2,6 +2,7 @@ pub struct Canvas {
     pub width: usize,
     pub height: usize,
     pub buffer: Vec<u32>,
+    pub clip_rect: Option<(i32, i32, u32, u32)>,
 }
 
 impl Canvas {
@@ -10,7 +11,12 @@ impl Canvas {
             width,
             height,
             buffer: vec![0; width * height],
+            clip_rect: None,
         }
+    }
+
+    pub fn set_clip_rect(&mut self, rect: Option<(i32, i32, u32, u32)>) {
+        self.clip_rect = rect;
     }
 
     pub fn resize(&mut self, width: usize, height: usize) {
@@ -24,21 +30,39 @@ impl Canvas {
     }
 
     pub fn set_pixel(&mut self, x: i32, y: i32, color: u32) {
+        if let Some((cx, cy, cw, ch)) = self.clip_rect {
+            if x < cx || x >= cx + cw as i32 || y < cy || y >= cy + ch as i32 {
+                return;
+            }
+        }
         if x >= 0 && (x as usize) < self.width && y >= 0 && (y as usize) < self.height {
             self.buffer[y as usize * self.width + x as usize] = color;
         }
     }
 
     pub fn draw_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: u32) {
-        let x_start = x.max(0) as usize;
-        let y_start = y.max(0) as usize;
-        let x_end = ((x + w as i32).max(0) as usize).min(self.width);
-        let y_end = ((y + h as i32).max(0) as usize).min(self.height);
+        let (clip_min_x, clip_min_y, clip_max_x, clip_max_y) = if let Some((cx, cy, cw, ch)) = self.clip_rect {
+            (
+                cx.max(0) as usize,
+                cy.max(0) as usize,
+                ((cx + cw as i32).max(0) as usize).min(self.width),
+                ((cy + ch as i32).max(0) as usize).min(self.height),
+            )
+        } else {
+            (0, 0, self.width, self.height)
+        };
 
-        for py in y_start..y_end {
-            let row_offset = py * self.width;
-            for px in x_start..x_end {
-                self.buffer[row_offset + px] = color;
+        let x_start = (x.max(0) as usize).max(clip_min_x);
+        let y_start = (y.max(0) as usize).max(clip_min_y);
+        let x_end = (((x + w as i32).max(0) as usize).min(self.width)).min(clip_max_x);
+        let y_end = (((y + h as i32).max(0) as usize).min(self.height)).min(clip_max_y);
+
+        if x_start < x_end && y_start < y_end {
+            for py in y_start..y_end {
+                let row_offset = py * self.width;
+                for px in x_start..x_end {
+                    self.buffer[row_offset + px] = color;
+                }
             }
         }
     }

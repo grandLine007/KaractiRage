@@ -1,5 +1,6 @@
 use crate::adaptation::AdaptationManager;
 use crate::audio::{AudioEngine, SoundType};
+use crate::camera::Camera2D;
 use crate::editor::{EditorMode, EditorState, SelectedEntity, StudioTool};
 use crate::entity::{Entity, MovementMode, ShapeKind};
 use crate::input::InputState;
@@ -127,6 +128,8 @@ pub struct GameState {
     pub spatial_grid: SpatialHashGrid,
     pub elapsed_time: f32,
     pub player_spawn_pos: (f32, f32),
+    pub camera: Camera2D,
+    pub world_bounds: (f32, f32, f32, f32),
 }
 
 impl GameState {
@@ -563,6 +566,28 @@ impl GameState {
             }
         }
 
+        let mut max_w: f32 = 1240.0;
+        let mut max_h: f32 = 470.0;
+        for ent in &entities {
+            let right = ent.transform.x + ent.transform.w;
+            let bottom = ent.transform.y + ent.transform.h;
+            if right > max_w {
+                max_w = right;
+            }
+            if bottom > max_h {
+                max_h = bottom;
+            }
+        }
+        let world_max_x = (max_w + 120.0).max(1280.0);
+        let world_max_y = (max_h + 120.0).max(720.0);
+        let world_bounds = (0.0, 0.0, world_max_x, world_max_y);
+
+        let mut camera = Camera2D::new(20, 66, 1240, 470);
+        camera.set_bounds(world_bounds.0, world_bounds.1, world_bounds.2, world_bounds.3);
+        camera.target_x = spawn_x;
+        camera.target_y = spawn_y;
+        camera.snap_to_target();
+
         Ok(Self {
             scene_path: path.to_string(),
             scene_name: scene_data.name,
@@ -580,6 +605,8 @@ impl GameState {
             spatial_grid: SpatialHashGrid::new(64.0, 256),
             elapsed_time: 0.0,
             player_spawn_pos: (spawn_x, spawn_y),
+            camera,
+            world_bounds,
         })
     }
 
@@ -907,19 +934,50 @@ impl GameState {
                 return;
             }
 
+            self.camera.set_viewport(20, 66, 790, 470);
+
+            // Défilement de la Caméra Studio avec les touches Fléchées et recentrage C
+            let pan_speed = 500.0 * dt;
+            if input.is_key_down(KeyCode::ArrowLeft) {
+                self.camera.pan(-pan_speed, 0.0);
+            }
+            if input.is_key_down(KeyCode::ArrowRight) {
+                self.camera.pan(pan_speed, 0.0);
+            }
+            if input.is_key_down(KeyCode::ArrowUp) {
+                self.camera.pan(0.0, -pan_speed);
+            }
+            if input.is_key_down(KeyCode::ArrowDown) {
+                self.camera.pan(0.0, pan_speed);
+            }
+            if input.is_key_just_pressed(KeyCode::KeyC) {
+                let center_target = match self.editor.selected {
+                    SelectedEntity::Entity(idx) if idx < self.entities.len() => {
+                        Some((self.entities[idx].transform.center_x(), self.entities[idx].transform.center_y()))
+                    }
+                    _ => self.player_entity().map(|p| (p.transform.center_x(), p.transform.center_y())),
+                };
+                if let Some((cx, cy)) = center_target {
+                    self.camera.target_x = cx;
+                    self.camera.target_y = cy;
+                    self.camera.snap_to_target();
+                    self.status_message = "Caméra Studio recentrée (C) !".into();
+                }
+            }
+            self.camera.update(dt);
+
             let in_viewport = input.mouse_x >= 20.0 && input.mouse_x <= 810.0 && input.mouse_y >= 66.0 && input.mouse_y <= 536.0;
 
             // Clic droit rapide : Effacement d'entité sous le curseur dans le viewport (quel que soit l'outil actif)
             if input.mouse_right_just_clicked && in_viewport {
-                let mx = input.mouse_x;
-                let my = input.mouse_y;
+                let (world_mx, world_my) = self.camera.screen_to_world(input.mouse_x, input.mouse_y);
                 let to_delete = self.entities.iter().enumerate().rposition(|(_, e)| {
                     let is_player = e.movement.as_ref().map_or(false, |m| m.is_player_controlled);
                     !is_player
-                        && mx >= e.transform.x - 4.0
-                        && mx <= e.transform.x + e.transform.w + 4.0
-                        && my >= e.transform.y - 4.0
-                        && my <= e.transform.y + e.transform.h + 4.0
+                        && world_mx >= e.transform.x - 4.0
+                        && world_mx <= e.transform.x + e.transform.w + 4.0
+                        && world_my >= e.transform.y - 4.0
+                        && world_my <= e.transform.y + e.transform.h + 4.0
                 });
                 if let Some(del_idx) = to_delete {
                     let name = self.entities[del_idx].name.clone();
@@ -934,16 +992,15 @@ impl GameState {
                 }
             }
 
-            // Peinture continue au pinceau (StudioTool::Brush) sur grille 32x32 avec anti-doublon
+            // Peinture continue au pinceau (StudioTool::Brush) sur grille 32x32 avec anti-doublon en coordonnées monde
             if self.editor.active_tool == StudioTool::Brush && input.mouse_pressed && in_viewport {
-                let mx = input.mouse_x;
-                let my = input.mouse_y;
-                let cell_col = ((mx - 20.0) / 32.0).floor() as i32;
-                let cell_row = ((my - 66.0) / 32.0).floor() as i32;
+                let (world_mx, world_my) = self.camera.screen_to_world(input.mouse_x, input.mouse_y);
+                let cell_col = (world_mx / 32.0).floor() as i32;
+                let cell_row = (world_my / 32.0).floor() as i32;
                 if cell_col >= 0 && cell_row >= 0 && self.editor.last_painted_cell != Some((cell_col, cell_row)) {
                     self.editor.last_painted_cell = Some((cell_col, cell_row));
-                    let grid_x = 20.0 + (cell_col as f32 * 32.0);
-                    let grid_y = 66.0 + (cell_row as f32 * 32.0);
+                    let grid_x = cell_col as f32 * 32.0;
+                    let grid_y = cell_row as f32 * 32.0;
 
                     let occupied = self.entities.iter().any(|e| {
                         (e.transform.x - grid_x).abs() < 16.0 && (e.transform.y - grid_y).abs() < 16.0
@@ -961,15 +1018,14 @@ impl GameState {
 
             // Effacement continu à la gomme (StudioTool::Eraser)
             if self.editor.active_tool == StudioTool::Eraser && input.mouse_pressed && in_viewport {
-                let mx = input.mouse_x;
-                let my = input.mouse_y;
+                let (world_mx, world_my) = self.camera.screen_to_world(input.mouse_x, input.mouse_y);
                 let to_delete = self.entities.iter().enumerate().rposition(|(_, e)| {
                     let is_player = e.movement.as_ref().map_or(false, |m| m.is_player_controlled);
                     !is_player
-                        && mx >= e.transform.x - 4.0
-                        && mx <= e.transform.x + e.transform.w + 4.0
-                        && my >= e.transform.y - 4.0
-                        && my <= e.transform.y + e.transform.h + 4.0
+                        && world_mx >= e.transform.x - 4.0
+                        && world_mx <= e.transform.x + e.transform.w + 4.0
+                        && world_my >= e.transform.y - 4.0
+                        && world_my <= e.transform.y + e.transform.h + 4.0
                 });
                 if let Some(del_idx) = to_delete {
                     let name = self.entities[del_idx].name.clone();
@@ -1325,28 +1381,30 @@ impl GameState {
                     }
                 }
 
-                // 5. Sélection universelle d'entité à la souris (Outil Select uniquement)
+                // 5. Sélection universelle d'entité à la souris en coordonnées monde
                 if self.editor.active_tool == StudioTool::Select {
-                    let mut found_idx = None;
-                    for (idx, ent) in self.entities.iter().enumerate().rev() {
-                        let t = &ent.transform;
-                        if mx >= t.x - 8.0 && mx <= t.x + t.w + 8.0 && my >= t.y - 8.0 && my <= t.y + t.h + 8.0 {
-                            found_idx = Some(idx);
-                            break;
+                    let in_game_viewport = mx >= 20.0 && mx <= 810.0 && my >= 66.0 && my <= 536.0;
+                    if in_game_viewport {
+                        let (world_mx, world_my) = self.camera.screen_to_world(mx, my);
+                        let mut found_idx = None;
+                        for (idx, ent) in self.entities.iter().enumerate().rev() {
+                            let t = &ent.transform;
+                            if world_mx >= t.x - 8.0 && world_mx <= t.x + t.w + 8.0 && world_my >= t.y - 8.0 && world_my <= t.y + t.h + 8.0 {
+                                found_idx = Some(idx);
+                                break;
+                            }
                         }
-                    }
 
-                    if let Some(idx) = found_idx {
-                        self.editor.selected = SelectedEntity::Entity(idx);
-                        self.editor.is_dragging = true;
-                        self.editor.drag_offset_x = self.entities[idx].transform.x - mx;
-                        self.editor.drag_offset_y = self.entities[idx].transform.y - my;
-                        self.status_message = format!("Entité '{}' ({}) sélectionnée.", self.entities[idx].name, self.entities[idx].tag);
-                        return;
-                    }
+                        if let Some(idx) = found_idx {
+                            self.editor.selected = SelectedEntity::Entity(idx);
+                            self.editor.is_dragging = true;
+                            self.editor.drag_offset_x = self.entities[idx].transform.x - world_mx;
+                            self.editor.drag_offset_y = self.entities[idx].transform.y - world_my;
+                            self.status_message = format!("Entité '{}' ({}) sélectionnée.", self.entities[idx].name, self.entities[idx].tag);
+                            return;
+                        }
 
-                    // Clic dans la zone de jeu vide -> désélectionner
-                    if mx < 720.0 && my >= 65.0 && my <= 620.0 {
+                        // Clic dans la zone de jeu vide -> désélectionner
                         self.editor.selected = SelectedEntity::None;
                     }
                 }
@@ -1357,12 +1415,15 @@ impl GameState {
                 self.editor.last_painted_cell = None;
             }
 
-            // Déplacement universel de l'entité sélectionnée à la souris (Outil Select uniquement)
+            // Déplacement universel de l'entité sélectionnée à la souris en coordonnées monde (Outil Select uniquement)
             if self.editor.active_tool == StudioTool::Select && self.editor.is_dragging && input.mouse_pressed {
                 if let SelectedEntity::Entity(idx) = self.editor.selected {
                     if idx < self.entities.len() {
-                        let new_x = (input.mouse_x + self.editor.drag_offset_x).clamp(20.0, 1150.0);
-                        let new_y = (input.mouse_y + self.editor.drag_offset_y).clamp(70.0, 580.0);
+                        let (world_mx, world_my) = self.camera.screen_to_world(input.mouse_x, input.mouse_y);
+                        let ew = self.entities[idx].transform.w;
+                        let eh = self.entities[idx].transform.h;
+                        let new_x = (world_mx + self.editor.drag_offset_x).clamp(self.world_bounds.0, self.world_bounds.2 - ew);
+                        let new_y = (world_my + self.editor.drag_offset_y).clamp(self.world_bounds.1, self.world_bounds.3 - eh);
                         self.entities[idx].transform.x = new_x;
                         self.entities[idx].transform.y = new_y;
                     }
@@ -2049,6 +2110,7 @@ impl GameState {
                     spawn_requests.push((p_cx, p_cy, 25, 0x00EF4444));
 
                     if is_dead {
+                        self.camera.add_shake(16.0);
                         self.audio.play(SoundType::PlayerDeath);
                         self.entities[p_idx].transform.x = self.player_spawn_pos.0;
                         self.entities[p_idx].transform.y = self.player_spawn_pos.1;
@@ -2056,9 +2118,13 @@ impl GameState {
                             mov.vx = 0.0;
                             mov.vy = 0.0;
                         }
+                        self.camera.target_x = self.player_spawn_pos.0;
+                        self.camera.target_y = self.player_spawn_pos.1;
+                        self.camera.snap_to_target();
                         spawn_requests.push((self.player_spawn_pos.0, self.player_spawn_pos.1, 40, 0x00F59E0B));
                         self.status_message = "VOUS AVEZ PÉRI ! Réapparition au point de départ...".into();
                     } else {
+                        self.camera.add_shake(8.0);
                         let source = if hazard_hit { "Piège" } else { "Contact hostile" };
                         self.status_message = format!("AÏE ! Dégâts subis ({}) ! Santé restante : {:.0}/{:.0} PV", source, cur_hp, max_hp);
                     }
@@ -2409,6 +2475,16 @@ impl GameState {
             self.spawn_particles(px, py, count, col);
         }
 
+        // Suivi fluide de la caméra sur le joueur en Mode Jeu
+        self.camera.set_viewport(20, 66, 1240, 470);
+        if let Some(p_idx) = self.player_index() {
+            let px = self.entities[p_idx].transform.center_x();
+            let py = self.entities[p_idx].transform.center_y();
+            self.camera.target_x = px;
+            self.camera.target_y = py;
+        }
+        self.camera.update(dt);
+
         let frame_duration_us = frame_start.elapsed().as_micros() as u64;
         self.telemetry.record_frame(frame_duration_us, kvl_steps_this_frame);
 
@@ -2634,7 +2710,10 @@ impl GameState {
         let vw = play_area_w as i32;
         let vh = play_area_h as i32;
 
-        // Sol de jeu texturé (Dallage sci-fi dungeon)
+        self.camera.set_viewport(vx, vy, vw as u32, vh as u32);
+        canvas.set_clip_rect(Some((vx, vy, play_area_w, play_area_h)));
+
+        // Sol de jeu texturé (Dallage sci-fi dungeon défilant)
         canvas.draw_rect(vx, vy, play_area_w, play_area_h, 0x000D1525);
 
         // Lignes de joints de dallage 48x48
@@ -2642,24 +2721,35 @@ impl GameState {
         let max_x = vx + vw;
         let max_y = vy + vh;
 
-        let mut tx = vx + tile_sz;
+        let offset_x = (self.camera.x.rem_euclid(tile_sz as f32)) as i32;
+        let offset_y = (self.camera.y.rem_euclid(tile_sz as f32)) as i32;
+
+        let mut tx = vx - offset_x;
         while tx < max_x {
-            canvas.draw_line(tx, vy, tx, max_y, 0x00131E33);
+            if tx >= vx {
+                canvas.draw_line(tx, vy, tx, max_y, 0x00131E33);
+            }
             tx += tile_sz;
         }
-        let mut ty = vy + tile_sz;
+        let mut ty = vy - offset_y;
         while ty < max_y {
-            canvas.draw_line(vx, ty, max_x, ty, 0x00131E33);
+            if ty >= vy {
+                canvas.draw_line(vx, ty, max_x, ty, 0x00131E33);
+            }
             ty += tile_sz;
         }
 
         // Rivets discrets aux carrefours de dallage
-        let mut cy = vy + tile_sz;
+        let mut cy = vy - offset_y;
         while cy < max_y {
-            let mut cx = vx + tile_sz;
-            while cx < max_x {
-                canvas.draw_rect(cx - 1, cy - 1, 3, 3, 0x001D2C48);
-                cx += tile_sz;
+            if cy >= vy {
+                let mut cx = vx - offset_x;
+                while cx < max_x {
+                    if cx >= vx {
+                        canvas.draw_rect(cx - 1, cy - 1, 3, 3, 0x001D2C48);
+                    }
+                    cx += tile_sz;
+                }
             }
             cy += tile_sz;
         }
@@ -2672,7 +2762,7 @@ impl GameState {
         // Légende discrète de zone de jeu
         let viewport_tag = if is_edit_mode {
             match self.editor.active_tool {
-                StudioTool::Select => "STUDIO [SELECT] : CLIQUEZ POUR INSPECTER | GLISSEZ POUR DEPLACER | V / B / X",
+                StudioTool::Select => "STUDIO [SELECT] : CLIQUEZ/GLISSEZ | FLECHES: DEFILEMENT | C: RECENTRER | V / B / X",
                 StudioTool::Brush => "STUDIO [PINCEAU] : CLIC GAUCHE GLISSE POUR PEINDRE | T: CHANGER TUILE | CLIC DROIT: EFFACER",
                 StudioTool::Eraser => "STUDIO [GOMME] : CLIC GAUCHE GLISSE POUR EFFACER LES BLOCS | V: SELECT | B: PINCEAU",
             }
@@ -2753,13 +2843,16 @@ impl GameState {
 
         for idx in render_order {
             let ent = &self.entities[idx];
+            if !self.camera.is_visible(ent.transform.x, ent.transform.y, ent.transform.w, ent.transform.h) {
+                continue;
+            }
+            let (rx, ry) = self.camera.world_to_screen(ent.transform.x, ent.transform.y);
             let rend = ent.renderable.as_ref().unwrap();
             let is_selected = is_edit_mode && self.editor.selected == SelectedEntity::Entity(idx);
 
             // Halo d'illumination de sol pour les torches
             if ent.tag == "torch" {
-                let tx = ent.transform.center_x() as i32;
-                let ty = ent.transform.center_y() as i32;
+                let (tx, ty) = self.camera.world_to_screen(ent.transform.center_x(), ent.transform.center_y());
                 let flicker = ((self.elapsed_time * 8.0).sin() * 3.0) as i32;
                 let halo_r = (42 + flicker).max(20);
                 canvas.draw_circle(tx, ty, halo_r, 0x00221306);
@@ -2768,8 +2861,6 @@ impl GameState {
 
             match rend.shape {
                 ShapeKind::Rect => {
-                    let rx = ent.transform.x as i32;
-                    let ry = ent.transform.y as i32;
                     let rw = ent.transform.w as u32;
                     let rh = ent.transform.h as u32;
 
@@ -2963,8 +3054,7 @@ impl GameState {
                     }
                 }
                 ShapeKind::Circle { radius } => {
-                    let base_cx = (ent.transform.x + radius) as i32;
-                    let base_cy = (ent.transform.y + radius) as i32;
+                    let (base_cx, base_cy) = self.camera.world_to_screen(ent.transform.x + radius, ent.transform.y + radius);
 
                     // Micro-animation de bobbing / lévitation pour les pièces et collectibles
                     let (cx, cy, shadow_scale) = if ent.tag == "collectible" {
@@ -3035,7 +3125,8 @@ impl GameState {
                     }
                 }
                 ShapeKind::Text { ref label, scale } => {
-                    canvas.draw_text(ent.transform.x as i32, ent.transform.y as i32, label, rend.color, scale as usize);
+                    let (tx, ty) = self.camera.world_to_screen(ent.transform.x, ent.transform.y);
+                    canvas.draw_text(tx, ty, label, rend.color, scale as usize);
                 }
             }
 
@@ -3067,8 +3158,7 @@ impl GameState {
 
             // Rendu des cônes de vision et alertes pour les entités douées de perception
             if let Some(ref vision) = ent.vision {
-                let ex = ent.transform.center_x() as i32;
-                let ey = ent.transform.center_y() as i32;
+                let (ex, ey) = self.camera.world_to_screen(ent.transform.center_x(), ent.transform.center_y());
                 let cone_len = vision.range;
                 let cone_col = if vision.is_alerted { 0x00EF4444 } else { 0x0038BDF8 };
                 let steps = 7;
@@ -3085,14 +3175,52 @@ impl GameState {
             }
         }
 
-        // Particules étincelantes
+        // Particules étincelantes défilantes et frustum culled
         for p in &self.particles {
-            let px = p.x as i32;
-            let py = p.y as i32;
-            let col = p.current_color();
-            canvas.draw_rect(px, py, 3, 3, col);
-            canvas.set_pixel(px + 1, py + 1, 0x00FFFFFF);
+            if self.camera.is_visible(p.x, p.y, 4.0, 4.0) {
+                let (px, py) = self.camera.world_to_screen(p.x, p.y);
+                let col = p.current_color();
+                canvas.draw_rect(px, py, 3, 3, col);
+                canvas.set_pixel(px + 1, py + 1, 0x00FFFFFF);
+            }
         }
+
+        // Curseur fantôme (Ghost Preview) pour le Pinceau, la Gomme et la Sélection
+        if is_edit_mode {
+            let mx = self.editor.mouse_x;
+            let my = self.editor.mouse_y;
+            if mx >= vx as f32 && mx < (vx + vw) as f32 && my >= vy as f32 && my < (vy + vh) as f32 {
+                let (world_mx, world_my) = self.camera.screen_to_world(mx, my);
+                let cell_col = (world_mx / 32.0).floor() as i32;
+                let cell_row = (world_my / 32.0).floor() as i32;
+                let world_gx = cell_col as f32 * 32.0;
+                let world_gy = cell_row as f32 * 32.0;
+                let (gx, gy) = self.camera.world_to_screen(world_gx, world_gy);
+
+                match self.editor.active_tool {
+                    StudioTool::Brush => {
+                        let col = self.editor.brush_tile.color();
+                        canvas.draw_rect_outline(gx, gy, 32, 32, col, 2);
+                        canvas.draw_corner_brackets(gx, gy, 32, 32, 6, col);
+                        let short_lbl = self.editor.brush_tile.short_label();
+                        canvas.draw_text(gx + 3, gy + 11, short_lbl, col, 1);
+                    }
+                    StudioTool::Eraser => {
+                        canvas.draw_rect_outline(gx, gy, 32, 32, 0x00EF4444, 2);
+                        canvas.draw_line(gx + 4, gy + 4, gx + 28, gy + 28, 0x00EF4444);
+                        canvas.draw_line(gx + 28, gy + 4, gx + 4, gy + 28, 0x00EF4444);
+                    }
+                    StudioTool::Select => {
+                        if self.editor.selected == SelectedEntity::None {
+                            canvas.draw_rect_outline(gx, gy, 32, 32, 0x0038BDF8, 1);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Désactivation du scissor clipping avant le rendu de l'interface (Minimap, Inspecteur, HUD)
+        canvas.set_clip_rect(None);
 
         // 4. Rendu du Radar Tactique 2D Universel (Minimap)
         if self.show_minimap {
@@ -3116,12 +3244,14 @@ impl GameState {
             canvas.draw_line(mm_x, rcy, mm_x + mm_w, rcy, 0x000E2A47);
             canvas.draw_line(rcx, mm_y + 18, rcx, mm_y + mm_h, 0x000E2A47);
 
-            let scale_x = (mm_w - 14) as f32 / 1130.0;
-            let scale_y = (mm_h - 32) as f32 / 520.0;
+            let world_w = (self.world_bounds.2 - self.world_bounds.0).max(100.0);
+            let world_h = (self.world_bounds.3 - self.world_bounds.1).max(100.0);
+            let scale_x = (mm_w - 14) as f32 / world_w;
+            let scale_y = (mm_h - 32) as f32 / world_h;
 
             let map_to_radar = |rx: f32, ry: f32| -> (i32, i32) {
-                let px = mm_x + 7 + ((rx - 30.0) * scale_x) as i32;
-                let py = mm_y + 22 + ((ry - 75.0) * scale_y) as i32;
+                let px = mm_x + 7 + ((rx - self.world_bounds.0) * scale_x) as i32;
+                let py = mm_y + 22 + ((ry - self.world_bounds.1) * scale_y) as i32;
                 (px, py)
             };
 
@@ -3167,38 +3297,16 @@ impl GameState {
                     }
                 }
             }
-        }
 
-        // Curseur fantôme (Ghost Preview) pour le Pinceau, la Gomme et la Sélection
-        if is_edit_mode {
-            let mx = self.editor.mouse_x;
-            let my = self.editor.mouse_y;
-            if mx >= vx as f32 && mx < (vx + vw) as f32 && my >= vy as f32 && my < (vy + vh) as f32 {
-                let cell_col = ((mx - vx as f32) / 32.0).floor() as i32;
-                let cell_row = ((my - vy as f32) / 32.0).floor() as i32;
-                let gx = vx + cell_col * 32;
-                let gy = vy + cell_row * 32;
-
-                match self.editor.active_tool {
-                    StudioTool::Brush => {
-                        let col = self.editor.brush_tile.color();
-                        canvas.draw_rect_outline(gx, gy, 32, 32, col, 2);
-                        canvas.draw_corner_brackets(gx, gy, 32, 32, 6, col);
-                        let short_lbl = self.editor.brush_tile.short_label();
-                        canvas.draw_text(gx + 3, gy + 11, short_lbl, col, 1);
-                    }
-                    StudioTool::Eraser => {
-                        canvas.draw_rect_outline(gx, gy, 32, 32, 0x00EF4444, 2);
-                        canvas.draw_line(gx + 4, gy + 4, gx + 28, gy + 28, 0x00EF4444);
-                        canvas.draw_line(gx + 28, gy + 4, gx + 4, gy + 28, 0x00EF4444);
-                    }
-                    StudioTool::Select => {
-                        if self.editor.selected == SelectedEntity::None {
-                            canvas.draw_rect_outline(gx, gy, 32, 32, 0x0038BDF8, 1);
-                        }
-                    }
-                }
-            }
+            // Cadre jaune représentant le frustum de la caméra 2D dans le monde complet
+            let (cam_rx, cam_ry) = map_to_radar(self.camera.x, self.camera.y);
+            let cam_rw = ((self.camera.viewport_w as f32 * scale_x) as u32).max(4);
+            let cam_rh = ((self.camera.viewport_h as f32 * scale_y) as u32).max(4);
+            let clamped_cam_x = cam_rx.clamp(mm_x + 2, mm_x + mm_w - 6);
+            let clamped_cam_y = cam_ry.clamp(mm_y + 20, mm_y + mm_h - 6);
+            let clamped_cam_w = cam_rw.min((mm_x + mm_w - 4).saturating_sub(clamped_cam_x) as u32);
+            let clamped_cam_h = cam_rh.min((mm_y + mm_h - 4).saturating_sub(clamped_cam_y) as u32);
+            canvas.draw_rect_outline(clamped_cam_x, clamped_cam_y, clamped_cam_w, clamped_cam_h, 0x00FDE047, 1);
         }
 
         // ========================================================
@@ -5026,8 +5134,9 @@ mod tests {
             .expect("Scène chargée");
         state.editor.toggle_mode();
 
-        // Créer un mur de test à une coordonnée précise
-        let test_wall_idx = state.spawn_entity("wall", 212.0, 194.0);
+        // Créer un mur de test à une coordonnée écran projetée en monde
+        let (test_wx, test_wy) = state.camera.screen_to_world(212.0, 194.0);
+        let test_wall_idx = state.spawn_entity("wall", test_wx, test_wy);
         let wall_id = state.entities[test_wall_idx].id;
         assert!(state.entities.iter().any(|e| e.id == wall_id));
 
@@ -5042,7 +5151,8 @@ mod tests {
         assert!(!state.entities.iter().any(|e| e.id == wall_id));
 
         // 2. Créer une caisse et l'effacer par Clic Droit rapide (en mode Select)
-        let crate_idx = state.spawn_entity("crate", 244.0, 194.0);
+        let (crate_wx, crate_wy) = state.camera.screen_to_world(244.0, 194.0);
+        let crate_idx = state.spawn_entity("crate", crate_wx, crate_wy);
         let crate_id = state.entities[crate_idx].id;
         state.editor.set_tool(StudioTool::Select);
 
@@ -5059,8 +5169,9 @@ mod tests {
         let px = state.entities[p_idx].transform.x;
         let py = state.entities[p_idx].transform.y;
 
+        let (screen_px, screen_py) = state.camera.world_to_screen(px + 4.0, py + 4.0);
         let mut click_player = InputState::new();
-        click_player.on_mouse_move(px + 4.0, py + 4.0);
+        click_player.on_mouse_move(screen_px as f32, screen_py as f32);
         click_player.on_mouse_right_click();
         state.update(0.016, &click_player);
 
@@ -5114,6 +5225,73 @@ mod tests {
         click_select.on_mouse_down();
         state.update(0.016, &click_select);
         assert_eq!(state.editor.active_tool, StudioTool::Select);
+    }
+
+    #[test]
+    fn test_camera_player_tracking_in_play_mode() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+        let initial_cam_x = state.camera.x;
+
+        // Positionner le joueur plus loin dans le monde
+        if let Some(p_idx) = state.player_index() {
+            state.entities[p_idx].transform.x = 900.0;
+            state.entities[p_idx].transform.y = 500.0;
+        }
+
+        let input = InputState::new();
+        state.update(0.1, &input);
+
+        // La caméra a dû déplacer sa cible et interpoler vers la nouvelle position
+        assert!(state.camera.target_x > initial_cam_x);
+        assert!(state.camera.x > initial_cam_x);
+        assert_eq!(state.camera.viewport_w, 1240);
+    }
+
+    #[test]
+    fn test_camera_studio_panning_and_world_tile_painting() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+        state.editor.mode = EditorMode::Edit;
+
+        let initial_cam_x = state.camera.x;
+
+        // Défilement studio avec Flèche Droite
+        let mut input_pan = InputState::new();
+        input_pan.on_key_down(KeyCode::ArrowRight);
+        state.update(0.1, &input_pan);
+
+        assert!(state.camera.x > initial_cam_x);
+
+        // Recentrage avec la touche C
+        let mut input_center = InputState::new();
+        input_center.on_key_down(KeyCode::KeyC);
+        state.update(0.016, &input_center);
+        assert!((state.camera.target_x - state.player_spawn_pos.0).abs() < 50.0);
+
+        // Peinture au pinceau en coordonnées monde défilées
+        state.editor.set_tool(StudioTool::Brush);
+        let mut click_brush = InputState::new();
+        click_brush.on_mouse_move(200.0, 200.0);
+        click_brush.on_mouse_down();
+        let prev_entity_count = state.entities.len();
+        state.update(0.016, &click_brush);
+        assert_eq!(state.entities.len(), prev_entity_count + 1);
+    }
+
+    #[test]
+    fn test_camera_screen_shake_on_player_damage() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+        assert_eq!(state.camera.shake_intensity, 0.0);
+
+        state.camera.add_shake(12.0);
+        assert_eq!(state.camera.shake_intensity, 12.0);
+
+        let input = InputState::new();
+        state.update(0.1, &input);
+        assert!(state.camera.shake_intensity < 12.0);
+        assert!(state.camera.shake_intensity > 0.0);
     }
 }
 

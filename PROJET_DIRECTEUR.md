@@ -482,6 +482,28 @@
   * **0 avertissement de compilation** (`cargo check --all-targets`).
   * Export WebAssembly synchronisé via `./scripts/build_web.sh`.
 
+### Étape 26 : Système de Caméra Défilante & Mondes Larges (*2D Scrolling Camera*) *(15 Octobre 2026)*
+* **Constat** : Le moteur était cantonné aux dimensions statiques du viewport écran ($1280 \times 720\text{ px}$). L'exploration de donjons étendus, les mondes ouverts et les longs niveaux nécessitaient un défilement dynamique fluide avec gestion des coordonnées monde.
+* **Réalisations** :
+  * **Module `Camera2D` Zero-Allocation (`crates/engine-core/src/camera.rs`)** :
+    * Suivi cinématique avec interpolation linéaire (*Lerp*) et zone morte (*deadzone*).
+    * Confinement dynamique aux limites du monde (*bounds clamping* : $min_x, min_y, max_x, max_y$).
+    * Secousses d'écran procédurales (*Screen Shake*) avec amortissement exponentiel sur les dégâts et la mort.
+    * Fonctions sans allocation `world_to_screen` et `screen_to_world`.
+    * Frustum culling $\mathcal{O}(1)$ éliminant le calcul et le tracé des entités hors-champ.
+  * **Scissor Clipping Matériel / Logiciel (`Canvas::clip_rect`)** :
+    * Protection absolue des bordures du viewport : aucun débordement graphique sur l'en-tête ou l'inspecteur latéral.
+  * **Navigation & Peinture Studio en Coordonnées Monde** :
+    * Défilement libre de la caméra en mode Édition avec les touches Fléchées (`←`, `→`, `↑`, `↓`) et recentrage instantané avec la touche **`C`**.
+    * Déprojection du curseur souris (`screen_to_world`) pour le Pinceau de tuiles (`B`), la Gomme (`X`), le Clic droit et le déplacement d'entités (`V`), permettant d'éditer sur l'ensemble des mondes larges.
+    * Rendu défilant des joints de dalles sci-fi et des rivets au sol.
+  * **Radar Tactique (Minimap) avec Frustum Caméra** :
+    * Rectangle jaune dynamique superposé sur la minimap, indiquant en temps réel la zone observée par la caméra dans le niveau global.
+* **Mesures & Benchmarks** :
+  * **108 tests unitaires validés à 100% (0 échec)** (+9 nouveaux tests unitaires pour la caméra et le tracking joueur).
+  * **0 avertissement de compilation** (`cargo check --all-targets`).
+  * Export WebAssembly synchronisé via `./scripts/build_web.sh` (3.23s).
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur
