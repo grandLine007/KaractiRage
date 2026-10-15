@@ -117,6 +117,7 @@ pub struct GameState {
     pub audio: AudioEngine,
     pub show_minimap: bool,
     pub spatial_grid: SpatialHashGrid,
+    pub elapsed_time: f32,
 }
 
 impl GameState {
@@ -360,6 +361,7 @@ impl GameState {
             audio: AudioEngine::new(),
             show_minimap: true,
             spatial_grid: SpatialHashGrid::new(64.0, 256),
+            elapsed_time: 0.0,
         })
     }
 
@@ -461,6 +463,7 @@ impl GameState {
     }
 
     pub fn update(&mut self, dt: f32, input: &InputState) {
+        self.elapsed_time += dt;
         let frame_start = std::time::Instant::now();
         let mut kvl_steps_this_frame = 0;
 
@@ -1607,10 +1610,45 @@ impl GameState {
         let play_area_w = if is_edit_mode { (w - 490).max(400) as u32 } else { (w - 40) as u32 };
         let play_area_h = (h - 250).max(300) as u32;
 
+        let vx = 20;
+        let vy = 66;
+        let vw = play_area_w as i32;
+        let vh = play_area_h as i32;
+
+        // Sol de jeu texturé (Dallage sci-fi dungeon)
+        canvas.draw_rect(vx, vy, play_area_w, play_area_h, 0x000D1525);
+
+        // Lignes de joints de dallage 48x48
+        let tile_sz = 48;
+        let max_x = vx + vw;
+        let max_y = vy + vh;
+
+        let mut tx = vx + tile_sz;
+        while tx < max_x {
+            canvas.draw_line(tx, vy, tx, max_y, 0x00131E33);
+            tx += tile_sz;
+        }
+        let mut ty = vy + tile_sz;
+        while ty < max_y {
+            canvas.draw_line(vx, ty, max_x, ty, 0x00131E33);
+            ty += tile_sz;
+        }
+
+        // Rivets discrets aux carrefours de dallage
+        let mut cy = vy + tile_sz;
+        while cy < max_y {
+            let mut cx = vx + tile_sz;
+            while cx < max_x {
+                canvas.draw_rect(cx - 1, cy - 1, 3, 3, 0x001D2C48);
+                cx += tile_sz;
+            }
+            cy += tile_sz;
+        }
+
         let frame_border = if is_edit_mode { 0x004C1D95 } else { 0x001E293B };
         let bracket_col = if is_edit_mode { 0x00A855F7 } else { 0x0038BDF8 };
-        canvas.draw_rect_outline(20, 66, play_area_w, play_area_h, frame_border, 2);
-        canvas.draw_corner_brackets(20, 66, play_area_w, play_area_h, 16, bracket_col);
+        canvas.draw_rect_outline(vx, vy, play_area_w, play_area_h, frame_border, 2);
+        canvas.draw_corner_brackets(vx, vy, play_area_w, play_area_h, 16, bracket_col);
 
         // Légende discrète de zone de jeu
         let viewport_tag = if is_edit_mode {
@@ -1622,8 +1660,6 @@ impl GameState {
 
         // Visualisation de débogage de la Grille Spatiale (Touche G)
         if self.spatial_grid.debug_visible {
-            let max_x = 20 + play_area_w as i32;
-            let max_y = 66 + play_area_h as i32;
             let cs = self.spatial_grid.cell_size as i32;
             let mut gx = 20;
             while gx <= max_x {
@@ -1640,11 +1676,9 @@ impl GameState {
 
         // Grille de repérage en mode édition
         if is_edit_mode {
-            let max_x = 20 + play_area_w as i32;
-            let max_y = 66 + play_area_h as i32;
             for gx in (30..max_x).step_by(40) {
                 for gy in (90..max_y).step_by(40) {
-                    canvas.draw_rect(gx, gy, 2, 2, 0x001E293B);
+                    canvas.draw_rect(gx, gy, 2, 2, 0x00334155);
                 }
             }
         }
@@ -1664,6 +1698,16 @@ impl GameState {
             let rend = ent.renderable.as_ref().unwrap();
             let is_selected = is_edit_mode && self.editor.selected == SelectedEntity::Entity(idx);
 
+            // Halo d'illumination de sol pour les torches
+            if ent.tag == "torch" {
+                let tx = ent.transform.center_x() as i32;
+                let ty = ent.transform.center_y() as i32;
+                let flicker = ((self.elapsed_time * 8.0).sin() * 3.0) as i32;
+                let halo_r = (42 + flicker).max(20);
+                canvas.draw_circle(tx, ty, halo_r, 0x00221306);
+                canvas.draw_circle(tx, ty, halo_r * 2 / 3, 0x003B1E08);
+            }
+
             match rend.shape {
                 ShapeKind::Rect => {
                     let rx = ent.transform.x as i32;
@@ -1671,10 +1715,141 @@ impl GameState {
                     let rw = ent.transform.w as u32;
                     let rh = ent.transform.h as u32;
 
-                    canvas.draw_rect(rx, ry, rw, rh, rend.color);
+                    // Ombre portée au sol (Drop shadow)
+                    if ent.tag != "floor" {
+                        canvas.draw_rect(rx + 3, ry + 4, rw, rh, 0x00060911);
+                    }
 
-                    if let Some(outline_col) = rend.outline_color {
-                        canvas.draw_rect_outline(rx, ry, rw, rh, outline_col, rend.outline_width);
+                    match ent.tag.as_str() {
+                        "wall" => {
+                            // Mur Donjon/Cyber : Corps solide, biseau haut et bas, plaque de renfort
+                            canvas.draw_rect(rx, ry, rw, rh, rend.color);
+                            // Biseau de surbrillance supérieur (Light edge)
+                            canvas.draw_line(rx, ry, rx + rw as i32 - 1, ry, 0x00475569);
+                            canvas.draw_line(rx, ry + 1, rx + rw as i32 - 1, ry + 1, 0x00334155);
+                            // Biseau d'ombre inférieur (Shadow edge)
+                            canvas.draw_line(rx, ry + rh as i32 - 1, rx + rw as i32 - 1, ry + rh as i32 - 1, 0x000F172A);
+                            canvas.draw_line(rx, ry + rh as i32 - 2, rx + rw as i32 - 1, ry + rh as i32 - 2, 0x00131C2E);
+
+                            // Bordure générale
+                            if let Some(outline_col) = rend.outline_color {
+                                canvas.draw_rect_outline(rx, ry, rw, rh, outline_col, rend.outline_width);
+                            }
+
+                            // Plaque interne gravée si surface suffisante
+                            if rw >= 24 && rh >= 24 {
+                                canvas.draw_rect_outline(rx + 4, ry + 4, rw - 8, rh - 8, 0x001E293B, 1);
+                                if rw >= 40 && rh >= 40 {
+                                    // Rivets aux 4 coins du mur
+                                    canvas.draw_rect(rx + 6, ry + 6, 2, 2, 0x00475569);
+                                    canvas.draw_rect(rx + rw as i32 - 8, ry + 6, 2, 2, 0x00475569);
+                                    canvas.draw_rect(rx + 6, ry + rh as i32 - 8, 2, 2, 0x00475569);
+                                    canvas.draw_rect(rx + rw as i32 - 8, ry + rh as i32 - 8, 2, 2, 0x00475569);
+                                }
+                            }
+                        }
+                        "player" => {
+                            // Joueur Cyber-Exosquelette
+                            canvas.draw_rect(rx, ry, rw, rh, rend.color);
+                            // Biseau armure
+                            canvas.draw_rect_outline(rx, ry, rw, rh, 0x0038BDF8, 2);
+
+                            // Visière HUD cyan brillante
+                            let visor_y = ry + 8;
+                            let visor_h = 7.min(rh.saturating_sub(12));
+                            if rw > 12 && visor_h > 2 {
+                                canvas.draw_rect(rx + 6, visor_y, rw - 12, visor_h, 0x00E0F2FE);
+                                canvas.draw_line(rx + 7, visor_y + 1, rx + rw as i32 - 8, visor_y + 1, 0x00FFFFFF);
+                            }
+
+                            // Noyau réacteur pectoral (pulsant)
+                            if rw >= 20 && rh >= 28 {
+                                let core_x = rx + (rw as i32 / 2) - 3;
+                                let core_y = ry + (rh as i32 / 2) + 2;
+                                let core_glow = if (self.elapsed_time * 6.0).sin() > 0.0 { 0x00FDE047 } else { 0x0034D399 };
+                                canvas.draw_rect(core_x, core_y, 6, 6, core_glow);
+                                canvas.draw_rect(core_x + 1, core_y + 1, 4, 4, 0x00FFFFFF);
+                            }
+
+                            // Épaulettes blindées
+                            if rw >= 24 {
+                                canvas.draw_rect(rx + 2, ry + 2, 4, 6, 0x000284C7);
+                                canvas.draw_rect(rx + rw as i32 - 6, ry + 2, 4, 6, 0x000284C7);
+                            }
+                        }
+                        "enemy" => {
+                            // Sentinelle de patrouille / Droïde d'assaut
+                            canvas.draw_rect(rx, ry, rw, rh, rend.color);
+                            canvas.draw_rect_outline(rx, ry, rw, rh, 0x00EF4444, 2);
+
+                            // Visière optique rouge
+                            let eye_y = ry + 10;
+                            let eye_h = 6.min(rh.saturating_sub(14));
+                            if rw > 12 && eye_h > 2 {
+                                let is_alert = ent.vision.as_ref().map_or(false, |v| v.is_alerted);
+                                let eye_col = if is_alert { 0x00FEE2E2 } else { 0x00DC2626 };
+                                canvas.draw_rect(rx + 6, eye_y, rw - 12, eye_h, eye_col);
+                                // Pupille de balayage
+                                let scan_offset = (((self.elapsed_time * 4.0).sin() + 1.0) * 0.5 * (rw as f32 - 18.0).max(0.0)) as i32;
+                                canvas.draw_rect(rx + 7 + scan_offset, eye_y + 1, 4, eye_h.saturating_sub(2), 0x00FFFFFF);
+                            }
+
+                            // Ailettes d'armure / Diodes tactiques
+                            canvas.draw_rect(rx + 2, ry + 2, 3, 3, 0x00EF4444);
+                            canvas.draw_rect(rx + rw as i32 - 5, ry + 2, 3, 3, 0x00EF4444);
+                        }
+                        "door" => {
+                            // Porte Blindée Sécurisée
+                            let score = match self.kvl_context.get_var("score") {
+                                Some(Value::Int(s)) => *s,
+                                _ => 0,
+                            };
+                            let is_unlocked = score >= 50;
+                            let lock_col = if is_unlocked { 0x0010B981 } else { 0x00EF4444 };
+
+                            canvas.draw_rect(rx, ry, rw, rh, 0x001E293B);
+                            canvas.draw_rect_outline(rx, ry, rw, rh, 0x00475569, 2);
+
+                            // Montants verticaux blindés gauche et droite
+                            if rw >= 16 {
+                                canvas.draw_rect(rx, ry, 6, rh, 0x00334155);
+                                canvas.draw_rect(rx + rw as i32 - 6, ry, 6, rh, 0x00334155);
+                            }
+
+                            // Lamelles horizontales de compression
+                            let mut sy = ry + 8;
+                            while sy < (ry + rh as i32 - 8) {
+                                canvas.draw_line(rx + 7, sy, rx + rw as i32 - 8, sy, 0x000F172A);
+                                sy += 8;
+                            }
+
+                            // Verrou numérique central
+                            if rw >= 18 && rh >= 24 {
+                                let lk_w = (rw - 12).min(24);
+                                let lk_h = 16.min(rh - 8);
+                                let lk_x = rx + (rw as i32 / 2) - (lk_w as i32 / 2);
+                                let lk_y = ry + (rh as i32 / 2) - (lk_h as i32 / 2);
+                                canvas.draw_badge(lk_x, lk_y, lk_w, lk_h, 0x000F172A, lock_col, if is_unlocked { "OK" } else { "X" }, lock_col, 1);
+                            }
+                        }
+                        "torch" => {
+                            // Brasero de torche avec flammes
+                            let flame_h = (10.0 + (self.elapsed_time * 9.0).sin() * 2.5) as i32;
+                            // Flamme externe orange
+                            canvas.draw_rect(rx + 4, ry - flame_h + 8, rw.saturating_sub(8), flame_h as u32, 0x00F97316);
+                            // Flamme interne jaune
+                            canvas.draw_rect(rx + 6, ry - flame_h + 12, rw.saturating_sub(12), (flame_h - 4).max(2) as u32, 0x00FDE047);
+                            // Socle métallique
+                            canvas.draw_rect(rx, ry + 8, rw, rh.saturating_sub(8), 0x0078350F);
+                            canvas.draw_rect_outline(rx, ry + 8, rw, rh.saturating_sub(8), 0x00F59E0B, 1);
+                        }
+                        _ => {
+                            // Entité rectangulaire générique
+                            canvas.draw_rect(rx, ry, rw, rh, rend.color);
+                            if let Some(outline_col) = rend.outline_color {
+                                canvas.draw_rect_outline(rx, ry, rw, rh, outline_col, rend.outline_width);
+                            }
+                        }
                     }
 
                     if is_selected {
@@ -1684,23 +1859,62 @@ impl GameState {
                     }
                 }
                 ShapeKind::Circle { radius } => {
-                    let cx = (ent.transform.x + radius) as i32;
-                    let cy = (ent.transform.y + radius) as i32;
-                    canvas.draw_circle(cx, cy, radius as i32, rend.color);
-                    canvas.draw_circle(cx, cy, (radius * 0.6) as i32, 0x00FDE047);
+                    let base_cx = (ent.transform.x + radius) as i32;
+                    let base_cy = (ent.transform.y + radius) as i32;
+
+                    // Micro-animation de bobbing / lévitation pour les pièces et collectibles
+                    let (cx, cy, shadow_scale) = if ent.tag == "collectible" {
+                        let bob = ((self.elapsed_time * 5.0 + idx as f32 * 1.5).sin() * 3.0) as i32;
+                        (base_cx, base_cy + bob, 1.0 - (bob as f32 * 0.05))
+                    } else {
+                        (base_cx, base_cy, 1.0)
+                    };
+
+                    // Ombre projetée au sol
+                    let shadow_r = ((radius * 0.7) * shadow_scale) as i32;
+                    canvas.draw_circle(base_cx + 2, base_cy + radius as i32 + 4, shadow_r.max(2), 0x00060911);
+
+                    match ent.tag.as_str() {
+                        "collectible" => {
+                            // Pièce d'or / Émeraude étincelante
+                            // Anneau extérieur doré chaud
+                            canvas.draw_circle(cx, cy, radius as i32, 0x00D97706);
+                            // Face de la pièce
+                            canvas.draw_circle(cx, cy, (radius * 0.8) as i32, 0x00F59E0B);
+                            // Éclat de réflexion spéculaire en haut à gauche
+                            let spec_offset = (radius * 0.35) as i32;
+                            canvas.draw_circle(cx - spec_offset, cy - spec_offset, (radius * 0.3).max(2.0) as i32, 0x00FEF08A);
+                            // Relief central (losange / glyphe d'or)
+                            canvas.draw_rect(cx - 2, cy - 2, 4, 4, 0x00FFFBEB);
+                        }
+                        "portal" => {
+                            // Portail Quantique dimensionnel (anneaux concentriques)
+                            let p_rot = (self.elapsed_time * 3.0).sin();
+                            let col1 = if p_rot > 0.0 { 0x0006B6D4 } else { 0x008B5CF6 };
+                            let col2 = if p_rot > 0.0 { 0x00A855F7 } else { 0x0022D3EE };
+                            canvas.draw_circle(cx, cy, radius as i32, col1);
+                            canvas.draw_circle(cx, cy, (radius * 0.7) as i32, col2);
+                            canvas.draw_circle(cx, cy, (radius * 0.4) as i32, 0x00FFFFFF);
+                        }
+                        _ => {
+                            // Rendu circulaire par défaut
+                            canvas.draw_circle(cx, cy, radius as i32, rend.color);
+                            canvas.draw_circle(cx, cy, (radius * 0.6) as i32, 0x00FDE047);
+                        }
+                    }
 
                     if is_selected {
                         let sz = (radius + 6.0) * 2.0;
                         canvas.draw_rect_outline(
-                            cx - radius as i32 - 6,
-                            cy - radius as i32 - 6,
+                            base_cx - radius as i32 - 6,
+                            base_cy - radius as i32 - 6,
                             sz as u32,
                             sz as u32,
                             0x00FBBF24,
                             3,
                         );
                         let label = format!("{}: {}", ent.tag.to_uppercase(), ent.name);
-                        canvas.draw_text(cx - 20, cy - radius as i32 - 24, &label, 0x00FBBF24, 2);
+                        canvas.draw_text(base_cx - 20, base_cy - radius as i32 - 24, &label, 0x00FBBF24, 2);
                     }
                 }
                 ShapeKind::Text { ref label, scale } => {
@@ -1723,14 +1937,18 @@ impl GameState {
                 }
 
                 if vision.is_alerted {
-                    canvas.draw_text(ex - 12, ey - (ent.transform.h as i32 / 2) - 26, "(!)", 0x00EF4444, 2);
+                    canvas.draw_badge(ex - 18, ey - (ent.transform.h as i32 / 2) - 30, 36, 20, 0x007F1D1D, 0x00EF4444, "(!)", 0x00FEE2E2, 1);
                 }
             }
         }
 
-        // Particules
+        // Particules étincelantes
         for p in &self.particles {
-            canvas.draw_rect(p.x as i32, p.y as i32, 3, 3, p.current_color());
+            let px = p.x as i32;
+            let py = p.y as i32;
+            let col = p.current_color();
+            canvas.draw_rect(px, py, 3, 3, col);
+            canvas.set_pixel(px + 1, py + 1, 0x00FFFFFF);
         }
 
         // 4. Rendu du Radar Tactique 2D Universel (Minimap)
@@ -2922,6 +3140,30 @@ mod tests {
         assert!(state.editor.spawn_btn_hitbox.is_some(), "Le bouton SPAWN doit avoir une hitbox en mode studio");
         assert!(state.editor.top_save_btn_hitbox.is_some(), "Le bouton SAUVER doit avoir une hitbox");
         assert!(state.editor.help_btn_hitbox.is_some(), "Le bouton ? AIDE doit avoir une hitbox");
+    }
+
+    #[test]
+    fn test_stylized_world_rendering_and_time_increment() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        assert_eq!(state.elapsed_time, 0.0, "Le temps écoulé doit être initialisé à 0.0");
+
+        let input = InputState::new();
+        state.update(0.016, &input);
+        assert!((state.elapsed_time - 0.016).abs() < 1e-4, "Le temps écoulé doit s'incrémenter par dt");
+
+        // Rendu complet avec viewport texturé, dallage, ombres et sprites stylisés
+        let mut canvas = Canvas::new(1200, 800);
+        state.render(&mut canvas);
+
+        // Vérifier la présence de la couleur de sol texturé cyber-dungeon (0x000D1525)
+        let floor_pixels = canvas.buffer.iter().filter(|&&p| p == 0x000D1525).count();
+        assert!(floor_pixels > 1000, "Le sol texturé cyber-dungeon doit être rendu dans la zone de jeu");
+
+        // Vérifier la présence d'ombres portées au sol (0x00060911)
+        let shadow_pixels = canvas.buffer.iter().filter(|&&p| p == 0x00060911).count();
+        assert!(shadow_pixels > 50, "Des ombres portées au sol doivent être rasterisées");
     }
 }
 

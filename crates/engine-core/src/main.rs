@@ -32,7 +32,7 @@ fn main() {
     let event_loop = EventLoop::new().expect("Création de l'EventLoop");
     let window = Rc::new(
         WindowBuilder::new()
-            .with_title("KaractiRage 2D Engine (Low-End Profile - KVL Powered)")
+            .with_title("⚡ KaractiRage Engine 2D — Studio & Runtime ECS (Low-End / 60 FPS)")
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
             .build(&event_loop)
             .expect("Création de la fenêtre"),

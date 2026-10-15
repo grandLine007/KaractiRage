@@ -341,8 +341,30 @@
     * Ruban de raccourcis sous forme de pilules cliquables, badge de statut moteur et console de traces temps réel au style terminal sombre.
 * **Mesures & Benchmarks** :
   * 54/54 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+2 tests dédiés à la modale d'aide, au switch d'objectif et aux hitboxes du HUD).
+### Étape 20 : Refonte Visuelle du Monde 2D & Sprites Stylisés (Dallage, Ombres Portées & Micro-Animations) *(15 Octobre 2026)*
+* **Directive de l'Utilisateur** : *"Améliore l'aspect général de l'application."*
+* **Réalisations** :
+  * **Titre de Fenêtre Branded & Professionnel** (`main.rs`) :
+    * Passage à `⚡ KaractiRage Engine 2D — Studio & Runtime ECS (Low-End / 60 FPS)`.
+  * **Sol Texturé de Zone de Jeu (Viewport Cyber-Dungeon)** :
+    * Remplacement du fond noir vide par un pavage bleu nuit profond technique (`0x000D1525`).
+    * Trame orthogonale de dalles de sol 48x48 px avec lignes de joints subtiles (`0x00131E33`) et rivets/boulons d'assemblage discrets aux carrefours (`0x001D2C48`).
+  * **Ombres Portées au Sol (Drop Shadows) & Profondeur Pseudo-3D** :
+    * Projection d'ombres portées au sol (`0x00060911`) sous toutes les entités (décalage $X+3, Y+4$), créant un relief top-down saisissant.
+  * **Shaders & Sprites Logiciels Stylisés par Tag ECS** :
+    * **Murs (`wall`)** : Biseau supérieur de surbrillance claire (`0x00475569`), biseau inférieur d'ombre sombre (`0x000F172A`), panneau technique gravé interne et rivets aux quatre coins.
+    * **Joueur (`player`)** : Châssis cyber-armure biseauté cyan (`0x000284C7`), visière HUD lumineuse avec reflet spéculaire blanc (`0x00E0F2FE`), réacteur pectoral énergétique pulsant (ambre / émeraude selon la phase), et épaulettes renforcées.
+    * **Sentinelles Ennemies (`enemy`)** : Blindage d'assaut grenat sombre (`0x007F1D1D`), visière optique rouge avec balayage sinusoïdal de fente (scanner actif), diodes tactiques d'angle et cône de vision avec badge d'alerte `(!)` rouge incandescent.
+    * **Portes Blindées (`door`)** : Piliers latéraux en acier renforcé, lamelles horizontales de compression, et boîtier numérique central de sas affichant en temps réel `[OK]` (vert émeraude) ou `[X]` (rouge) selon la condition KVL.
+    * **Torches (`torch`)** : Halo d'illumination de sol doux et pulsant (`(self.elapsed_time * 8.0).sin()`), socle métallique bronze et flamme procédurale bicolore à double couche (orange et jaune).
+    * **Pièces & Collectibles (`collectible`)** : Micro-animation de lévitation (bobbing) sinusoïdale à coût zéro (`elapsed_time`), ombre projetée au sol qui respire, anneau doré chaud, coeur étincelant et reflet spéculaire supérieur.
+    * **Particules de gerbes** : Particules 3x3 avec coeur blanc scintillant (`0x00FFFFFF`).
+  * **Compteur Temporel Zéro-Allocation** :
+    * Ajout de `elapsed_time: f32` dans `GameState`, incrémenté par $dt$ dans la boucle `update()`, alimentant toutes les oscillations sans la moindre allocation mémoire.
+* **Mesures & Benchmarks** :
+  * 56/56 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+2 tests dédiés au rendu stylisé, dallage, ombres et incrémentation temporelle).
   * 0 avertissement de compilation (`cargo check --all-targets`).
-  * WebAssembly recompilé et optimisé (554 Ko).
+  * WebAssembly recompilé et optimisé (557 Ko).
 
 ---
 
