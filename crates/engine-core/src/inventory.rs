@@ -88,7 +88,7 @@ impl Item {
         Self::new(
             id,
             name,
-            "Cristal lumineux vibrant d'une energie mystique.",
+            "Cristal lumineux vibrant d'une énergie mystique.",
             ItemKind::KeyItem,
             'C',
             0x0038BDF8, // Cyan ciel
@@ -102,7 +102,7 @@ impl Item {
         Self::new(
             id,
             name,
-            "Parchemin orne de runes anciennes d'un autre temps.",
+            "Parchemin orné de runes anciennes d'un autre temps.",
             ItemKind::Misc,
             'S',
             0x00E0E7FF, // Parchemin blanc/indigo
@@ -115,8 +115,8 @@ impl Item {
     pub fn speed_elixir() -> Self {
         Self::new(
             "elixir_speed",
-            "Elixir de Vitesse",
-            "Accelere vivement les mouvements du joueur.",
+            "Élixir de Vitesse",
+            "Accélère vivement les mouvements du joueur.",
             ItemKind::Consumable { heal_amount: 0 },
             'V',
             0x0010B981, // Émeraude vive
@@ -322,7 +322,7 @@ impl Inventory {
                 if let Some(ref mut hp) = health {
                     if hp.current >= hp.max {
                         audio.play(SoundType::AccessDenied);
-                        self.set_notification("Vie deja au maximum !");
+                        self.set_notification("Vie déjà au maximum !");
                         return ItemUseResult::CannotUse {
                             reason: "Santé déjà pleine".to_string(),
                         };
@@ -351,7 +351,7 @@ impl Inventory {
 
             ItemKind::KeyItem => {
                 audio.play(SoundType::KeyUnlock);
-                self.set_notification(format!("{}: Pret a l'usage !", slot.item.name));
+                self.set_notification(format!("{}: Prêt à l'usage !", slot.item.name));
                 ItemUseResult::KeyActivated {
                     item_id: slot.item.id.clone(),
                 }
@@ -359,7 +359,7 @@ impl Inventory {
 
             ItemKind::Misc | ItemKind::Tool | ItemKind::Weapon => {
                 audio.play(SoundType::UiClick);
-                self.set_notification(format!("{}: Action activee", slot.item.name));
+                self.set_notification(format!("{}: Action activée", slot.item.name));
                 ItemUseResult::Custom {
                     item_id: slot.item.id.clone(),
                 }

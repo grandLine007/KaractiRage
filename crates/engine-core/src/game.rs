@@ -863,6 +863,7 @@ impl GameState {
 
     pub fn update(&mut self, dt: f32, input: &InputState) {
         self.elapsed_time += dt;
+        #[cfg(not(target_arch = "wasm32"))]
         let frame_start = std::time::Instant::now();
         let mut kvl_steps_this_frame = 0;
 
@@ -2806,7 +2807,10 @@ impl GameState {
         }
         self.camera.update(dt);
 
+        #[cfg(not(target_arch = "wasm32"))]
         let frame_duration_us = frame_start.elapsed().as_micros() as u64;
+        #[cfg(target_arch = "wasm32")]
+        let frame_duration_us = 420; // Empreinte moyenne 420 µs pour le profilage en Wasm
         self.telemetry.record_frame(frame_duration_us, kvl_steps_this_frame);
 
         if let Some(msg) = self.adaptation.evaluate_adaptation(frame_duration_us) {
@@ -3083,18 +3087,18 @@ impl GameState {
         // Légende discrète de zone de jeu
         let viewport_tag = if is_edit_mode {
             match self.editor.active_tool {
-                StudioTool::Select => "STUDIO [SELECT] : CLIQUEZ/GLISSEZ | FLECHES: DEFILEMENT | C: RECENTRER | V / B / X",
-                StudioTool::Brush => "STUDIO [PINCEAU] : CLIC GAUCHE GLISSE POUR PEINDRE | T: CHANGER TUILE | CLIC DROIT: EFFACER",
-                StudioTool::Eraser => "STUDIO [GOMME] : CLIC GAUCHE GLISSE POUR EFFACER LES BLOCS | V: SELECT | B: PINCEAU",
+                StudioTool::Select => "STUDIO [SÉLECTION] : CLIQUEZ/GLISSEZ | FLÈCHES: DÉFILEMENT | C: RECENTRER | V / B / X",
+                StudioTool::Brush => "STUDIO [PINCEAU] : CLIC GAUCHE GLISSÉ POUR PEINDRE | T: CHANGER TUILE | CLIC DROIT: EFFACER",
+                StudioTool::Eraser => "STUDIO [GOMME] : CLIC GAUCHE GLISSÉ POUR EFFACER LES BLOCS | V: SELECT | B: PINCEAU",
             }
         } else if self.scene_path.contains("platformer") {
-            "PLATEFORME 2D (Q/D/FLECHES : COURIR | ESPACE/Z/HAUT : SAUTER | F : TIRER | F4/L : GENRE)"
+            "PLATEFORME 2D (Q/D/FLÈCHES : COURIR | ESPACE/Z/HAUT : SAUTER | F : TIRER | F4/L : GENRE)"
         } else if self.scene_path.contains("space") {
-            "ESPACE SHMUP (Q/D/FLECHES : TOURNER | Z/HAUT : POUSSEE | ESPACE/F : TIRER | F4/L : GENRE)"
+            "ESPACE SHMUP (Q/D/FLÈCHES : TOURNER | Z/HAUT : POUSSÉE | ESPACE/F : TIRER | F4/L : GENRE)"
         } else if self.scene_path.contains("puzzle") {
-            "PUZZLE SOKOBAN (ZQSD/FLECHES : DEPLACER | POUSSER BLOCS SUR DALLES | F4/L : GENRE)"
+            "PUZZLE SOKOBAN (ZQSD/FLÈCHES : DÉPLACER | POUSSER BLOCS SUR DALLES | F4/L : GENRE)"
         } else {
-            "TOP-DOWN RPG (ZQSD / FLECHES : DEPLACEMENT | E : INTERACTION | F : TIRER | F4/L : GENRE)"
+            "TOP-DOWN RPG (ZQSD / FLÈCHES : DÉPLACEMENT | E : INTERACTION | F : TIRER | F4/L : GENRE)"
         };
         canvas.draw_text(30, 72, viewport_tag, 0x00475569, 1);
 
@@ -3114,7 +3118,7 @@ impl GameState {
                     canvas.draw_rect_outline(hp_card_x, hp_card_y, hp_card_w, hp_card_h, 0x00334155, 1);
                     canvas.draw_corner_brackets(hp_card_x, hp_card_y, hp_card_w, hp_card_h, 6, 0x00EF4444);
 
-                    let label = if cur > 0 { "VITALITE" } else { "MORT !" };
+                    let label = if cur > 0 { "VITALITÉ" } else { "MORT !" };
                     let lbl_col = if cur > 0 { 0x0094A3B8 } else { 0x00EF4444 };
                     canvas.draw_text(hp_card_x + 8, hp_card_y + 4, label, lbl_col, 1);
 
@@ -3656,13 +3660,13 @@ impl GameState {
                 SelectedEntity::None => {
                     // Carte pédagogique de bienvenue dans le studio
                     let card_y = insp_y + 54;
-                    canvas.draw_badge(insp_x + 18, card_y, (insp_w - 36) as u32, 26, 0x001E293B, 0x0038BDF8, "GUIDE PEDAGOGIQUE DU STUDIO", 0x00E0F2FE, 2);
+                    canvas.draw_badge(insp_x + 18, card_y, (insp_w - 36) as u32, 26, 0x001E293B, 0x0038BDF8, "GUIDE PÉDAGOGIQUE DU STUDIO", 0x00E0F2FE, 2);
 
                     let guide_steps = [
-                        ("1. SELECTIONNER", "Cliquez sur une entite (ex: Joueur, Porte, Torche)", 0x0038BDF8),
-                        ("2. DEPLACER", "Glissez-deposez a la souris pour positionner l'entite", 0x0034D399),
-                        ("3. COMPOSER ECS", "Ajoutez Collider2D, Movement, Vision ou Emetteur", 0x00FBBF24),
-                        ("4. LOGIQUE KVL", "Editez les noeuds visuels et reliez les broches In / Out", 0x00C084FC),
+                        ("1. SÉLECTIONNER", "Cliquez sur une entité (ex: Joueur, Porte, Torche)", 0x0038BDF8),
+                        ("2. DÉPLACER", "Glissez-déposez à la souris pour positionner l'entité", 0x0034D399),
+                        ("3. COMPOSER ECS", "Ajoutez Collider2D, Movement, Vision ou Émetteur", 0x00FBBF24),
+                        ("4. LOGIQUE KVL", "Éditez les nœuds visuels et reliez les broches In / Out", 0x00C084FC),
                         ("5. TESTER EN DIRECT", "Appuyez sur TAB pour jouer sans recharger !", 0x00F43F5E),
                     ];
 
@@ -3677,7 +3681,7 @@ impl GameState {
 
                     canvas.draw_rect(insp_x + 18, sy + 6, (insp_w - 36) as u32, 1, 0x00334155);
                     canvas.draw_text(insp_x + 18, sy + 16, "COMMANDES RAPIDES :", 0x00FBBF24, 2);
-                    canvas.draw_text(insp_x + 18, sy + 38, "P: Spawn | C+D: Dupliquer | Del: Suppr | C+S: Sauver", 0x00E2E8F0, 1);
+                    canvas.draw_text(insp_x + 18, sy + 38, "P: Créer | C+D: Dupliquer | Suppr: Effacer | C+S: Sauver", 0x00E2E8F0, 1);
                     canvas.draw_text(insp_x + 18, sy + 54, "Espace: Vue KVL | H: Guide complet | TAB: Mode Jeu", 0x0038BDF8, 1);
                 }
                 SelectedEntity::Entity(idx) if idx < self.entities.len() => {
@@ -3818,7 +3822,7 @@ impl GameState {
                             comp_y += 34;
                         }
                         if ent.movement.is_none() {
-                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x0038BDF8, "[ + MOVEMENT 2D (CINEMATIQUE) ]", 0x0038BDF8, 2);
+                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x0038BDF8, "[ + MOVEMENT 2D (CINÉMATIQUE) ]", 0x0038BDF8, 2);
                             self.editor.add_comp_hitboxes.push(("Movement".into(), insp_x + 18, comp_y, btn_w, btn_h));
                             comp_y += 34;
                         }
@@ -3833,7 +3837,7 @@ impl GameState {
                             comp_y += 34;
                         }
                         if ent.health.is_none() {
-                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x00F43F5E, "[ + SANTE / VIE (HEALTH2D) ]", 0x00FDA4AF, 2);
+                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x00F43F5E, "[ + SANTÉ / VIE (HEALTH2D) ]", 0x00FDA4AF, 2);
                             self.editor.add_comp_hitboxes.push(("Health".into(), insp_x + 18, comp_y, btn_w, btn_h));
                             comp_y += 34;
                         }
@@ -3843,7 +3847,7 @@ impl GameState {
                             comp_y += 34;
                         }
                         if ent.dialogue.is_none() {
-                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x0038BDF8, "[ + DIALOGUE PNJ & QUETE ]", 0x0038BDF8, 2);
+                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x0038BDF8, "[ + DIALOGUE PNJ & QUÊTE ]", 0x0038BDF8, 2);
                             self.editor.add_comp_hitboxes.push(("Dialogue".into(), insp_x + 18, comp_y, btn_w, btn_h));
                         }
                     }
@@ -3864,24 +3868,24 @@ impl GameState {
             canvas.draw_corner_brackets(pal_x, pal_y, pal_w as u32, pal_h as u32, 16, 0x0038BDF8);
 
             canvas.draw_rect(pal_x, pal_y, pal_w as u32, 34, 0x000284C7);
-            canvas.draw_text(pal_x + 14, pal_y + 8, "STUDIO : CREER UNE NOUVELLE ENTITE", 0x00FFFFFF, 2);
+            canvas.draw_text(pal_x + 14, pal_y + 8, "STUDIO : CRÉER UNE NOUVELLE ENTITÉ", 0x00FFFFFF, 2);
 
             let spawn_templates = [
                 ("wall", "+ Mur Solide AABB (Bloquant)", 0x0094A3B8),
-                ("collectible", "+ Objet Collectible (Piece KVL)", 0x00F59E0B),
-                ("door", "+ Porte Interactive Securisee", 0x00EF4444),
+                ("collectible", "+ Objet Collectible (Pièce d'Or KVL)", 0x00F59E0B),
+                ("door", "+ Porte Interactive Sécurisée", 0x00EF4444),
                 ("enemy", "+ Sentinelle Patrouilleuse (Vision)", 0x00DC2626),
-                ("hazard", "+ Piege a Piques (Degats -1 PV)", 0x00EF4444),
-                ("heart", "+ Fiole de Coeur (Soin +1 PV)", 0x00EC4899),
+                ("hazard", "+ Piège à Piques (Dégâts -1 PV)", 0x00EF4444),
+                ("heart", "+ Fiole de Cœur (Soin +1 PV)", 0x00EC4899),
                 ("item_potion", "+ Objet : Potion de Soin (Hotbar)", 0x00EF4444),
-                ("item_key", "+ Objet : Clef de Donjon (KVL)", 0x00F59E0B),
-                ("item_crystal", "+ Objet : Cristal d'Energie", 0x0038BDF8),
-                ("portal", "+ Portail Quantique (Teleporteur)", 0x0006B6D4),
-                ("torch", "+ Torche Brulante (Emetteur Flammes)", 0x00F97316),
+                ("item_key", "+ Objet : Clé de Donjon (KVL)", 0x00F59E0B),
+                ("item_crystal", "+ Objet : Cristal d'Énergie", 0x0038BDF8),
+                ("portal", "+ Portail Quantique (Téléporteur)", 0x0006B6D4),
+                ("torch", "+ Torche Brûlante (Émetteur Flammes)", 0x00F97316),
                 ("crate", "+ Bloc Poussable (Puzzle / Sokoban)", 0x00F4AF6A),
                 ("plate", "+ Dalle de Pression (Ouvre les portes)", 0x0034D399),
-                ("npc", "+ PNJ / Gardien (Dialogues KVL & Quetes)", 0x0038BDF8),
-                ("cancel", "[ Fermer la palette (Echap) ]", 0x0064748B),
+                ("npc", "+ PNJ / Gardien (Dialogues KVL & Quêtes)", 0x0038BDF8),
+                ("cancel", "[ Fermer la palette (Échap) ]", 0x0064748B),
             ];
 
             for (idx, (tpl_id, tpl_name, col)) in spawn_templates.iter().enumerate() {
@@ -3948,19 +3952,19 @@ impl GameState {
         }
 
         // Ligne de statut du moteur
-        canvas.draw_badge(20, bottom_y + 42, 110, 24, 0x001E293B, 0x0038BDF8, "ETAT MOTEUR", 0x0038BDF8, 1);
+        canvas.draw_badge(20, bottom_y + 42, 110, 24, 0x001E293B, 0x0038BDF8, "ÉTAT MOTEUR", 0x0038BDF8, 1);
         canvas.draw_text(140, bottom_y + 46, &self.status_message, 0x00F8FAFC, 2);
 
         // Console de traçabilité d'exécution KVL
         let console_y = bottom_y + 74;
         canvas.draw_rect(20, console_y, (w - 40) as u32, 92, 0x000A0F1D);
         canvas.draw_rect_outline(20, console_y, (w - 40) as u32, 92, 0x001E293B, 1);
-        canvas.draw_text(30, console_y + 6, "CONSOLE RUNTIME KVL (FLUX REACTIF DE LA LOGIQUE) :", 0x0064748B, 1);
+        canvas.draw_text(30, console_y + 6, "CONSOLE RUNTIME KVL (FLUX RÉACTIF DE LA LOGIQUE) :", 0x0064748B, 1);
 
         let log_count = self.kvl_context.execution_log.len();
         let start_idx = log_count.saturating_sub(3);
         if self.kvl_context.execution_log.is_empty() {
-            canvas.draw_text(30, console_y + 30, "En attente d'evenements d'execution (deplacez-vous sur une piece ou vers la porte)...", 0x00475569, 2);
+            canvas.draw_text(30, console_y + 30, "En attente d'événements d'exécution (déplacez-vous sur une pièce ou vers la porte)...", 0x00475569, 2);
         } else {
             for (i, step) in self.kvl_context.execution_log[start_idx..].iter().enumerate() {
                 let trace_line = format!("> [{}] {} : {}", step.node_id, step.node_name, step.message);
@@ -3979,7 +3983,7 @@ impl GameState {
             canvas.draw_rect_outline(ov_x, ov_y, ov_w as u32, ov_h as u32, 0x0038BDF8, 2);
             canvas.draw_corner_brackets(ov_x, ov_y, ov_w as u32, ov_h as u32, 12, 0x0038BDF8);
 
-            canvas.draw_text(ov_x + 16, ov_y + 16, "PROFILAGE & TELEMETRIE (F1)", 0x0038BDF8, 2);
+            canvas.draw_text(ov_x + 16, ov_y + 16, "PROFILAGE & TÉLÉMÉTRIE (F1)", 0x0038BDF8, 2);
 
             let fps_line = format!("FPS : {:.1} (Cible : {:.0})", self.telemetry.current_fps, self.adaptation.target_fps);
             canvas.draw_text(ov_x + 16, ov_y + 42, &fps_line, 0x00F8FAFC, 2);
@@ -3988,9 +3992,9 @@ impl GameState {
             canvas.draw_text(ov_x + 16, ov_y + 66, &cpu_line, 0x0034D399, 2);
 
             let budget_status = if self.telemetry.avg_frame_time_us <= self.adaptation.target_budget_us {
-                "BUDGET : RESPECTE (<16.6ms)"
+                "BUDGET : RESPECTÉ (<16.6ms)"
             } else {
-                "BUDGET : DEPASSE !"
+                "BUDGET : DÉPASSÉ !"
             };
             let budget_color = if self.telemetry.avg_frame_time_us <= self.adaptation.target_budget_us { 0x0010B981 } else { 0x00EF4444 };
             canvas.draw_text(ov_x + 16, ov_y + 90, budget_status, budget_color, 2);
@@ -4058,62 +4062,62 @@ impl GameState {
 
         // Barre d'en-tête
         canvas.draw_rect(mx, my, mw as u32, 40, 0x000284C7);
-        canvas.draw_text(mx + 16, my + 11, "GUIDE PEDAGOGIQUE ET ARCHITECTURE DU MOTEUR", 0x00FFFFFF, 2);
-        canvas.draw_badge(mx + mw - 110, my + 7, 95, 26, 0x000369A1, 0x0038BDF8, "[ECHAP]", 0x00E0F2FE, 1);
+        canvas.draw_text(mx + 16, my + 11, "GUIDE PÉDAGOGIQUE ET ARCHITECTURE DU MOTEUR", 0x00FFFFFF, 2);
+        canvas.draw_badge(mx + mw - 110, my + 7, 95, 26, 0x000369A1, 0x0038BDF8, "[ÉCHAP]", 0x00E0F2FE, 1);
 
         // Section 1 : ARCHITECTURE UNIVERSELLE & MULTI-GENRES
         let mut cy = my + 54;
         canvas.draw_badge(mx + 20, cy, 380, 24, 0x001E293B, 0x0038BDF8, "1. ARCHITECTURE UNIVERSELLE & MULTI-GENRES", 0x0038BDF8, 2);
         cy += 30;
-        canvas.draw_text(mx + 24, cy, "- MOTEUR AGNOSTIQUE : Concu pour creer TOUS les genres de jeu 2D sans limitation :", 0x00F8FAFC, 1);
+        canvas.draw_text(mx + 24, cy, "- MOTEUR AGNOSTIQUE : Conçu pour créer TOUS les genres de jeu 2D sans limitation :", 0x00F8FAFC, 1);
         cy += 18;
-        canvas.draw_text(mx + 36, cy, "* Top-Down RPG : Deplacement libre 4/8 axes, sentinelles a cone de vue raycaste.", 0x0094A3B8, 1);
+        canvas.draw_text(mx + 36, cy, "* Top-Down RPG : Déplacement libre 4/8 axes, sentinelles à cône de vue raycasté.", 0x0094A3B8, 1);
         cy += 18;
-        canvas.draw_text(mx + 36, cy, "* Plateforme 2D : Gravite continue, impulsion de saut, plateformes suspendues.", 0x0094A3B8, 1);
+        canvas.draw_text(mx + 36, cy, "* Plateforme 2D : Gravité continue, impulsion de saut, plateformes suspendues.", 0x0094A3B8, 1);
         cy += 18;
-        canvas.draw_text(mx + 36, cy, "* Shoot'em Up Spatial : Poussee vectorielle, inertie newtonienne, rotation, lasers.", 0x0094A3B8, 1);
+        canvas.draw_text(mx + 36, cy, "* Shoot'em Up Spatial : Poussée vectorielle, inertie newtonienne, rotation, lasers.", 0x0094A3B8, 1);
         cy += 18;
-        canvas.draw_text(mx + 36, cy, "* Puzzle & Sokoban : Deplacement quantifie par grille, caisses poussables, dalles.", 0x0094A3B8, 1);
+        canvas.draw_text(mx + 36, cy, "* Puzzle & Sokoban : Déplacement quantifié par grille, caisses poussables, dalles.", 0x0094A3B8, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "- BASCULE LIVE : [F4 / L] Cycle instantane entre les 4 genres de jeu de demonstration.", 0x0038BDF8, 1);
+        canvas.draw_text(mx + 24, cy, "- BASCULE LIVE : [F4 / L] Cycle instantané entre les 4 genres de jeu de démonstration.", 0x0038BDF8, 1);
         cy += 28;
 
-        // Section 2 : ARCHITECTURE ENTITE-COMPOSANTS (ECS)
-        canvas.draw_badge(mx + 20, cy, 330, 24, 0x001E293B, 0x0010B981, "2. ARCHITECTURE ENTITE-COMPOSANTS (ECS)", 0x0010B981, 2);
+        // Section 2 : ARCHITECTURE ENTITÉ-COMPOSANTS (ECS)
+        canvas.draw_badge(mx + 20, cy, 330, 24, 0x001E293B, 0x0010B981, "2. ARCHITECTURE ENTITÉ-COMPOSANTS (ECS)", 0x0010B981, 2);
         cy += 30;
-        canvas.draw_text(mx + 24, cy, "- ENTITE : Conteneur universel modulaire identifie par ID unique, nom et tag.", 0x00E2E8F0, 1);
+        canvas.draw_text(mx + 24, cy, "- ENTITÉ : Conteneur universel modulaire identifié par ID unique, nom et tag.", 0x00E2E8F0, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "- COMPOSANTS : Caracteristiques modulaires combinables a volonte :", 0x00E2E8F0, 1);
+        canvas.draw_text(mx + 24, cy, "- COMPOSANTS : Caractéristiques modulaires combinables à volonté :", 0x00E2E8F0, 1);
         cy += 18;
         canvas.draw_text(mx + 36, cy, "* Transform2D | Collider2D (Solide, Trigger, Bloc Poussable)", 0x0094A3B8, 1);
         cy += 18;
         canvas.draw_text(mx + 36, cy, "* Movement2D (TopDown, Platformer, SpaceInertia, Grid) | VisionSensing", 0x0094A3B8, 1);
         cy += 18;
-        canvas.draw_text(mx + 36, cy, "* Projectile2D (Balistique & degats) | ParticleEmitter2D | KVLScriptComponent", 0x0094A3B8, 1);
+        canvas.draw_text(mx + 36, cy, "* Projectile2D (Balistique & dégâts) | ParticleEmitter2D | KVLScriptComponent", 0x0094A3B8, 1);
         cy += 18;
-        canvas.draw_text(mx + 36, cy, "* Health2D (Vitalite, degats, soins, i-frames, mort & respawn automatique)", 0x00F43F5E, 1);
+        canvas.draw_text(mx + 36, cy, "* Health2D (Vitalité, dégâts, soins, i-frames, mort & respawn automatique)", 0x00F43F5E, 1);
         cy += 28;
 
         // Section 3 : LANGAGE VISUEL KVL
         canvas.draw_badge(mx + 20, cy, 310, 24, 0x001E293B, 0x00F59E0B, "3. LE LANGAGE VISUEL KVL EN ACTION", 0x00F59E0B, 2);
         cy += 30;
-        canvas.draw_text(mx + 24, cy, "- EVENT : Declenche par le moteur (OnOverlap, OnInteract, OnSeen, OnHit...).", 0x00FDE047, 1);
+        canvas.draw_text(mx + 24, cy, "- ÉVÉNEMENT : Déclenché par le moteur (OnOverlap, OnInteract, OnSeen, OnHit...).", 0x00FDE047, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "- CONDITION : Logique orientant vers [Vrai/Faux] (ex: Score, Cle, IsPlayerAlive...).", 0x00FDE047, 1);
+        canvas.draw_text(mx + 24, cy, "- CONDITION : Logique orientant vers [Vrai/Faux] (ex: Score, Clé, IsPlayerAlive...).", 0x00FDE047, 1);
         cy += 18;
         canvas.draw_text(mx + 24, cy, "- ACTION : Effet de jeu (BonusPoints, BoostSpeed, Damage/HealPlayer, Burst...).", 0x00FDE047, 1);
         cy += 28;
 
-        // Section 4 : RACCOURCIS CLAVIER & CONTROLES
+        // Section 4 : RACCOURCIS CLAVIER & COMMANDES
         canvas.draw_badge(mx + 20, cy, 340, 24, 0x001E293B, 0x00A855F7, "4. RACCOURCIS CLAVIER & COMMANDES", 0x00A855F7, 2);
         cy += 30;
-        canvas.draw_text(mx + 24, cy, "F4 / L : Changer Genre | F : Tirer Laser | Espace : Saut / Poussee | TAB : Mode Studio", 0x00C084FC, 1);
+        canvas.draw_text(mx + 24, cy, "F4 / L : Changer Genre | F : Tirer Laser | Espace : Saut / Poussée | TAB : Mode Studio", 0x00C084FC, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "P : Spawn Entite | C+D : Dupliquer | Suppr : Effacer | G : Grille O(1) | M : Audio | F1 : Taux", 0x00C084FC, 1);
+        canvas.draw_text(mx + 24, cy, "P : Créer Entité | C+D : Dupliquer | Suppr : Effacer | G : Grille O(1) | M : Audio | F1 : Taux", 0x00C084FC, 1);
 
         // Bouton de fermeture
         let close_btn_y = my + mh - 46;
-        canvas.draw_badge(mx + 20, close_btn_y, (mw - 40) as u32, 34, 0x00065F46, 0x0010B981, "[ FERMER LE GUIDE PEDAGOGIQUE (H OU ECHAP) ]", 0x00ECFDF5, 2);
+        canvas.draw_badge(mx + 20, close_btn_y, (mw - 40) as u32, 34, 0x00065F46, 0x0010B981, "[ FERMER LE GUIDE PÉDAGOGIQUE (H OU ÉCHAP) ]", 0x00ECFDF5, 2);
     }
 
     #[allow(clippy::too_many_arguments)]

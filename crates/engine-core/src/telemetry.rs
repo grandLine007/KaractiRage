@@ -1,11 +1,8 @@
 use std::collections::VecDeque;
-use std::time::Instant;
 
 pub struct Telemetry {
     pub frame_times_us: VecDeque<u64>,
     pub max_samples: usize,
-    #[allow(dead_code)]
-    pub last_frame_instant: Instant,
     pub current_fps: f32,
     pub avg_frame_time_us: u64,
     pub min_frame_time_us: u64,
@@ -19,7 +16,6 @@ impl Telemetry {
         Self {
             frame_times_us: VecDeque::with_capacity(120),
             max_samples: 120,
-            last_frame_instant: Instant::now(),
             current_fps: 60.0,
             avg_frame_time_us: 0,
             min_frame_time_us: u64::MAX,

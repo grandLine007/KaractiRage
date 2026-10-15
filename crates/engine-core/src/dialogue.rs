@@ -375,13 +375,13 @@ impl QuestTracker {
         canvas.draw_rect_outline(x, y, box_w, box_h, bd_col, 1);
         canvas.draw_corner_brackets(x, y, box_w, box_h, 8, bd_col);
 
-        let title_lbl = format!("QUETE: {}", self.title);
+        let title_lbl = format!("QUÊTE : {}", self.title);
         canvas.draw_text(x + 10, y + 8, &title_lbl, bd_col, 2);
 
         let step_lbl = if self.is_completed {
-            "STATUT: TERMINEE (100%)".to_string()
+            "STATUT : TERMINÉE (100%)".to_string()
         } else {
-            format!("STATUT: ETAPE {} / {}", self.current_step, self.max_step)
+            format!("STATUT : ÉTAPE {} / {}", self.current_step, self.max_step)
         };
         let step_col = if self.is_completed { 0x0034D399 } else { 0x0094A3B8 };
         canvas.draw_text(x + 10, y + 26, &step_lbl, step_col, 2);

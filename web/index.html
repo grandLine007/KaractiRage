@@ -3,37 +3,105 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>KaractiRage 2D Engine — Démonstrateur WebAssembly & KVL</title>
-  <meta name="description" content="Moteur de jeu 2D KaractiRage et logique visuelle KVL exécutés directement dans le navigateur en WebAssembly à 60 FPS avec partitionnement spatial O(1).">
+  <title>KaractiRage Atelier — Moteur 2D & Logique KVL (Dark Edition)</title>
+  <meta name="description" content="Atelier de création de jeux 2D KaractiRage, moteur universel déterministe en Rust et logique visuelle KVL compilés en WebAssembly à 60 FPS constants.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600;700&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="app-container">
-    <!-- En-tête Principal -->
+    <!-- En-tête Principal "Dark Atelier" -->
     <header class="engine-header">
       <div class="brand">
         <div class="logo-badge">⚡ KR</div>
         <div class="title-group">
-          <h1>KARACTIRAGE 2D ENGINE</h1>
-          <p class="subtitle">Runtime Rust &amp; Logique Visuelle KVL — Export WebAssembly (Wasm) &amp; Canvas HTML5</p>
+          <h1>KARACTIRAGE ATELIER</h1>
+          <p class="subtitle">Moteur Universel Déterministe • Logique Visuelle KVL • Typographie UTF-8 &amp; Rendu Pixel-Perfect</p>
         </div>
       </div>
-      <div class="badges-row">
-        <span class="badge badge-accent">60 FPS</span>
-        <span class="badge badge-success">Zero-Alloc Hot Path</span>
-        <span class="badge badge-cyan">Grille Spatiale O(1)</span>
-        <span class="badge badge-purple">KVL Engine</span>
+
+      <div class="header-metadata">
+        <div class="chip chip-project">
+          <span class="chip-dot"></span>
+          <span class="chip-text">Donjon Niveau 1</span>
+        </div>
+        <div class="chip chip-profile">
+          <span class="chip-badge">PROFIL</span>
+          <span class="chip-text">Low-End 60 FPS</span>
+        </div>
+        <div class="chip chip-tech">
+          <span class="chip-badge">RUNTIME</span>
+          <span class="chip-text">Rust • WebAssembly</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="btn-toggle-editor" class="btn-mode-toggle" title="Basculer instantanément entre le Mode Jeu et le Studio (Touche TAB)">
+          <span class="key-tag">TAB</span>
+          <span class="btn-mode-text">BASCULE STUDIO / JEU</span>
+        </button>
       </div>
     </header>
 
-    <!-- Zone Centrale : Canvas et Panneaux Latéraux -->
+    <!-- Barre d'Outils Rapide du Studio & Contrôles Tactiques -->
+    <nav class="studio-toolbar" aria-label="Barre d'outils du Studio">
+      <div class="toolbar-group">
+        <span class="toolbar-label">OUTILS STUDIO :</span>
+        <button id="btn-tool-select" class="toolbar-btn" title="Sélectionner et inspecter une entité (Touche V)">
+          <span class="key-badge">V</span> Sélection
+        </button>
+        <button id="btn-tool-brush" class="toolbar-btn" title="Peindre des blocs dans le niveau (Touche B)">
+          <span class="key-badge">B</span> Pinceau
+        </button>
+        <button id="btn-tool-eraser" class="toolbar-btn" title="Effacer des blocs à la souris (Touche X)">
+          <span class="key-badge">X</span> Gomme
+        </button>
+        <button id="btn-tool-tile" class="toolbar-btn" title="Changer le type de tuile active (Touche T)">
+          <span class="key-badge">T</span> Type Tuile
+        </button>
+        <button id="btn-tool-spawn" class="toolbar-btn toolbar-btn-accent" title="Ouvrir la palette de création d'entités (Touche P)">
+          <span class="key-badge">P</span> + Créer Entité
+        </button>
+      </div>
+
+      <div class="toolbar-separator"></div>
+
+      <div class="toolbar-group">
+        <span class="toolbar-label">DIAGNOSTIC &amp; JEU :</span>
+        <button id="btn-toggle-radar" class="toolbar-btn" title="Afficher ou masquer la minicarte radar (Touche N)">
+          <span class="key-badge">N</span> Radar Tactique
+        </button>
+        <button id="btn-toggle-grid" class="toolbar-btn" title="Quadrillage spatial O(1) de 64px (Touche G)">
+          <span class="key-badge">G</span> Grille O(1)
+        </button>
+        <button id="btn-tool-genre" class="toolbar-btn toolbar-btn-purple" title="Cycle instantané entre les 4 genres de jeu (Touche F4 ou L)">
+          <span class="key-badge">F4</span> Changer Genre
+        </button>
+        <button id="btn-toggle-audio" class="toolbar-btn" title="Couper / Activer la synthèse sonore temps réel (Touche M)">
+          <span class="key-badge">M</span> Audio Synthé
+        </button>
+        <button id="btn-tool-help" class="toolbar-btn toolbar-btn-emerald" title="Ouvrir le guide pédagogique interactif (Touche H)">
+          <span class="key-badge">H</span> Guide Pédagogique
+        </button>
+        <button id="btn-reload" class="toolbar-btn" title="Réinitialiser la scène courante (Touche R)">
+          <span class="key-badge">R</span> Réinitialiser
+        </button>
+      </div>
+    </nav>
+
+    <!-- Zone Centrale : Viewport Canvas & Panneaux Latéraux -->
     <main class="engine-workspace">
-      <!-- Zone de Jeu Canvas -->
+      <!-- Zone de Rendu Canvas -->
       <section class="canvas-wrapper">
         <div class="canvas-frame">
+          <!-- Cornières cybernétiques décoratives -->
+          <div class="corner-bracket top-left"></div>
+          <div class="corner-bracket top-right"></div>
+          <div class="corner-bracket bottom-left"></div>
+          <div class="corner-bracket bottom-right"></div>
+
           <canvas id="game-canvas" width="1200" height="800"></canvas>
           <div id="loading-overlay" class="loading-overlay">
             <div class="spinner"></div>
@@ -41,15 +109,30 @@
           </div>
         </div>
         
-        <!-- Barre d'état intégrée -->
+        <!-- Barre d'état intégrée et raccourcis d'inventaire Hotbar -->
         <div class="status-bar">
-          <span class="status-label">ETAT DU MOTEUR :</span>
-          <span id="engine-status" class="status-text">Initialisation en cours...</span>
+          <div class="status-left">
+            <span class="status-pill">ÉTAT RUNTIME</span>
+            <span id="engine-status" class="status-text">Initialisation du moteur déterministe...</span>
+          </div>
+
+          <div class="hotbar-web-controls">
+            <span class="hotbar-label">HOTBAR (1-5) :</span>
+            <button id="btn-slot-1" class="slot-btn" title="Sélectionner Slot 1"><span class="slot-num">1</span></button>
+            <button id="btn-slot-2" class="slot-btn" title="Sélectionner Slot 2"><span class="slot-num">2</span></button>
+            <button id="btn-slot-3" class="slot-btn" title="Sélectionner Slot 3"><span class="slot-num">3</span></button>
+            <button id="btn-slot-4" class="slot-btn" title="Sélectionner Slot 4"><span class="slot-num">4</span></button>
+            <button id="btn-slot-5" class="slot-btn" title="Sélectionner Slot 5"><span class="slot-num">5</span></button>
+            <button id="btn-tool-use" class="use-item-btn" title="Utiliser l'objet sélectionné en jeu (Touche U)">
+              <span class="key-badge">U</span> Utiliser
+            </button>
+          </div>
         </div>
       </section>
 
-      <!-- Panneau Latéral de Diagnostic & Télémétrie -->
+      <!-- Panneau Latéral de Diagnostic & Télémétrie "Dark Atelier" -->
       <aside class="sidebar-hud">
+        <!-- Carte 1 : Télémétrie Matérielle & Budget 60 FPS -->
         <div class="hud-card">
           <div class="hud-card-header">
             <h3>📊 Télémétrie &amp; Performance</h3>
@@ -75,13 +158,14 @@
           </div>
         </div>
 
+        <!-- Carte 2 : Variables Réactives KVL Runtime -->
         <div class="hud-card">
           <div class="hud-card-header">
-            <h3>🎮 Variables KVL Runtime</h3>
+            <h3>⚡ Variables KVL Runtime</h3>
           </div>
           <div class="metric-grid">
             <div class="metric-item">
-              <span class="metric-label">Score Joueur KVL</span>
+              <span class="metric-label">Score KVL Actuel</span>
               <span id="metric-score" class="metric-value text-amber">0 PTS</span>
             </div>
             <div class="metric-item">
@@ -89,43 +173,30 @@
               <span id="metric-mode" class="metric-value text-purple">JEU</span>
             </div>
           </div>
-        </div>
-
-        <div class="hud-card">
-          <div class="hud-card-header">
-            <h3>🕹️ Commandes Rapides</h3>
-          </div>
-          <div class="quick-actions">
-            <button id="btn-toggle-editor" class="action-btn">
-              <span class="key-tag">TAB</span> Mode Édition
-            </button>
-            <button id="btn-toggle-radar" class="action-btn">
-              <span class="key-tag">N</span> Radar Tactique
-            </button>
-            <button id="btn-toggle-grid" class="action-btn">
-              <span class="key-tag">G</span> Grille Spatiale
-            </button>
-            <button id="btn-toggle-audio" class="action-btn">
-              <span class="key-tag">M</span> Son Muet / Actif
-            </button>
-            <button id="btn-reload" class="action-btn">
-              <span class="key-tag">R</span> Réinitialiser
-            </button>
+          <div class="kvl-quick-info">
+            <span class="info-tag">Flux Réactif</span>
+            <span class="info-desc">Événements In/Out vérifiés par simulation déterministe.</span>
           </div>
         </div>
 
+        <!-- Carte 3 : Commandes & Ergonomie Pédagogique -->
         <div class="hud-card">
           <div class="hud-card-header">
             <h3>⌨️ Guide des Raccourcis</h3>
           </div>
           <ul class="shortcuts-list">
-            <li><kbd>ZQSD</kbd> ou <kbd>Flèches</kbd> : Déplacer le joueur</li>
-            <li><kbd>E</kbd> ou <kbd>Espace</kbd> : Interagir avec la porte</li>
-            <li><kbd>TAB</kbd> : Ouvrir l'Inspecteur &amp; Éditeur KVL</li>
-            <li><kbd>Clic Gauche</kbd> : Sélectionner &amp; déplacer des objets</li>
-            <li><kbd>N</kbd> : Minicarte Radar néon</li>
-            <li><kbd>G</kbd> : Quadrillage spatial 64px</li>
-            <li><kbd>F1</kbd> : Diagnostic intégré &amp; Sparkline</li>
+            <li><kbd>ZQSD</kbd> / <kbd>Flèches</kbd> : Déplacer le joueur</li>
+            <li><kbd>Espace</kbd> / <kbd>Z</kbd> : Saut (Plateforme) / Poussée</li>
+            <li><kbd>F</kbd> : Tirer un laser balistique</li>
+            <li><kbd>E</kbd> : Interagir avec la porte / PNJ</li>
+            <li><kbd>1</kbd> - <kbd>5</kbd> &bull; <kbd>U</kbd> : Sélection &amp; Utilisation d'objet</li>
+            <li><kbd>TAB</kbd> : Bascule Studio &bull; Inspecteur KVL</li>
+            <li><kbd>Clic Gauche</kbd> : Sélectionner &amp; déplacer des entités</li>
+            <li><kbd>V</kbd> / <kbd>B</kbd> / <kbd>X</kbd> : Outils Sélection, Pinceau, Gomme</li>
+            <li><kbd>P</kbd> : Palette de création d'entités</li>
+            <li><kbd>F4</kbd> / <kbd>L</kbd> : Changer de genre (4 modes disponibles)</li>
+            <li><kbd>H</kbd> : Guide pédagogique interactif complet</li>
+            <li><kbd>F1</kbd> : Télémétrie intégrée &amp; Historique frame</li>
           </ul>
         </div>
       </aside>
@@ -133,8 +204,13 @@
 
     <!-- Pied de Page Technologique -->
     <footer class="engine-footer">
-      <span>KaractiRage v0.1.0 — Architecture Low-End First, 100% Déterministe &amp; Émulation Pixel-Perfect</span>
-      <span>Cible : WebAssembly (wasm32-unknown-unknown) • Renderer Canvas 2D</span>
+      <div class="footer-left">
+        <span class="footer-badge">KARACTIRAGE 2026</span>
+        <span>Architecture Low-End First &bull; Zero-Alloc Hot Path &bull; Typographie UTF-8 Latin Étendu &bull; 100% Déterministe</span>
+      </div>
+      <div class="footer-right">
+        <span>Cible : WebAssembly (wasm32-unknown-unknown) &bull; Rendu Canvas 2D</span>
+      </div>
     </footer>
   </div>
 

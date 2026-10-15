@@ -45,7 +45,21 @@ const KEY_MAP = {
   'ControlLeft': 21,
   'ControlRight': 21,
   'MetaLeft': 21,
-  'MetaRight': 21
+  'MetaRight': 21,
+  'KeyV': 22,
+  'KeyB': 23,
+  'KeyX': 24,
+  'KeyT': 25,
+  'KeyP': 26,
+  'KeyH': 27,
+  'KeyU': 28,
+  'F4': 29,
+  'KeyL': 29,
+  'Digit1': 30,
+  'Digit2': 31,
+  'Digit3': 32,
+  'Digit4': 33,
+  'Digit5': 34
 };
 
 async function main() {
@@ -128,30 +142,42 @@ async function main() {
       e.preventDefault();
     });
 
-    // Boutons rapides du HUD
-    document.getElementById('btn-toggle-editor').addEventListener('click', () => {
+    const triggerKey = (code) => {
+      if (KEY_MAP.hasOwnProperty(code)) {
+        wasm_on_key_down(KEY_MAP[code]);
+        setTimeout(() => wasm_on_key_up(KEY_MAP[code]), 60);
+      }
+    };
+
+    // Boutons rapides du HUD et de la barre d'outils
+    const bindBtn = (id, fn) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', fn);
+    };
+
+    bindBtn('btn-toggle-editor', () => {
       const isEdit = wasm_toggle_editor_mode();
       modeEl.textContent = isEdit ? "ÉDITION" : "JEU";
       modeEl.className = isEdit ? "metric-value text-amber" : "metric-value text-purple";
     });
 
-    document.getElementById('btn-toggle-radar').addEventListener('click', () => {
-      wasm_toggle_radar();
-    });
-
-    document.getElementById('btn-toggle-grid').addEventListener('click', () => {
-      wasm_toggle_spatial_grid();
-    });
-
-    document.getElementById('btn-toggle-audio').addEventListener('click', () => {
-      wasm_on_key_down(KEY_MAP['KeyM']);
-      setTimeout(() => wasm_on_key_up(KEY_MAP['KeyM']), 50);
-    });
-
-    document.getElementById('btn-reload').addEventListener('click', () => {
-      wasm_on_key_down(KEY_MAP['KeyR']);
-      setTimeout(() => wasm_on_key_up(KEY_MAP['KeyR']), 50);
-    });
+    bindBtn('btn-toggle-radar', () => wasm_toggle_radar());
+    bindBtn('btn-toggle-grid', () => wasm_toggle_spatial_grid());
+    bindBtn('btn-toggle-audio', () => triggerKey('KeyM'));
+    bindBtn('btn-reload', () => triggerKey('KeyR'));
+    bindBtn('btn-tool-select', () => triggerKey('KeyV'));
+    bindBtn('btn-tool-brush', () => triggerKey('KeyB'));
+    bindBtn('btn-tool-eraser', () => triggerKey('KeyX'));
+    bindBtn('btn-tool-tile', () => triggerKey('KeyT'));
+    bindBtn('btn-tool-spawn', () => triggerKey('KeyP'));
+    bindBtn('btn-tool-help', () => triggerKey('KeyH'));
+    bindBtn('btn-tool-genre', () => triggerKey('F4'));
+    bindBtn('btn-tool-use', () => triggerKey('KeyU'));
+    bindBtn('btn-slot-1', () => triggerKey('Digit1'));
+    bindBtn('btn-slot-2', () => triggerKey('Digit2'));
+    bindBtn('btn-slot-3', () => triggerKey('Digit3'));
+    bindBtn('btn-slot-4', () => triggerKey('Digit4'));
+    bindBtn('btn-slot-5', () => triggerKey('Digit5'));
 
     // ==========================================
     // BOUCLE DE RENDU 60 FPS (requestAnimationFrame)
