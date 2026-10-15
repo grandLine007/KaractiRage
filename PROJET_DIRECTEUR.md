@@ -315,6 +315,35 @@
   * 0 avertissement de compilation (`cargo check --all-targets`).
   * WebAssembly recompilé et optimisé (543 Ko).
 
+### Étape 19 : Refonte Esthétique & Ergonomie Pédagogique du Studio (HUD, Guide Interactif H & Design System) *(15 Octobre 2026)*
+* **Directive de l'Utilisateur** : *"L'interface générale n'est pas très pédagogique ni esthétiquement attrayante, revois cela, s'il faut des skills qui facilitent cela, installe-les."*
+* **Réalisations** :
+  * **Installation du Skill Dédié** :
+    * Création de `.agents/skills/engine-ui-ux-pedagogy/SKILL.md` : Guide de conception d'interfaces rétro-modernes logicielles, hiérarchie visuelle, code couleur cyber/dark tech, typographie bitmap complète et pédagogie progressive du visual scripting.
+  * **Typographie Bitmap Enrichie & Primitives Graphiques** (`renderer.rs`) :
+    * Extension complète de la table de glyphes bitmap 5x7 avec prise en charge native de tous les caractères spéciaux clés : `'?'`, `'_'`, `'|'`, `'#'`, `'%'`, `';'`, `'\''`, `'\"'`, `'{'`, `'}'`, `'$'`, `'~'`, `'@'`. Élimination des carrés de substitution disgracieux.
+    * Nouvelles méthodes graphiques intégrées : `draw_badge()` (pilules et boutons biseautés avec texte centré) et `draw_corner_brackets()` (cornières technologiques néon pour encadrements immersifs).
+  * **Fenêtre Modale de Guide Pédagogique Interactif (`H`)** :
+    * Accessible en continu via la touche **H**, le bouton dédié `[? AIDE]` ou la touche `Échap`.
+    * Résumé pédagogique en 4 volets :
+      1. Les deux modes de travail (`[TAB] Mode Jeu` vs `[TAB] Mode Studio ECS`).
+      2. L'architecture Entité-Composants (`Entity`, `Transform2D`, `Collider2D`, `Movement2D`, `VisionSensing`, `ParticleEmitter2D`, `KVLScriptComponent`).
+      3. Le fonctionnement du langage visuel KVL (`Event` $\rightarrow$ `Condition` $\rightarrow$ `Action` $\rightarrow$ Bus d'événements).
+      4. Les raccourcis clavier studio (`P`, `Ctrl+D`, `Suppr`, `Ctrl+S`, `Espace`, `N`, `G`, `M`, `F1`).
+  * **Bandeau Supérieur & Carte d'Objectif Pédagogique** :
+    * En Mode Jeu : Logo cyber, badge de scène, **carte d'objectif dynamique centrale** (`[ OBJECTIF : COLLECTEZ 50 OR POUR LA PORTE ]` en ambre étincelant, basculant en émeraude dès déverrouillage), score pill, profil matériel, audio et raccourcis.
+    * En Mode Studio : Logo violet néon, boutons studio stylisés (`[+ SPAWN (P)]`, `[SAUVER (C+S)]`, `[DUPLIQUER (C+D)]`, `[SUPPR (DEL)]`, `[? AIDE]`).
+  * **Inspecteur Pédagogique Déroulant** :
+    * Lorsqu'aucune entité n'est sélectionnée : affichage d'une **fiche pédagogique "Guide du Studio" en 5 étapes numérotées** (1. Sélectionner, 2. Déplacer, 3. Composer ECS, 4. Logique KVL, 5. Tester en direct).
+    * Lorsqu'une entité est sélectionnée : carte d'identité colorée selon le tag, badges détaillés des composants actifs et boutons d'attachement explicites.
+    * Dans la chaîne KVL : cartes d'enchaînement avec badges `[1. QUAND]`, `[2. SI (TEST)]`, `[3. ALORS]` et flèches de flux néon.
+  * **Bandeau Inférieur & Console KVL** :
+    * Ruban de raccourcis sous forme de pilules cliquables, badge de statut moteur et console de traces temps réel au style terminal sombre.
+* **Mesures & Benchmarks** :
+  * 54/54 tests unitaires validés à 100% sur l'ensemble du Workspace Cargo (+2 tests dédiés à la modale d'aide, au switch d'objectif et aux hitboxes du HUD).
+  * 0 avertissement de compilation (`cargo check --all-targets`).
+  * WebAssembly recompilé et optimisé (554 Ko).
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

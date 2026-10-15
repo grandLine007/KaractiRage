@@ -73,6 +73,8 @@ pub struct EditorState {
     pub duplicate_btn_hitbox: Option<(i32, i32, u32, u32)>,
     pub delete_btn_hitbox: Option<(i32, i32, u32, u32)>,
     pub add_comp_hitboxes: Vec<(String, i32, i32, u32, u32)>,
+    pub show_help_modal: bool,
+    pub help_btn_hitbox: Option<(i32, i32, u32, u32)>,
 }
 
 impl EditorState {
@@ -101,6 +103,8 @@ impl EditorState {
             duplicate_btn_hitbox: None,
             delete_btn_hitbox: None,
             add_comp_hitboxes: Vec::new(),
+            show_help_modal: false,
+            help_btn_hitbox: None,
         }
     }
 
@@ -113,9 +117,14 @@ impl EditorState {
                 self.active_wire = None;
                 self.show_node_palette = false;
                 self.show_spawn_palette = false;
+                self.show_help_modal = false;
                 EditorMode::Play
             }
         };
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.show_help_modal = !self.show_help_modal;
     }
 
     pub fn toggle_view_detail(&mut self) {
@@ -232,6 +241,14 @@ impl EditorState {
 
     pub fn is_delete_btn_clicked(&self, mx: f32, my: f32) -> bool {
         if let Some((bx, by, bw, bh)) = self.delete_btn_hitbox {
+            mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_help_btn_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((bx, by, bw, bh)) = self.help_btn_hitbox {
             mx >= bx as f32 && mx <= (bx + bw as i32) as f32 && my >= by as f32 && my <= (by + bh as i32) as f32
         } else {
             false

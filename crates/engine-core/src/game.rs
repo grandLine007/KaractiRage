@@ -508,6 +508,42 @@ impl GameState {
             };
         }
 
+        // Bascule Guide Pédagogique Interactif (Touche H)
+        if input.is_key_just_pressed(KeyCode::KeyH) {
+            self.editor.toggle_help();
+            self.audio.play(SoundType::UiClick);
+            self.status_message = if self.editor.show_help_modal {
+                "Guide pédagogique interactif : OUVERT (Appuyez sur H ou Echap pour fermer)".into()
+            } else {
+                "Guide pédagogique fermé.".into()
+            };
+            return;
+        }
+
+        // Fermer le guide avec Échap en mode jeu
+        if self.editor.show_help_modal && (input.is_key_just_pressed(KeyCode::Escape) || input.mouse_right_just_clicked) {
+            self.editor.show_help_modal = false;
+            self.audio.play(SoundType::UiClick);
+            self.status_message = "Guide pédagogique fermé.".into();
+            return;
+        }
+
+        // Clic sur le bouton d'aide ou fermeture par clic modal
+        if input.mouse_just_clicked {
+            let mx = input.mouse_x;
+            let my = input.mouse_y;
+            if self.editor.is_help_btn_clicked(mx, my) {
+                self.editor.toggle_help();
+                self.audio.play(SoundType::UiClick);
+                return;
+            }
+            if self.editor.show_help_modal {
+                self.editor.show_help_modal = false;
+                self.audio.play(SoundType::UiClick);
+                return;
+            }
+        }
+
         // Bascule Mode Jeu / Mode Édition (TAB)
         if input.is_key_just_pressed(KeyCode::Tab) {
             self.editor.toggle_mode();
@@ -525,8 +561,13 @@ impl GameState {
             self.editor.mouse_x = input.mouse_x;
             self.editor.mouse_y = input.mouse_y;
 
-            // Annuler le câblage ou la palette avec Échap ou Clic droit
+            // Annuler le câblage, la palette ou l'aide avec Échap ou Clic droit
             if input.is_key_just_pressed(KeyCode::Escape) || input.mouse_right_just_clicked {
+                if self.editor.show_help_modal {
+                    self.editor.show_help_modal = false;
+                    self.status_message = "Guide pédagogique fermé.".into();
+                    return;
+                }
                 if self.editor.show_spawn_palette {
                     self.editor.show_spawn_palette = false;
                     self.status_message = "Palette de spawn fermée.".into();
@@ -1420,17 +1461,17 @@ impl GameState {
     }
 
     pub fn render(&mut self, canvas: &mut Canvas) {
-        canvas.clear(0x00141923);
+        canvas.clear(0x000B0F19);
 
         let is_edit_mode = self.editor.mode == EditorMode::Edit;
         let w = canvas.width as i32;
         let h = canvas.height as i32;
 
-        // 1. Bandeau supérieur (HUD) : Hauteur 60px
-        let header_bg = if is_edit_mode { 0x004C1D95 } else { 0x001E2638 };
-        let header_border = if is_edit_mode { 0x00A855F7 } else { 0x003B82F6 };
-        canvas.draw_rect(0, 0, w as u32, 60, header_bg);
-        canvas.draw_rect(0, 59, w as u32, 2, header_border);
+        // 1. Bandeau supérieur (HUD) : Hauteur 56px
+        let header_bg = if is_edit_mode { 0x001E1035 } else { 0x000F172A };
+        let header_border = if is_edit_mode { 0x007C3AED } else { 0x000284C7 };
+        canvas.draw_rect(0, 0, w as u32, 56, header_bg);
+        canvas.draw_rect(0, 55, w as u32, 2, header_border);
 
         if is_edit_mode {
             self.editor.pin_hitboxes.clear();
@@ -1445,120 +1486,165 @@ impl GameState {
             self.editor.spawn_btn_hitbox = None;
             self.editor.duplicate_btn_hitbox = None;
             self.editor.delete_btn_hitbox = None;
+            self.editor.help_btn_hitbox = None;
 
-            canvas.draw_text(20, 20, "STUDIO ECS", 0x00F8FAFC, 2);
+            // Brand Badge Studio
+            canvas.draw_badge(16, 12, 130, 32, 0x002E1065, 0x00A855F7, "STUDIO ECS", 0x00F3E8FF, 2);
 
             // Bouton 1 : [+ SPAWN (P)]
-            let spawn_x = 150;
-            let spawn_y = 14;
+            let spawn_x = 156;
+            let spawn_y = 12;
             let spawn_w = 125;
             let spawn_h = 32;
-            let spawn_bg = if self.editor.show_spawn_palette { 0x007C3AED } else { 0x004F46E5 };
-            canvas.draw_rect(spawn_x, spawn_y, spawn_w as u32, spawn_h as u32, spawn_bg);
-            canvas.draw_rect_outline(spawn_x, spawn_y, spawn_w as u32, spawn_h as u32, 0x00A78BFA, 1);
-            canvas.draw_text(spawn_x + 10, spawn_y + 8, "[+ SPAWN (P)]", 0x00FFFFFF, 2);
+            let spawn_bg = if self.editor.show_spawn_palette { 0x007C3AED } else { 0x003730A3 };
+            canvas.draw_badge(spawn_x, spawn_y, spawn_w as u32, spawn_h as u32, spawn_bg, 0x00818CF8, "[+ SPAWN (P)]", 0x00FFFFFF, 2);
             self.editor.spawn_btn_hitbox = Some((spawn_x, spawn_y, spawn_w as u32, spawn_h as u32));
 
-            // Bouton 2 : [SAUVER (CTRL+S)]
-            let save_x = 285;
-            let save_y = 14;
-            let save_w = 150;
+            // Bouton 2 : [SAUVER (C+S)]
+            let save_x = 290;
+            let save_y = 12;
+            let save_w = 135;
             let save_h = 32;
-            canvas.draw_rect(save_x, save_y, save_w as u32, save_h as u32, 0x00059669);
-            canvas.draw_rect_outline(save_x, save_y, save_w as u32, save_h as u32, 0x0010B981, 1);
-            canvas.draw_text(save_x + 8, save_y + 8, "[SAUVER (C+S)]", 0x00FFFFFF, 2);
+            canvas.draw_badge(save_x, save_y, save_w as u32, save_h as u32, 0x00064E3B, 0x0010B981, "[SAUVER (C+S)]", 0x00D1FAE5, 2);
             self.editor.top_save_btn_hitbox = Some((save_x, save_y, save_w as u32, save_h as u32));
 
             // Boutons contextuels si une entité est sélectionnée
             if let SelectedEntity::Entity(idx) = self.editor.selected {
                 if idx < self.entities.len() {
-                    let dup_x = 445;
-                    let dup_y = 14;
-                    let dup_w = 160;
+                    let dup_x = 434;
+                    let dup_y = 12;
+                    let dup_w = 150;
                     let dup_h = 32;
-                    canvas.draw_rect(dup_x, dup_y, dup_w as u32, dup_h as u32, 0x00D97706);
-                    canvas.draw_rect_outline(dup_x, dup_y, dup_w as u32, dup_h as u32, 0x00F59E0B, 1);
-                    canvas.draw_text(dup_x + 8, dup_y + 8, "[DUPLIQUER (C+D)]", 0x00FFFFFF, 2);
+                    canvas.draw_badge(dup_x, dup_y, dup_w as u32, dup_h as u32, 0x0078350F, 0x00F59E0B, "[DUPLIQUER (C+D)]", 0x00FEF3C7, 2);
                     self.editor.duplicate_btn_hitbox = Some((dup_x, dup_y, dup_w as u32, dup_h as u32));
 
                     let is_player = self.entities[idx].movement.as_ref().map_or(false, |m| m.is_player_controlled);
                     if !is_player {
-                        let del_x = 615;
-                        let del_y = 14;
-                        let del_w = 140;
+                        let del_x = 592;
+                        let del_y = 12;
+                        let del_w = 135;
                         let del_h = 32;
-                        canvas.draw_rect(del_x, del_y, del_w as u32, del_h as u32, 0x00DC2626);
-                        canvas.draw_rect_outline(del_x, del_y, del_w as u32, del_h as u32, 0x00EF4444, 1);
-                        canvas.draw_text(del_x + 8, del_y + 8, "[SUPPR (DEL)]", 0x00FFFFFF, 2);
+                        canvas.draw_badge(del_x, del_y, del_w as u32, del_h as u32, 0x007F1D1D, 0x00EF4444, "[SUPPR (DEL)]", 0x00FEE2E2, 2);
                         self.editor.delete_btn_hitbox = Some((del_x, del_y, del_w as u32, del_h as u32));
                     }
                 }
             }
 
+            // Statut Audio
             let (audio_txt, audio_col) = if !self.audio.is_available {
-                ("[AUDIO: N/D]", 0x0094A3B8)
+                ("AUDIO: N/D", 0x0094A3B8)
             } else if self.audio.is_muted() {
-                ("[AUDIO: MUET]", 0x00EF4444)
+                ("AUDIO: OFF", 0x00EF4444)
             } else {
-                ("[AUDIO: ACTIF]", 0x0010B981)
+                ("AUDIO: ON", 0x0010B981)
             };
-            canvas.draw_text(w - 200, 20, audio_txt, audio_col, 2);
+            canvas.draw_badge(w - 295, 12, 90, 32, 0x001E293B, audio_col, audio_txt, audio_col, 2);
+
+            // Bouton Guide Interactif (? AIDE)
+            let help_x = w - 195;
+            let help_y = 12;
+            let help_w = 95;
+            let help_h = 32;
+            let help_bg = if self.editor.show_help_modal { 0x004F46E5 } else { 0x001E1B4B };
+            canvas.draw_badge(help_x, help_y, help_w as u32, help_h as u32, help_bg, 0x00818CF8, "[? AIDE]", 0x00E0E7FF, 2);
+            self.editor.help_btn_hitbox = Some((help_x, help_y, help_w as u32, help_h as u32));
+
+            // Bouton Bascule Mode Jeu [TAB]
+            canvas.draw_badge(w - 92, 12, 76, 32, 0x00064E3B, 0x0010B981, "JOUER", 0x00D1FAE5, 2);
         } else {
-            let header_title = format!("KARACTIRAGE - {}", self.scene_name.to_uppercase());
-            canvas.draw_text(20, 18, &header_title, 0x00FFFFFF, 2);
+            self.editor.help_btn_hitbox = None;
 
-            let profile_color = self.adaptation.current_profile.color();
-            let profile_txt = format!("[{}]", self.adaptation.current_profile.name());
-            canvas.draw_text(w - 580, 20, &profile_txt, profile_color, 2);
-
-            let (audio_txt, audio_col) = if !self.audio.is_available {
-                ("[AUDIO: N/D]", 0x0094A3B8)
-            } else if self.audio.is_muted() {
-                ("[AUDIO: MUET (M)]", 0x00EF4444)
-            } else {
-                ("[AUDIO: ACTIF (M)]", 0x0010B981)
-            };
-            canvas.draw_text(w - 410, 20, audio_txt, audio_col, 2);
+            // Brand Badge Jeu
+            canvas.draw_badge(16, 12, 140, 32, 0x00082F49, 0x000284C7, "KARACTIRAGE", 0x00E0F2FE, 2);
+            canvas.draw_badge(164, 12, 95, 32, 0x001E293B, 0x00334155, "LVL 01", 0x0094A3B8, 2);
 
             let score = match self.kvl_context.get_var("score") {
                 Some(Value::Int(s)) => *s,
                 _ => 0,
             };
+
+            // Carte d'objectif pédagogique dynamique au centre
+            let (obj_txt, obj_bg, obj_bd, obj_fg) = if score < 50 {
+                ("OBJECTIF: COLLECTEZ 50 OR POUR LA PORTE", 0x00451A03, 0x00D97706, 0x00FDE047)
+            } else {
+                ("OBJECTIF ATTEINT ! PORTE OUVERTE, SORTEZ", 0x00064E3B, 0x0010B981, 0x006EE7B7)
+            };
+            canvas.draw_badge(268, 12, 400, 32, obj_bg, obj_bd, obj_txt, obj_fg, 2);
+
+            // Score Pill
             let score_txt = format!("SCORE: {}", score);
-            canvas.draw_text(w - 200, 18, &score_txt, 0x00FBBF24, 2);
+            canvas.draw_badge(678, 12, 115, 32, 0x001E293B, 0x00F59E0B, &score_txt, 0x00FBBF24, 2);
+
+            // Profil d'adaptation
+            let profile_color = self.adaptation.current_profile.color();
+            let profile_txt = format!("{}", self.adaptation.current_profile.name());
+            canvas.draw_badge(801, 12, 85, 32, 0x001E293B, profile_color, &profile_txt, profile_color, 2);
+
+            // Audio
+            let (audio_txt, audio_col) = if !self.audio.is_available {
+                ("AUDIO: N/D", 0x0094A3B8)
+            } else if self.audio.is_muted() {
+                ("AUDIO: OFF", 0x00EF4444)
+            } else {
+                ("AUDIO: ON", 0x0010B981)
+            };
+            canvas.draw_badge(894, 12, 95, 32, 0x001E293B, audio_col, audio_txt, audio_col, 2);
+
+            // Bouton Guide (? AIDE)
+            let help_x = w - 195;
+            let help_y = 12;
+            let help_w = 95;
+            let help_h = 32;
+            let help_bg = if self.editor.show_help_modal { 0x004F46E5 } else { 0x001E1B4B };
+            canvas.draw_badge(help_x, help_y, help_w as u32, help_h as u32, help_bg, 0x00818CF8, "[? AIDE]", 0x00E0E7FF, 2);
+            self.editor.help_btn_hitbox = Some((help_x, help_y, help_w as u32, help_h as u32));
+
+            // Bouton Bascule Studio [TAB]
+            canvas.draw_badge(w - 92, 12, 76, 32, 0x002E1065, 0x00A855F7, "STUDIO", 0x00F3E8FF, 2);
         }
 
-        // 2. Zone de jeu
+        // 2. Zone de jeu (Viewport)
         let play_area_w = if is_edit_mode { (w - 490).max(400) as u32 } else { (w - 40) as u32 };
-        let play_area_h = (h - 260).max(300) as u32;
+        let play_area_h = (h - 250).max(300) as u32;
 
-        canvas.draw_rect_outline(20, 70, play_area_w, play_area_h, if is_edit_mode { 0x006D28D9 } else { 0x002B364F }, 2);
+        let frame_border = if is_edit_mode { 0x004C1D95 } else { 0x001E293B };
+        let bracket_col = if is_edit_mode { 0x00A855F7 } else { 0x0038BDF8 };
+        canvas.draw_rect_outline(20, 66, play_area_w, play_area_h, frame_border, 2);
+        canvas.draw_corner_brackets(20, 66, play_area_w, play_area_h, 16, bracket_col);
+
+        // Légende discrète de zone de jeu
+        let viewport_tag = if is_edit_mode {
+            "STUDIO VIEWPORT (CLIQUEZ / GLISSEZ UNE ENTITE | P: SPAWN)"
+        } else {
+            "MONDE 2D ECS (ZQSD / FLECHES : DEPLACEMENT | E / ESPACE : INTERACTION)"
+        };
+        canvas.draw_text(30, 72, viewport_tag, 0x00475569, 1);
 
         // Visualisation de débogage de la Grille Spatiale (Touche G)
         if self.spatial_grid.debug_visible {
             let max_x = 20 + play_area_w as i32;
-            let max_y = 70 + play_area_h as i32;
+            let max_y = 66 + play_area_h as i32;
             let cs = self.spatial_grid.cell_size as i32;
             let mut gx = 20;
             while gx <= max_x {
-                canvas.draw_line(gx, 70, gx, max_y, 0x001B263B);
+                canvas.draw_line(gx, 66, gx, max_y, 0x001B263B);
                 gx += cs;
             }
-            let mut gy = 70;
+            let mut gy = 66;
             while gy <= max_y {
                 canvas.draw_line(20, gy, max_x, gy, 0x001B263B);
                 gy += cs;
             }
-            canvas.draw_text(30, 75, "GRILLE SPATIALE O(1) : ACTIVE (64px)", 0x0038BDF8, 1);
+            canvas.draw_text(30, 88, "GRILLE SPATIALE O(1) : ACTIVE (64px)", 0x0038BDF8, 1);
         }
 
         // Grille de repérage en mode édition
         if is_edit_mode {
             let max_x = 20 + play_area_w as i32;
-            let max_y = 70 + play_area_h as i32;
+            let max_y = 66 + play_area_h as i32;
             for gx in (30..max_x).step_by(40) {
-                for gy in (80..max_y).step_by(40) {
-                    canvas.draw_rect(gx, gy, 2, 2, 0x00334155);
+                for gy in (90..max_y).step_by(40) {
+                    canvas.draw_rect(gx, gy, 2, 2, 0x001E293B);
                 }
             }
         }
@@ -1649,22 +1735,28 @@ impl GameState {
 
         // 4. Rendu du Radar Tactique 2D Universel (Minimap)
         if self.show_minimap {
-            let mm_w = 170;
-            let mm_h = 100;
+            let mm_w = 175;
+            let mm_h = 110;
             let mm_x = if is_edit_mode { w - 460 - mm_w - 20 } else { w - mm_w - 30 };
-            let mm_y = 75;
+            let mm_y = 72;
 
             canvas.draw_rect(mm_x, mm_y, mm_w as u32, mm_h as u32, 0x0008101E);
             canvas.draw_rect_outline(mm_x, mm_y, mm_w as u32, mm_h as u32, 0x000284C7, 2);
+            canvas.draw_corner_brackets(mm_x, mm_y, mm_w as u32, mm_h as u32, 8, 0x0038BDF8);
 
-            canvas.draw_rect(mm_x, mm_y, mm_w as u32, 16, 0x000369A1);
-            canvas.draw_text(mm_x + 6, mm_y + 3, "RADAR ECS (N)", 0x00E0F2FE, 1);
+            canvas.draw_rect(mm_x, mm_y, mm_w as u32, 18, 0x000369A1);
+            canvas.draw_text(mm_x + 8, mm_y + 4, "RADAR TACTIQUE (N)", 0x00E0F2FE, 1);
 
-            canvas.draw_line(mm_x, mm_y + 55, mm_x + mm_w, mm_y + 55, 0x000E2A47);
-            canvas.draw_line(mm_x + (mm_w / 2), mm_y + 16, mm_x + (mm_w / 2), mm_y + mm_h, 0x000E2A47);
+            // Anneaux concentriques radar
+            let rcx = mm_x + (mm_w / 2);
+            let rcy = mm_y + 18 + ((mm_h - 18) / 2);
+            canvas.draw_circle(rcx, rcy, 22, 0x000D2847);
+            canvas.draw_circle(rcx, rcy, 40, 0x000A1C30);
+            canvas.draw_line(mm_x, rcy, mm_x + mm_w, rcy, 0x000E2A47);
+            canvas.draw_line(rcx, mm_y + 18, rcx, mm_y + mm_h, 0x000E2A47);
 
             let scale_x = (mm_w - 14) as f32 / 1130.0;
-            let scale_y = (mm_h - 28) as f32 / 520.0;
+            let scale_y = (mm_h - 32) as f32 / 520.0;
 
             let map_to_radar = |rx: f32, ry: f32| -> (i32, i32) {
                 let px = mm_x + 7 + ((rx - 30.0) * scale_x) as i32;
@@ -1686,7 +1778,7 @@ impl GameState {
                         let is_alerted = ent.vision.as_ref().map_or(false, |v| v.is_alerted);
                         let ecol = if is_alerted { 0x00EF4444 } else { 0x00A855F7 };
                         canvas.draw_rect(ex - 2, ey - 2, 5, 5, ecol);
-                        canvas.draw_line(ex, ey, ex - 10, ey, ecol);
+                        canvas.draw_line(ex, ey, ex - 8, ey, ecol);
                     }
                     "collectible" => {
                         canvas.draw_rect(ex - 1, ey - 1, 3, 3, 0x00FDE047);
@@ -1715,7 +1807,7 @@ impl GameState {
         // ========================================================
         if is_edit_mode {
             let insp_x = w - 460;
-            let insp_y = 70;
+            let insp_y = 66;
             let insp_w = 440;
             let insp_h = play_area_h;
 
@@ -1727,22 +1819,43 @@ impl GameState {
             self.editor.view_btn_hitbox = None;
 
             canvas.draw_rect(insp_x, insp_y, insp_w as u32, insp_h, 0x000F172A);
-            canvas.draw_rect_outline(insp_x, insp_y, insp_w as u32, insp_h, 0x0038BDF8, 2);
+            canvas.draw_rect_outline(insp_x, insp_y, insp_w as u32, insp_h, 0x007C3AED, 2);
+            canvas.draw_corner_brackets(insp_x, insp_y, insp_w as u32, insp_h, 16, 0x00A855F7);
 
-            canvas.draw_text(insp_x + 18, insp_y + 18, "INSPECTEUR D'OBJET & KVL", 0x0038BDF8, 2);
-            canvas.draw_rect(insp_x + 18, insp_y + 42, (insp_w - 36) as u32, 2, 0x00334155);
+            canvas.draw_badge(insp_x + 18, insp_y + 14, (insp_w - 36) as u32, 28, 0x002E1065, 0x00A855F7, "INSPECTEUR D'OBJET & KVL", 0x00F3E8FF, 2);
 
             match self.editor.selected {
                 SelectedEntity::None => {
-                    canvas.draw_text(insp_x + 18, insp_y + 65, "AUCUNE ENTITE SELECTIONNEE.", 0x0094A3B8, 2);
-                    canvas.draw_text(insp_x + 18, insp_y + 100, "Cliquez sur une entite", 0x0064748B, 2);
-                    canvas.draw_text(insp_x + 18, insp_y + 125, "du monde pour inspecter", 0x0064748B, 2);
-                    canvas.draw_text(insp_x + 18, insp_y + 150, "ou relier sa logique KVL.", 0x0064748B, 2);
+                    // Carte pédagogique de bienvenue dans le studio
+                    let card_y = insp_y + 54;
+                    canvas.draw_badge(insp_x + 18, card_y, (insp_w - 36) as u32, 26, 0x001E293B, 0x0038BDF8, "GUIDE PEDAGOGIQUE DU STUDIO", 0x00E0F2FE, 2);
+
+                    let guide_steps = [
+                        ("1. SELECTIONNER", "Cliquez sur une entite (ex: Joueur, Porte, Torche)", 0x0038BDF8),
+                        ("2. DEPLACER", "Glissez-deposez a la souris pour positionner l'entite", 0x0034D399),
+                        ("3. COMPOSER ECS", "Ajoutez Collider2D, Movement, Vision ou Emetteur", 0x00FBBF24),
+                        ("4. LOGIQUE KVL", "Editez les noeuds visuels et reliez les broches In / Out", 0x00C084FC),
+                        ("5. TESTER EN DIRECT", "Appuyez sur TAB pour jouer sans recharger !", 0x00F43F5E),
+                    ];
+
+                    let mut sy = card_y + 36;
+                    for (step_title, step_desc, col) in guide_steps {
+                        canvas.draw_rect(insp_x + 18, sy, (insp_w - 36) as u32, 46, 0x00131C2E);
+                        canvas.draw_rect_outline(insp_x + 18, sy, (insp_w - 36) as u32, 46, col, 1);
+                        canvas.draw_text(insp_x + 26, sy + 6, step_title, col, 2);
+                        canvas.draw_text(insp_x + 26, sy + 28, step_desc, 0x0094A3B8, 1);
+                        sy += 54;
+                    }
+
+                    canvas.draw_rect(insp_x + 18, sy + 6, (insp_w - 36) as u32, 1, 0x00334155);
+                    canvas.draw_text(insp_x + 18, sy + 16, "COMMANDES RAPIDES :", 0x00FBBF24, 2);
+                    canvas.draw_text(insp_x + 18, sy + 38, "P: Spawn | C+D: Dupliquer | Del: Suppr | C+S: Sauver", 0x00E2E8F0, 1);
+                    canvas.draw_text(insp_x + 18, sy + 54, "Espace: Vue KVL | H: Guide complet | TAB: Mode Jeu", 0x0038BDF8, 1);
                 }
                 SelectedEntity::Entity(idx) if idx < self.entities.len() => {
                     let ent = &self.entities[idx];
-                    let ent_title = format!("ENTITE : {} [{}]", ent.name.to_uppercase(), ent.tag.to_uppercase());
-                    let pos_str = format!("Pos: X:{:.0} Y:{:.0} (Dim: {:.0}x{:.0})", ent.transform.x, ent.transform.y, ent.transform.w, ent.transform.h);
+                    let ent_title = format!("{} [{}]", ent.name.to_uppercase(), ent.tag.to_uppercase());
+                    let pos_str = format!("Pos: X:{:.0} Y:{:.0} | Dim: {:.0}x{:.0}", ent.transform.x, ent.transform.y, ent.transform.w, ent.transform.h);
                     let ent_col = ent.renderable.as_ref().map_or(0x0038BDF8, |r| r.color);
 
                     if let Some(ref script_comp) = ent.script {
@@ -1750,81 +1863,71 @@ impl GameState {
                         self.render_entity_inspector(canvas, insp_x, insp_y, insp_w, &ent_title, ent_col, &pos_str, &p);
                     } else {
                         // Inspecteur de composant pour entité non scriptée (ex: mur solide, torche)
-                        canvas.draw_text(insp_x + 18, insp_y + 60, &ent_title, ent_col, 2);
-                        canvas.draw_text(insp_x + 18, insp_y + 88, &pos_str, 0x00F8FAFC, 2);
+                        canvas.draw_badge(insp_x + 18, insp_y + 54, (insp_w - 36) as u32, 28, 0x00131C2E, ent_col, &ent_title, ent_col, 2);
+                        canvas.draw_text(insp_x + 24, insp_y + 90, &pos_str, 0x00F8FAFC, 1);
 
-                        canvas.draw_rect(insp_x + 18, insp_y + 125, (insp_w - 36) as u32, 1, 0x00334155);
-                        canvas.draw_text(insp_x + 18, insp_y + 145, "COMPOSANTS ACTIFS :", 0x00FBBF24, 2);
+                        canvas.draw_rect(insp_x + 18, insp_y + 115, (insp_w - 36) as u32, 1, 0x00334155);
+                        canvas.draw_text(insp_x + 18, insp_y + 128, "COMPOSANTS ACTIFS (ECS) :", 0x00FBBF24, 2);
 
-                        let mut comp_y = insp_y + 175;
+                        let mut comp_y = insp_y + 154;
                         if let Some(ref col) = ent.collider {
-                            let col_desc = if col.is_solid { "- Collider2D (Solide / Bloquant)" } else { "- Collider2D (Trigger / Déclencheur)" };
-                            canvas.draw_text(insp_x + 18, comp_y, col_desc, 0x0034D399, 2);
-                            comp_y += 28;
+                            let col_desc = if col.is_solid { "Collider2D : Solide AABB (Bloquant)" } else { "Collider2D : Trigger (Zone detection)" };
+                            canvas.draw_badge(insp_x + 18, comp_y, (insp_w - 36) as u32, 24, 0x00064E3B, 0x0010B981, col_desc, 0x00A7F3D0, 1);
+                            comp_y += 30;
                         }
                         if let Some(ref mov) = ent.movement {
-                            let mov_desc = if mov.is_player_controlled { "- Movement2D (Contrôlé par Joueur)" } else { "- Movement2D (Patrouille autonome)" };
-                            canvas.draw_text(insp_x + 18, comp_y, mov_desc, 0x0038BDF8, 2);
-                            comp_y += 28;
+                            let mov_desc = if mov.is_player_controlled { "Movement2D : Joueur (Controle par ZQSD)" } else { "Movement2D : Patrouille IA autonome" };
+                            canvas.draw_badge(insp_x + 18, comp_y, (insp_w - 36) as u32, 24, 0x000C4A6E, 0x000284C7, mov_desc, 0x00BAE6FD, 1);
+                            comp_y += 30;
                         }
                         if let Some(ref vis) = ent.vision {
-                            let vis_desc = format!("- VisionSensing (Portée: {:.0})", vis.range);
-                            canvas.draw_text(insp_x + 18, comp_y, &vis_desc, 0x00F87171, 2);
-                            comp_y += 28;
+                            let vis_desc = format!("VisionSensing : Radar Raycast (Portee: {:.0}px)", vis.range);
+                            canvas.draw_badge(insp_x + 18, comp_y, (insp_w - 36) as u32, 24, 0x00450A0A, 0x00DC2626, &vis_desc, 0x00FECACA, 1);
+                            comp_y += 30;
                         }
                         if let Some(ref em) = ent.emitter {
                             let em_status = if em.is_emitting { "Actif" } else { "En Pause" };
-                            let em_desc = format!("- ParticleEmitter2D ({:.0} p/s, {})", em.rate, em_status);
-                            canvas.draw_text(insp_x + 18, comp_y, &em_desc, 0x00F97316, 2);
-                            comp_y += 28;
+                            let em_desc = format!("ParticleEmitter2D : Flammes ({:.0} p/s, {})", em.rate, em_status);
+                            canvas.draw_badge(insp_x + 18, comp_y, (insp_w - 36) as u32, 24, 0x00431407, 0x00EA580C, &em_desc, 0x00FFEDD5, 1);
+                            comp_y += 30;
                         }
                         if ent.renderable.is_some() {
-                            canvas.draw_text(insp_x + 18, comp_y, "- Renderable2D (Rendu Graphique)", 0x00A78BFA, 2);
-                            comp_y += 28;
+                            canvas.draw_badge(insp_x + 18, comp_y, (insp_w - 36) as u32, 24, 0x002E1065, 0x007C3AED, "Renderable2D : Forme Vectorielle Logique", 0x00EDE9FE, 1);
+                            comp_y += 30;
                         }
 
                         // Boutons d'ajout de composants manquants
-                        comp_y += 12;
+                        comp_y += 8;
                         canvas.draw_rect(insp_x + 18, comp_y, (insp_w - 36) as u32, 1, 0x00334155);
                         comp_y += 12;
-                        canvas.draw_text(insp_x + 18, comp_y, "ATTACHER UN COMPOSANT :", 0x00FBBF24, 2);
+                        canvas.draw_text(insp_x + 18, comp_y, "ATTACHER UN COMPOSANT :", 0x0038BDF8, 2);
                         comp_y += 24;
 
                         let btn_w = (insp_w - 36) as u32;
                         let btn_h = 28;
 
                         if ent.collider.is_none() {
-                            canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
-                            canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x0034D399, 1);
-                            canvas.draw_text(insp_x + 26, comp_y + 6, "[ + COLLIDER 2D (SOLIDE) ]", 0x0034D399, 2);
+                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x0034D399, "[ + COLLIDER 2D (SOLIDE AABB) ]", 0x0034D399, 2);
                             self.editor.add_comp_hitboxes.push(("Collider".into(), insp_x + 18, comp_y, btn_w, btn_h));
                             comp_y += 34;
                         }
                         if ent.movement.is_none() {
-                            canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
-                            canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x0038BDF8, 1);
-                            canvas.draw_text(insp_x + 26, comp_y + 6, "[ + MOVEMENT 2D (CINEMATIQUE) ]", 0x0038BDF8, 2);
+                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x0038BDF8, "[ + MOVEMENT 2D (CINEMATIQUE) ]", 0x0038BDF8, 2);
                             self.editor.add_comp_hitboxes.push(("Movement".into(), insp_x + 18, comp_y, btn_w, btn_h));
                             comp_y += 34;
                         }
                         if ent.vision.is_none() {
-                            canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
-                            canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x00F87171, 1);
-                            canvas.draw_text(insp_x + 26, comp_y + 6, "[ + VISION SENSING (RADAR) ]", 0x00F87171, 2);
+                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x00F87171, "[ + VISION SENSING (RADAR) ]", 0x00F87171, 2);
                             self.editor.add_comp_hitboxes.push(("Vision".into(), insp_x + 18, comp_y, btn_w, btn_h));
                             comp_y += 34;
                         }
                         if ent.emitter.is_none() {
-                            canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
-                            canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x00F97316, 1);
-                            canvas.draw_text(insp_x + 26, comp_y + 6, "[ + PARTICLE EMITTER 2D (FLAMMES) ]", 0x00F97316, 2);
+                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x00F97316, "[ + PARTICLE EMITTER (FLAMMES) ]", 0x00F97316, 2);
                             self.editor.add_comp_hitboxes.push(("Emitter".into(), insp_x + 18, comp_y, btn_w, btn_h));
                             comp_y += 34;
                         }
                         if ent.script.is_none() {
-                            canvas.draw_rect(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B);
-                            canvas.draw_rect_outline(insp_x + 18, comp_y, btn_w, btn_h, 0x00A78BFA, 1);
-                            canvas.draw_text(insp_x + 26, comp_y + 6, "[ + SCRIPT KVL (LOGIQUE) ]", 0x00A78BFA, 2);
+                            canvas.draw_badge(insp_x + 18, comp_y, btn_w, btn_h, 0x001E293B, 0x00A78BFA, "[ + SCRIPT KVL (LOGIQUE) ]", 0x00A78BFA, 2);
                             self.editor.add_comp_hitboxes.push(("Script".into(), insp_x + 18, comp_y, btn_w, btn_h));
                         }
                     }
@@ -1835,13 +1938,14 @@ impl GameState {
 
         // Overlay de la palette de spawn d'entités (Touche P ou Bouton [+ SPAWN])
         if is_edit_mode && self.editor.show_spawn_palette {
-            let pal_w = 420;
-            let pal_h = 365;
+            let pal_w = 440;
+            let pal_h = 370;
             let pal_x = 160;
-            let pal_y = 90;
+            let pal_y = 80;
 
             canvas.draw_rect(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x000F172A);
-            canvas.draw_rect_outline(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x0038BDF8, 3);
+            canvas.draw_rect_outline(pal_x, pal_y, pal_w as u32, pal_h as u32, 0x0038BDF8, 2);
+            canvas.draw_corner_brackets(pal_x, pal_y, pal_w as u32, pal_h as u32, 16, 0x0038BDF8);
 
             canvas.draw_rect(pal_x, pal_y, pal_w as u32, 34, 0x000284C7);
             canvas.draw_text(pal_x + 14, pal_y + 8, "STUDIO : CREER UNE NOUVELLE ENTITE", 0x00FFFFFF, 2);
@@ -1861,9 +1965,7 @@ impl GameState {
                 let item_w = pal_w - 24;
                 let item_h = 34;
 
-                canvas.draw_rect(pal_x + 12, item_y, item_w as u32, item_h as u32, 0x001E293B);
-                canvas.draw_rect_outline(pal_x + 12, item_y, item_w as u32, item_h as u32, *col, 1);
-                canvas.draw_text(pal_x + 20, item_y + 8, tpl_name, *col, 2);
+                canvas.draw_badge(pal_x + 12, item_y, item_w as u32, item_h as u32, 0x001E293B, *col, tpl_name, *col, 2);
 
                 self.editor.spawn_palette_hitboxes.push(crate::editor::PaletteItemHitbox {
                     template_id: tpl_id.to_string(),
@@ -1875,25 +1977,66 @@ impl GameState {
             }
         }
 
-        // 3. Bandeau inférieur : Statut et traçabilité KVL (Hauteur 180px)
-        let bottom_y = h - 180;
-        canvas.draw_rect(0, bottom_y, w as u32, 180, 0x000F172A);
-        canvas.draw_rect(0, bottom_y, w as u32, 2, 0x00334155);
+        // 3. Bandeau inférieur : Commandes pédagogiques, statut et traces KVL (Hauteur 175px)
+        let bottom_y = h - 175;
+        canvas.draw_rect(0, bottom_y, w as u32, 175, 0x000F172A);
+        canvas.draw_rect(0, bottom_y, w as u32, 2, 0x001E293B);
 
-        let info_line = if is_edit_mode {
-            "STUDIO ECS : P (Spawn) | Ctrl+D (Dupliquer) | Suppr (Effacer) | Ctrl+S (Sauver) | Espace (KVL) | TAB (Jouer)"
+        // Ruban de commandes rapides claires et pédagogiques
+        if is_edit_mode {
+            let pills = [
+                ("P: Spawn", 0x007C3AED, 0x00C084FC),
+                ("C+D: Dupliquer", 0x00B45309, 0x00FDE68A),
+                ("Del: Suppr", 0x00B91C1C, 0x00FECACA),
+                ("C+S: Sauver", 0x00047857, 0x00A7F3D0),
+                ("Espace: KVL", 0x000369A1, 0x00BAE6FD),
+                ("H: Guide", 0x004338CA, 0x00E0E7FF),
+                ("TAB: Mode Jeu", 0x00065F46, 0x00D1FAE5),
+            ];
+            let mut px = 20;
+            for (p_txt, p_bg, p_fg) in pills {
+                let pw = (p_txt.len() as i32 * 12 + 18) as u32;
+                canvas.draw_badge(px, bottom_y + 8, pw, 26, p_bg, p_fg, p_txt, p_fg, 2);
+                px += pw as i32 + 8;
+            }
         } else {
-            "MODE JEU ECS : TAB (Studio ECS) | N (Radar) | G (Grille) | M (Son) | F1 (Telemetrie) | F2 (Profil) | F3 (Auto) | R (Reload)"
-        };
-        canvas.draw_text(20, bottom_y + 14, info_line, 0x0094A3B8, 2);
-        canvas.draw_text(20, bottom_y + 40, &self.status_message, 0x0038BDF8, 2);
+            let pills = [
+                ("ZQSD / Fleches: Bouger", 0x000369A1, 0x00E0F2FE),
+                ("E / Espace: Interagir", 0x00B45309, 0x00FDE68A),
+                ("TAB: Studio ECS", 0x006B21A8, 0x00F3E8FF),
+                ("H: Guide Interactif", 0x004338CA, 0x00E0E7FF),
+                ("N: Radar", 0x00047857, 0x00D1FAE5),
+                ("G: Grille O(1)", 0x001E293B, 0x0094A3B8),
+                ("M: Audio", 0x001E293B, 0x0094A3B8),
+                ("F1: Telemetrie", 0x001E293B, 0x0094A3B8),
+            ];
+            let mut px = 20;
+            for (p_txt, p_bg, p_fg) in pills {
+                let pw = (p_txt.len() as i32 * 12 + 18) as u32;
+                canvas.draw_badge(px, bottom_y + 8, pw, 26, p_bg, p_fg, p_txt, p_fg, 2);
+                px += pw as i32 + 8;
+            }
+        }
 
-        canvas.draw_text(20, bottom_y + 72, "TRACES RUNTIME KVL :", 0x0094A3B8, 2);
+        // Ligne de statut du moteur
+        canvas.draw_badge(20, bottom_y + 42, 110, 24, 0x001E293B, 0x0038BDF8, "ETAT MOTEUR", 0x0038BDF8, 1);
+        canvas.draw_text(140, bottom_y + 46, &self.status_message, 0x00F8FAFC, 2);
+
+        // Console de traçabilité d'exécution KVL
+        let console_y = bottom_y + 74;
+        canvas.draw_rect(20, console_y, (w - 40) as u32, 92, 0x000A0F1D);
+        canvas.draw_rect_outline(20, console_y, (w - 40) as u32, 92, 0x001E293B, 1);
+        canvas.draw_text(30, console_y + 6, "CONSOLE RUNTIME KVL (FLUX REACTIF DE LA LOGIQUE) :", 0x0064748B, 1);
+
         let log_count = self.kvl_context.execution_log.len();
         let start_idx = log_count.saturating_sub(3);
-        for (i, step) in self.kvl_context.execution_log[start_idx..].iter().enumerate() {
-            let trace_line = format!("- [{}] {} : {}", step.node_id, step.node_name, step.message);
-            canvas.draw_text(20, bottom_y + 102 + (i as i32 * 26), &trace_line, 0x00A7F3D0, 2);
+        if self.kvl_context.execution_log.is_empty() {
+            canvas.draw_text(30, console_y + 30, "En attente d'evenements d'execution (deplacez-vous sur une piece ou vers la porte)...", 0x00475569, 2);
+        } else {
+            for (i, step) in self.kvl_context.execution_log[start_idx..].iter().enumerate() {
+                let trace_line = format!("> [{}] {} : {}", step.node_id, step.node_name, step.message);
+                canvas.draw_text(30, console_y + 26 + (i as i32 * 20), &trace_line, 0x00A7F3D0, 2);
+            }
         }
 
         // Overlay Télémétrie en Mode Jeu (F1)
@@ -1905,6 +2048,7 @@ impl GameState {
 
             canvas.draw_rect(ov_x, ov_y, ov_w as u32, ov_h as u32, 0x000A0F1D);
             canvas.draw_rect_outline(ov_x, ov_y, ov_w as u32, ov_h as u32, 0x0038BDF8, 2);
+            canvas.draw_corner_brackets(ov_x, ov_y, ov_w as u32, ov_h as u32, 12, 0x0038BDF8);
 
             canvas.draw_text(ov_x + 16, ov_y + 16, "PROFILAGE & TELEMETRIE (F1)", 0x0038BDF8, 2);
 
@@ -1947,6 +2091,76 @@ impl GameState {
                 }
             }
         }
+
+        // Fenêtre Modale de Guide Pédagogique Interactif (Touche H ou Bouton ? AIDE)
+        if self.editor.show_help_modal {
+            self.render_help_modal(canvas, w, h);
+        }
+    }
+
+    /// Rendu de la fenêtre modale de guide pédagogique interactif
+    fn render_help_modal(&mut self, canvas: &mut Canvas, screen_w: i32, screen_h: i32) {
+        let mw = 760;
+        let mh = 560;
+        let mx = (screen_w - mw) / 2;
+        let my = (screen_h - mh) / 2;
+
+        // Ombrage d'arrière-plan
+        canvas.draw_rect(0, 0, screen_w as u32, screen_h as u32, 0x00060913);
+        canvas.draw_rect(mx, my, mw as u32, mh as u32, 0x000F172A);
+        canvas.draw_rect_outline(mx, my, mw as u32, mh as u32, 0x0038BDF8, 2);
+        canvas.draw_corner_brackets(mx, my, mw as u32, mh as u32, 20, 0x0038BDF8);
+
+        // Barre d'en-tête
+        canvas.draw_rect(mx, my, mw as u32, 40, 0x000284C7);
+        canvas.draw_text(mx + 16, my + 11, "GUIDE PEDAGOGIQUE ET ARCHITECTURE DU MOTEUR", 0x00FFFFFF, 2);
+        canvas.draw_badge(mx + mw - 110, my + 7, 95, 26, 0x000369A1, 0x0038BDF8, "[ECHAP]", 0x00E0F2FE, 1);
+
+        // Section 1 : LES 2 MODES DE TRAVAIL
+        let mut cy = my + 54;
+        canvas.draw_badge(mx + 20, cy, 260, 24, 0x001E293B, 0x0038BDF8, "1. LES DEUX MODES DE TRAVAIL", 0x0038BDF8, 2);
+        cy += 30;
+        canvas.draw_text(mx + 24, cy, "- [TAB] MODE JEU : Test en direct, controle du joueur, physique et scripts KVL.", 0x00F8FAFC, 1);
+        cy += 18;
+        canvas.draw_text(mx + 24, cy, "- [TAB] MODE STUDIO ECS : Creation de scene, authoring d'objets, cablage visuel KVL.", 0x00F8FAFC, 1);
+        cy += 28;
+
+        // Section 2 : ARCHITECTURE ENTITE-COMPOSANTS (ECS)
+        canvas.draw_badge(mx + 20, cy, 330, 24, 0x001E293B, 0x0010B981, "2. ARCHITECTURE ENTITE-COMPOSANTS (ECS)", 0x0010B981, 2);
+        cy += 30;
+        canvas.draw_text(mx + 24, cy, "- ENTITE : Conteneur universel identifie par un ID unique, nom et tag.", 0x00E2E8F0, 1);
+        cy += 18;
+        canvas.draw_text(mx + 24, cy, "- COMPOSANTS : Caracteristiques modulaires attachables a toute entite :", 0x00E2E8F0, 1);
+        cy += 18;
+        canvas.draw_text(mx + 36, cy, "* Transform2D (x, y, w, h) | Collider2D (Solide AABB / Trigger)", 0x0094A3B8, 1);
+        cy += 18;
+        canvas.draw_text(mx + 36, cy, "* Movement2D (Joueur ou IA) | VisionSensing (Raycast de vue)", 0x0094A3B8, 1);
+        cy += 18;
+        canvas.draw_text(mx + 36, cy, "* ParticleEmitter2D (Flammes/Aura) | KVLScriptComponent (Logique)", 0x0094A3B8, 1);
+        cy += 18;
+        canvas.draw_text(mx + 24, cy, "- SYSTEMES AGNOSTIQUES : Boucles decouplees executant la logique (Zero Alloc per frame).", 0x00E2E8F0, 1);
+        cy += 28;
+
+        // Section 3 : LANGAGE VISUEL KVL
+        canvas.draw_badge(mx + 20, cy, 310, 24, 0x001E293B, 0x00F59E0B, "3. LE LANGAGE VISUEL KVL EN ACTION", 0x00F59E0B, 2);
+        cy += 30;
+        canvas.draw_text(mx + 24, cy, "- EVENT : Point d'entree declenche par le moteur (OnOverlap, OnInteract, OnSeen).", 0x00FDE047, 1);
+        cy += 18;
+        canvas.draw_text(mx + 24, cy, "- CONDITION : Evaluation logique orientant vers [Vrai:Out] ou [Faux:Out].", 0x00FDE047, 1);
+        cy += 18;
+        canvas.draw_text(mx + 24, cy, "- ACTION : Mutation du monde ou joueur (BonusPoints, BoostSpeed, ToggleDoor...).", 0x00FDE047, 1);
+        cy += 28;
+
+        // Section 4 : RACCOURCIS CLAVIER DU STUDIO
+        canvas.draw_badge(mx + 20, cy, 320, 24, 0x001E293B, 0x00A855F7, "4. RACCOURCIS CLAVIER DU STUDIO", 0x00A855F7, 2);
+        cy += 30;
+        canvas.draw_text(mx + 24, cy, "P : Spawn Entite | Ctrl+D : Dupliquer | Suppr : Effacer | Ctrl+S : Sauvegarder", 0x00C084FC, 1);
+        cy += 18;
+        canvas.draw_text(mx + 24, cy, "Espace : Vue Macro / Cablage | N : Radar | G : Grille O(1) | M : Audio | F1 : Profilage", 0x00C084FC, 1);
+
+        // Bouton de fermeture
+        let close_btn_y = my + mh - 46;
+        canvas.draw_badge(mx + 20, close_btn_y, (mw - 40) as u32, 34, 0x00065F46, 0x0010B981, "[ FERMER LE GUIDE PEDAGOGIQUE (H OU ECHAP) ]", 0x00ECFDF5, 2);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1971,26 +2185,20 @@ impl GameState {
         let save_x = insp_x + 18;
         let add_x = save_x + btn_half_w as i32 + 8;
 
-        canvas.draw_rect(save_x, row1_y, btn_half_w, 32, 0x00059669);
-        canvas.draw_rect_outline(save_x, row1_y, btn_half_w, 32, 0x0010B981, 1);
-        canvas.draw_text(save_x + 10, row1_y + 8, "[ SAUVER (CTRL+S) ]", 0x00FFFFFF, 2);
+        canvas.draw_badge(save_x, row1_y, btn_half_w, 32, 0x00064E3B, 0x0010B981, "[ SAUVER (C+S) ]", 0x00D1FAE5, 2);
         self.editor.save_btn_hitbox = Some((save_x, row1_y, btn_half_w, 32));
 
-        canvas.draw_rect(add_x, row1_y, btn_half_w, 32, 0x004F46E5);
-        canvas.draw_rect_outline(add_x, row1_y, btn_half_w, 32, 0x00818CF8, 1);
-        canvas.draw_text(add_x + 12, row1_y + 8, "[ + NOUVEAU NOEUD ]", 0x00FFFFFF, 2);
+        canvas.draw_badge(add_x, row1_y, btn_half_w, 32, 0x003730A3, 0x00818CF8, "[ + NOEUD ]", 0x00E0E7FF, 2);
         self.editor.add_node_btn_hitbox = Some((add_x, row1_y, btn_half_w, 32));
 
-        let view_btn_bg = if self.editor.is_detailed_view { 0x00047857 } else { 0x001D4ED8 };
+        let view_btn_bg = if self.editor.is_detailed_view { 0x00047857 } else { 0x001E3A8A };
         let view_btn_y = insp_y + 144;
-        canvas.draw_rect(insp_x + 18, view_btn_y, btn_w, 32, view_btn_bg);
-        canvas.draw_rect_outline(insp_x + 18, view_btn_y, btn_w, 32, 0x0038BDF8, 1);
         let view_btn_txt = if self.editor.is_detailed_view {
             "[ VUE DETAILLEE : CABLAGE (ESPACE) ]"
         } else {
             "[ VUE SIMPLIFIEE : MACRO (ESPACE) ]"
         };
-        canvas.draw_text(insp_x + 28, view_btn_y + 8, view_btn_txt, 0x00FFFFFF, 2);
+        canvas.draw_badge(insp_x + 18, view_btn_y, btn_w, 32, view_btn_bg, 0x0038BDF8, view_btn_txt, 0x00FFFFFF, 2);
         self.editor.view_btn_hitbox = Some((insp_x + 18, view_btn_y, btn_w, 32));
 
         let graph = match self.kvl_graphs.get(script_path) {
@@ -2002,40 +2210,41 @@ impl GameState {
         };
 
         if !self.editor.is_detailed_view {
-            canvas.draw_text(insp_x + 18, insp_y + 186, "CHAINE LOGIQUE VISUELLE :", 0x0038BDF8, 2);
+            canvas.draw_badge(insp_x + 18, insp_y + 186, btn_w, 24, 0x000C4A6E, 0x000284C7, "FLUX D'EXECUTION LOGIQUE (KVL) :", 0x00BAE6FD, 1);
 
             let mut sorted_nodes: Vec<&Node> = graph.nodes.values().collect();
             sorted_nodes.sort_by_key(|n| match n.kind {
                 NodeKind::Event { .. } => 0,
-                NodeKind::Action { ref action_type } if action_type == "AddScore" => 1,
-                _ => 2,
+                NodeKind::Condition { .. } => 1,
+                NodeKind::Action { ref action_type } if action_type == "AddScore" => 2,
+                _ => 3,
             });
 
             for (idx, node) in sorted_nodes.iter().enumerate() {
-                let block_y = insp_y + 215 + (idx as i32 * 56);
-                let (box_col, badge) = match node.kind {
-                    NodeKind::Event { .. } => (0x000284C7, "1. EVENT :"),
-                    NodeKind::Condition { .. } => (0x00D97706, "? CONDITION :"),
-                    NodeKind::Action { ref action_type } if action_type == "BonusPoints" => (0x00F59E0B, "BONUS :"),
-                    NodeKind::Action { ref action_type } if action_type == "BoostSpeed" => (0x0006B6D4, "SPEED :"),
-                    NodeKind::Action { ref action_type } if action_type == "SpawnSparkles" => (0x00EC4899, "FX :"),
-                    NodeKind::Action { ref action_type } if action_type == "DenyAccess" => (0x00DC2626, "! REFUS :"),
-                    _ if idx == 1 => (0x00059669, "ACTION :"),
-                    _ => (0x009333EA, "EFFET :"),
+                let block_y = insp_y + 218 + (idx as i32 * 54);
+                let (box_bg, box_bd, badge) = match node.kind {
+                    NodeKind::Event { .. } => (0x00082F49, 0x000284C7, "1. QUAND :"),
+                    NodeKind::Condition { .. } => (0x00451A03, 0x00D97706, "2. SI (TEST) :"),
+                    NodeKind::Action { ref action_type } if action_type == "BonusPoints" => (0x0078350F, 0x00F59E0B, "BONUS :"),
+                    NodeKind::Action { ref action_type } if action_type == "BoostSpeed" => (0x00164E63, 0x0006B6D4, "VITESSE :"),
+                    NodeKind::Action { ref action_type } if action_type == "SpawnSparkles" => (0x00831843, 0x00EC4899, "PARTICULES :"),
+                    NodeKind::Action { ref action_type } if action_type == "DenyAccess" => (0x007F1D1D, 0x00DC2626, "! REFUS :"),
+                    _ if idx == 1 => (0x00064E3B, 0x00059669, "3. ALORS :"),
+                    _ => (0x003B0764, 0x009333EA, "EFFET :"),
                 };
 
-                canvas.draw_rect(insp_x + 18, block_y, btn_w, 38, 0x001E293B);
-                canvas.draw_rect_outline(insp_x + 18, block_y, btn_w, 38, box_col, 2);
+                canvas.draw_rect(insp_x + 18, block_y, btn_w, 36, box_bg);
+                canvas.draw_rect_outline(insp_x + 18, block_y, btn_w, 36, box_bd, 1);
 
                 let label = format!("{} {}", badge, node.name);
                 canvas.draw_text(insp_x + 28, block_y + 10, &label, 0x00F8FAFC, 2);
 
                 if idx + 1 < sorted_nodes.len() {
-                    canvas.draw_text(insp_x + (btn_w as i32 / 2) - 4, block_y + 40, "V", 0x00FBBF24, 2);
+                    canvas.draw_text(insp_x + (btn_w as i32 / 2) - 4, block_y + 38, "V", 0x00FBBF24, 2);
                 }
             }
         } else {
-            canvas.draw_text(insp_x + 18, insp_y + 186, "CABLAGE DE NOEUDS & PINS :", 0x0010B981, 2);
+            canvas.draw_badge(insp_x + 18, insp_y + 186, btn_w, 24, 0x00064E3B, 0x0010B981, "CABLAGE VISUEL : RELIEZ SORTIE > ENTREE", 0x00D1FAE5, 1);
 
             let mut sorted_nodes: Vec<&Node> = graph.nodes.values().collect();
             sorted_nodes.sort_by_key(|n| match n.kind {
@@ -2659,6 +2868,60 @@ mod tests {
         state.kvl_context.set_var("emitter_active", Value::Bool(false));
         state.update(0.016, &input);
         assert!(!state.entities[torch_idx].emitter.as_ref().unwrap().is_emitting, "L'émetteur doit être mis en pause");
+    }
+
+    #[test]
+    fn test_interactive_help_modal_toggle_and_dismiss() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        assert!(!state.editor.show_help_modal, "L'aide doit être fermée par défaut");
+
+        // 1. Ouvrir avec la touche H
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyH);
+        state.update(0.016, &input);
+        assert!(state.editor.show_help_modal, "La touche H doit ouvrir le guide pédagogique");
+
+        // 2. Fermer avec Échap
+        let mut input2 = InputState::new();
+        input2.on_key_down(KeyCode::Escape);
+        state.update(0.016, &input2);
+        assert!(!state.editor.show_help_modal, "La touche Échap doit fermer le guide pédagogique");
+
+        // 3. Rouvrir avec H et fermer par clic
+        let mut input3 = InputState::new();
+        input3.on_key_down(KeyCode::KeyH);
+        state.update(0.016, &input3);
+        assert!(state.editor.show_help_modal);
+
+        let mut input4 = InputState::new();
+        input4.on_mouse_down();
+        state.update(0.016, &input4);
+        assert!(!state.editor.show_help_modal, "Un clic doit fermer la modale d'aide");
+    }
+
+    #[test]
+    fn test_pedagogical_hud_objective_and_badges() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        let mut canvas = Canvas::new(1200, 800);
+
+        // 1. Rendu en mode jeu avec objectif non atteint (< 50)
+        state.render(&mut canvas);
+        assert!(canvas.buffer.iter().any(|&p| p != 0x000B0F19), "Le canvas doit être rendu avec des éléments d'interface");
+
+        // 2. Passer le score à 60 (objectif atteint) et vérifier le rendu sans régression
+        state.kvl_context.set_var("score", Value::Int(60));
+        state.render(&mut canvas);
+
+        // 3. Basculer en mode Studio ECS et vérifier l'affichage du guide et des badges
+        state.editor.toggle_mode();
+        state.render(&mut canvas);
+        assert!(state.editor.spawn_btn_hitbox.is_some(), "Le bouton SPAWN doit avoir une hitbox en mode studio");
+        assert!(state.editor.top_save_btn_hitbox.is_some(), "Le bouton SAUVER doit avoir une hitbox");
+        assert!(state.editor.help_btn_hitbox.is_some(), "Le bouton ? AIDE doit avoir une hitbox");
     }
 }
 

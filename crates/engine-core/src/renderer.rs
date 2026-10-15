@@ -129,6 +129,46 @@ impl Canvas {
             cur_x += (6 * scale) as i32;
         }
     }
+
+    /// Dessine des coins technologiques biseautés / cornières pour encadrer des zones
+    pub fn draw_corner_brackets(&mut self, x: i32, y: i32, w: u32, h: u32, len: i32, color: u32) {
+        let x2 = x + w as i32 - 1;
+        let y2 = y + h as i32 - 1;
+        // Haut-Gauche
+        self.draw_line(x, y, x + len, y, color);
+        self.draw_line(x, y, x, y + len, color);
+        // Haut-Droite
+        self.draw_line(x2, y, x2 - len, y, color);
+        self.draw_line(x2, y, x2, y + len, color);
+        // Bas-Gauche
+        self.draw_line(x, y2, x + len, y2, color);
+        self.draw_line(x, y2, x, y2 - len, color);
+        // Bas-Droite
+        self.draw_line(x2, y2, x2 - len, y2, color);
+        self.draw_line(x2, y2, x2, y2 - len, color);
+    }
+
+    /// Dessine un badge / pilule d'action élégant avec fond, bordure et texte centré
+    pub fn draw_badge(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+        bg_col: u32,
+        border_col: u32,
+        text: &str,
+        text_col: u32,
+        scale: usize,
+    ) {
+        self.draw_rect(x, y, w, h, bg_col);
+        self.draw_rect_outline(x, y, w, h, border_col, 1);
+        let text_w = text.len() as i32 * 6 * scale as i32;
+        let text_h = 7 * scale as i32;
+        let tx = x + (w as i32 - text_w) / 2;
+        let ty = y + (h as i32 - text_h) / 2;
+        self.draw_text(tx, ty, text, text_col, scale);
+    }
 }
 
 /// Glyphes 5x7 basiques pour chiffres, lettres et symboles majeurs
@@ -187,6 +227,19 @@ fn get_char_glyph(c: char) -> Option<[u8; 7]> {
         '!' => Some([0b00100, 0b00100, 0b00100, 0b00100, 0b00000, 0b00100, 0b00000]),
         '.' => Some([0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00000]),
         ' ' => Some([0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000]),
+        '?' => Some([0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b00000, 0b00100]),
+        '_' => Some([0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111]),
+        '|' => Some([0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100]),
+        '#' => Some([0b01010, 0b11111, 0b01010, 0b01010, 0b11111, 0b01010, 0b00000]),
+        '%' => Some([0b11001, 0b11010, 0b00100, 0b01000, 0b01011, 0b10011, 0b00000]),
+        ';' => Some([0b00000, 0b00100, 0b00000, 0b00000, 0b00100, 0b00100, 0b01000]),
+        '\'' => Some([0b00100, 0b00100, 0b01000, 0b00000, 0b00000, 0b00000, 0b00000]),
+        '"' => Some([0b01010, 0b01010, 0b10100, 0b00000, 0b00000, 0b00000, 0b00000]),
+        '{' => Some([0b00110, 0b00100, 0b00100, 0b01100, 0b00100, 0b00100, 0b00110]),
+        '}' => Some([0b01100, 0b00100, 0b00100, 0b00110, 0b00100, 0b00100, 0b01100]),
+        '$' => Some([0b00100, 0b01111, 0b10100, 0b01110, 0b00101, 0b11110, 0b00100]),
+        '~' => Some([0b00000, 0b01101, 0b10010, 0b00000, 0b00000, 0b00000, 0b00000]),
+        '@' => Some([0b01110, 0b10001, 0b01101, 0b10101, 0b10110, 0b10000, 0b01111]),
         _ => Some([0b11111, 0b10001, 0b10101, 0b10101, 0b10001, 0b11111, 0b00000]), // Carré de fallback
     }
 }
