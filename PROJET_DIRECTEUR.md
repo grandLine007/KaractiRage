@@ -366,6 +366,39 @@
   * 0 avertissement de compilation (`cargo check --all-targets`).
   * WebAssembly recompilé et optimisé (557 Ko).
 
+### Étape 21 : Moteur Multi-Genres & Physique Modulaire Universelle (Platformer, Shmup Spatial, Puzzle Sokoban, Top-Down & Tirs Balistiques) *(15 Octobre 2026)*
+* **Directive de l'Utilisateur** : *"On continue, n'oublie pas que le moteur de jeu a pour objectif de permettre de créer tous les types de jeu possibles, pas un seul genre."*
+* **Réalisations** :
+  * **Architecture de Physique & Déplacement Multi-Genres (`MovementMode`)** :
+    * `MovementMode::TopDown` : Contrôleur omnidirectionnel 4/8 axes pour RPG, Aventure, Dungeon Crawlers, avec glissement AABB le long des murs.
+    * `MovementMode::Platformer { gravity, jump_force, is_grounded, max_fall_speed }` : Contrôleur de Plateforme 2D / Side-Scroller avec gravité continue, impulsion de saut vertical, détection d'appui au sol et plafonds.
+    * `MovementMode::SpaceInertia { angular_speed, thrust, drag }` : Contrôleur de Vaisseau Spatial / Asteroids / Shmup avec rotation angulaire, poussée vectorielle et friction d'amortissement newtonienne.
+    * `MovementMode::Grid { cell_size, cooldown, timer }` : Contrôleur de Déplacement par Grille pas-à-pas quantifié pour jeux de tactique, Sokoban, et roguelikes au tour par tour.
+  * **Composant Balistique Universel (`Projectile2D`) & Système 2.5** :
+    * Spawning de tirs lasers / balles avec vélocité directionnelle (`Entity::spawn_projectile()`).
+    * Simulation balistique et détection de collision large bande O(1) via la Grille Hash Spatiale.
+    * Neutralisation des cibles ennemies, incrémentation du score KVL et gerbes d'étincelles.
+  * **Mécanique de Puzzles & Blocs Poussables Sokoban (`Collider2D::is_pushable`)** :
+    * Support des caisses poussables : poussée directionnelle lorsque le joueur entre en collision, avec vérification préalable que l'espace derrière le bloc est dégagé.
+    * **Système 4.5** : Dalles de pression réactives (`"plate"`) détectant les caisses poussables, coloration dynamique émeraude et déverrouillage automatique des sas/portails de sanctuaire.
+  * **Synthèse Audio Procédurale Rétro Étendue** :
+    * `SoundType::PlayerJump` : Sifflement rétro ascendant (160 Hz $\rightarrow$ 440 Hz).
+    * `SoundType::LaserShoot` : Balayage laser rapide (950 Hz $\rightarrow$ 200 Hz).
+    * `SoundType::BlockPush` : Impact sourd et frottement de friction lourd (90 Hz $\rightarrow$ 55 Hz avec bruit de grain).
+  * **Quatre Scènes de Démonstration Multi-Genres Pré-intégrées** :
+    1. `level_01.scene.json` : Aventure Donjon (Top-Down RPG avec sentinelles à cône de vue).
+    2. `platformer_01.scene.json` : Plateforme 2D (Sauts, gouffres, plateformes flottantes et portail céleste).
+    3. `space_01.scene.json` : Shoot'em Up Spatial (Vaisseau à inertie, astéroïdes, tirs lasers).
+    4. `puzzle_01.scene.json` : Sanctuaire des Mécanismes (Caisses runiques poussables et dalles de pression).
+  * **Cycleur Live Multi-Genres & Interface Pédagogique** :
+    * Bascule instantanée entre tous les genres via `F4` / `L` (suivant) ou `F5` (précédent).
+    * Adaptation dynamique du badge de genre, de la carte d'objectif et de la légende des commandes.
+    * Refonte complète de la modale d'aide pédagogique (`H`) expliquant l'architecture universelle agnostique.
+* **Mesures & Benchmarks** :
+  * **66/66 tests unitaires validés à 100%** sur l'ensemble du Workspace Cargo (+10 tests dédiés aux contrôleurs de plateforme, inertie spatiale, tirs balistiques, blocs poussables, déplacement grille et cycleur de scènes).
+  * **0 avertissement de compilation** (`cargo check --all-targets`).
+  * WebAssembly recompilé et opérationnel (`./scripts/build_web.sh`).
+
 ---
 
 ## 4. Observations & Directives de l'Utilisateur

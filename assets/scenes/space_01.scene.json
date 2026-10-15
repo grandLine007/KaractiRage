@@ -1,0 +1,219 @@
+{
+  "name": "Niveau Spatial : Ceinture d'Astéroïdes",
+  "description": "Démonstration du contrôleur spatial à inertie newtonienne (rotation angulaire, poussée, tirs de projectiles et dérive).",
+  "entities": [
+    {
+      "id": 1,
+      "name": "Chasseur Stellaire",
+      "tag": "player",
+      "transform": {
+        "x": 200.0,
+        "y": 300.0,
+        "w": 40.0,
+        "h": 40.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 3718648,
+        "outline_color": 16777215,
+        "outline_width": 2,
+        "z_index": 10,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 40.0,
+        "h": 40.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "layer": 1
+      },
+      "movement": {
+        "vx": 0.0,
+        "vy": 0.0,
+        "speed": 350.0,
+        "is_player_controlled": true,
+        "patrol": null,
+        "mode": {
+          "SpaceInertia": {
+            "angular_speed": 4.5,
+            "thrust": 450.0,
+            "drag": 0.985
+          }
+        }
+      },
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "is_active": true
+    },
+    {
+      "id": 2,
+      "name": "Astéroïde Alpha",
+      "tag": "wall",
+      "transform": {
+        "x": 520.0,
+        "y": 140.0,
+        "w": 70.0,
+        "h": 70.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": { "Circle": { "radius": 35.0 } },
+        "color": 5066061,
+        "outline_color": 7368816,
+        "outline_width": 2,
+        "z_index": 2,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 70.0,
+        "h": 70.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "is_active": true
+    },
+    {
+      "id": 3,
+      "name": "Astéroïde Bêta",
+      "tag": "wall",
+      "transform": {
+        "x": 680.0,
+        "y": 380.0,
+        "w": 90.0,
+        "h": 90.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": { "Circle": { "radius": 45.0 } },
+        "color": 5066061,
+        "outline_color": 7368816,
+        "outline_width": 2,
+        "z_index": 2,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 90.0,
+        "h": 90.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "is_active": true
+    },
+    {
+      "id": 4,
+      "name": "Drone Ennemi Patrouilleur",
+      "tag": "enemy",
+      "transform": {
+        "x": 880.0,
+        "y": 240.0,
+        "w": 38.0,
+        "h": 38.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 14428710,
+        "outline_color": 16282225,
+        "outline_width": 2,
+        "z_index": 8,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 38.0,
+        "h": 38.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "layer": 1
+      },
+      "movement": {
+        "vx": 0.0,
+        "vy": 120.0,
+        "speed": 120.0,
+        "is_player_controlled": false,
+        "patrol": {
+          "min_y": 120.0,
+          "max_y": 480.0,
+          "dir": 1.0
+        },
+        "mode": "TopDown"
+      },
+      "vision": {
+        "range": 240.0,
+        "is_alerted": false,
+        "alert_timer": 0.0
+      },
+      "script": {
+        "script_path": "assets/scripts/guard_alert.kvl.json",
+        "on_overlap_event": null,
+        "on_interact_event": null,
+        "on_seen_event": "OnPlayerSeen"
+      },
+      "emitter": null,
+      "projectile": null,
+      "is_active": true
+    },
+    {
+      "id": 5,
+      "name": "Capsule Stellaire 1",
+      "tag": "collectible",
+      "transform": {
+        "x": 480.0,
+        "y": 320.0,
+        "w": 28.0,
+        "h": 28.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": { "Circle": { "radius": 14.0 } },
+        "color": 16104971,
+        "outline_color": null,
+        "outline_width": 0,
+        "z_index": 5,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 28.0,
+        "h": 28.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": {
+        "script_path": "assets/scripts/coin_pickup.kvl.json",
+        "on_overlap_event": "OnPlayerOverlap",
+        "on_interact_event": null,
+        "on_seen_event": null
+      },
+      "emitter": null,
+      "projectile": null,
+      "is_active": true
+    }
+  ]
+}

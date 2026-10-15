@@ -15,6 +15,9 @@ pub enum SoundType {
     Alarm,
     RadarPing,
     Teleport,
+    PlayerJump,
+    LaserShoot,
+    BlockPush,
 }
 
 struct ActiveVoice {
@@ -39,6 +42,9 @@ impl ActiveVoice {
             SoundType::Alarm => 0.45,
             SoundType::RadarPing => 0.12,
             SoundType::Teleport => 0.35,
+            SoundType::PlayerJump => 0.20,
+            SoundType::LaserShoot => 0.15,
+            SoundType::BlockPush => 0.16,
         };
 
         let duration_samples = (duration_secs * sample_rate as f32) as usize;
@@ -176,6 +182,32 @@ impl ActiveVoice {
                 let env = (1.0 - progress).powf(1.5);
                 wave * env * 0.6
             }
+
+            SoundType::PlayerJump => {
+                // Sifflement rétro ascendant (160 Hz -> 440 Hz) pour le saut de plateforme
+                let freq = 160.0 + (progress * 280.0);
+                let square = if (t * freq).fract() < 0.5 { 0.7 } else { -0.7 };
+                let sine = (t * freq * std::f32::consts::TAU).sin();
+                let env = (1.0 - progress).powf(1.3);
+                (square * 0.4 + sine * 0.6) * env * 0.7
+            }
+
+            SoundType::LaserShoot => {
+                // Balayage laser descendant rapide (950 Hz -> 200 Hz)
+                let freq = 950.0 - (progress * 750.0);
+                let square = if (t * freq).fract() < 0.5 { 0.8 } else { -0.8 };
+                let env = (1.0 - progress).powf(2.0);
+                square * env * 0.6
+            }
+
+            SoundType::BlockPush => {
+                // Frottement et raclement d'un bloc lourd (90 Hz avec bruit de contact)
+                let freq = 90.0 - (progress * 35.0);
+                let wave = (t * freq * std::f32::consts::TAU).sin();
+                let noise = (((self.cursor * 214013 + 2531011) % 100) as f32 / 50.0) - 1.0;
+                let env = (1.0 - progress).powf(1.8);
+                (wave * 0.7 + noise * 0.3) * env * 0.6
+            }
         };
 
         raw_wave * self.volume
@@ -307,6 +339,9 @@ mod tests {
             SoundType::Alarm,
             SoundType::RadarPing,
             SoundType::Teleport,
+            SoundType::PlayerJump,
+            SoundType::LaserShoot,
+            SoundType::BlockPush,
         ];
 
         let sample_rate = 44100.0;

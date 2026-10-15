@@ -86,6 +86,8 @@ pub struct Collider2D {
     pub h: f32,
     pub is_solid: bool,
     pub is_trigger: bool,
+    #[serde(default)]
+    pub is_pushable: bool,
     pub layer: u32,
 }
 
@@ -98,6 +100,7 @@ impl Collider2D {
             h,
             is_solid: true,
             is_trigger: false,
+            is_pushable: false,
             layer: 1,
         }
     }
@@ -110,7 +113,23 @@ impl Collider2D {
             h,
             is_solid: false,
             is_trigger: true,
+            is_pushable: false,
             layer: 2,
+        }
+    }
+
+    /// Bloc poussable pour mécaniques de puzzles, Sokoban et obstacles dynamiques
+    #[allow(dead_code)]
+    pub fn pushable(w: f32, h: f32) -> Self {
+        Self {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            w,
+            h,
+            is_solid: true,
+            is_trigger: false,
+            is_pushable: true,
+            layer: 1,
         }
     }
 }
@@ -122,6 +141,38 @@ pub struct PatrolConfig {
     pub dir: f32,
 }
 
+/// Modes de déplacement et de physique multi-genres du moteur
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum MovementMode {
+    /// 1. Top-Down / Aventure / RPG (déplacement libre 4/8 directions sans gravité)
+    TopDown,
+    /// 2. Platformer 2D (Gravité continue, saut vertical impulsionnel et détection d'appui au sol)
+    Platformer {
+        gravity: f32,
+        jump_force: f32,
+        is_grounded: bool,
+        max_fall_speed: f32,
+    },
+    /// 3. Vaisseau Spatial / Asteroids / Physique Newtonienne (rotation angulaire + poussée vectorielle + friction)
+    SpaceInertia {
+        angular_speed: f32,
+        thrust: f32,
+        drag: f32,
+    },
+    /// 4. Déplacement par Grille / Sokoban / Casse-tête / Tactique (déplacement pas-à-pas quantifié)
+    Grid {
+        cell_size: f32,
+        cooldown: f32,
+        timer: f32,
+    },
+}
+
+impl Default for MovementMode {
+    fn default() -> Self {
+        Self::TopDown
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Movement2D {
     pub vx: f32,
@@ -129,6 +180,8 @@ pub struct Movement2D {
     pub speed: f32,
     pub is_player_controlled: bool,
     pub patrol: Option<PatrolConfig>,
+    #[serde(default)]
+    pub mode: MovementMode,
 }
 
 impl Movement2D {
@@ -139,6 +192,7 @@ impl Movement2D {
             speed,
             is_player_controlled: false,
             patrol: None,
+            mode: MovementMode::TopDown,
         }
     }
 
@@ -149,6 +203,59 @@ impl Movement2D {
             speed,
             is_player_controlled: true,
             patrol: None,
+            mode: MovementMode::TopDown,
+        }
+    }
+
+    /// Contrôleur de Plateforme 2D (Side-Scroller)
+    #[allow(dead_code)]
+    pub fn platformer(speed: f32, jump_force: f32, gravity: f32) -> Self {
+        Self {
+            vx: 0.0,
+            vy: 0.0,
+            speed,
+            is_player_controlled: true,
+            patrol: None,
+            mode: MovementMode::Platformer {
+                gravity,
+                jump_force,
+                is_grounded: false,
+                max_fall_speed: 680.0,
+            },
+        }
+    }
+
+    /// Contrôleur de Vaisseau Spatial / Shmup (Inertie vectorielle)
+    #[allow(dead_code)]
+    pub fn spaceship(speed: f32, angular_speed: f32, thrust: f32) -> Self {
+        Self {
+            vx: 0.0,
+            vy: 0.0,
+            speed,
+            is_player_controlled: true,
+            patrol: None,
+            mode: MovementMode::SpaceInertia {
+                angular_speed,
+                thrust,
+                drag: 0.985,
+            },
+        }
+    }
+
+    /// Contrôleur de Déplacement Grille / Sokoban (déplacement quantifié pas-à-pas)
+    #[allow(dead_code)]
+    pub fn grid(cell_size: f32, cooldown: f32) -> Self {
+        Self {
+            vx: 0.0,
+            vy: 0.0,
+            speed: cell_size / cooldown,
+            is_player_controlled: true,
+            patrol: None,
+            mode: MovementMode::Grid {
+                cell_size,
+                cooldown,
+                timer: 0.0,
+            },
         }
     }
 
@@ -159,6 +266,7 @@ impl Movement2D {
             speed,
             is_player_controlled: false,
             patrol: Some(PatrolConfig { min_y, max_y, dir: 1.0 }),
+            mode: MovementMode::TopDown,
         }
     }
 }
@@ -324,6 +432,26 @@ impl ParticleEmitter2D {
     }
 }
 
+/// Composant Projectile balistique universel (balles, lasers, flèches)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Projectile2D {
+    pub lifetime: f32,
+    pub max_lifetime: f32,
+    pub damage: i32,
+    pub source_id: usize,
+}
+
+impl Projectile2D {
+    pub fn new(max_lifetime: f32, damage: i32, source_id: usize) -> Self {
+        Self {
+            lifetime: 0.0,
+            max_lifetime,
+            damage,
+            source_id,
+        }
+    }
+}
+
 /// Modèle d'Entité Universel du moteur KaractiRage
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
@@ -337,6 +465,7 @@ pub struct Entity {
     pub vision: Option<VisionSensing>,
     pub script: Option<KVLScriptComponent>,
     pub emitter: Option<ParticleEmitter2D>,
+    pub projectile: Option<Projectile2D>,
     pub is_active: bool,
 }
 
@@ -353,6 +482,7 @@ impl Entity {
             vision: None,
             script: None,
             emitter: None,
+            projectile: None,
             is_active: true,
         }
     }
@@ -385,6 +515,27 @@ impl Entity {
     pub fn with_emitter(mut self, e: ParticleEmitter2D) -> Self {
         self.emitter = Some(e);
         self
+    }
+
+    pub fn with_projectile(mut self, p: Projectile2D) -> Self {
+        self.projectile = Some(p);
+        self
+    }
+
+    /// Gabarit : Projectile balistique universel (balle, laser)
+    pub fn spawn_projectile(id: usize, x: f32, y: f32, vx: f32, vy: f32, source_id: usize) -> Self {
+        Self::new(id, format!("bullet_{}", id), "projectile", Transform2D::new(x, y, 8.0, 8.0))
+            .with_renderable(Renderable2D::circle(4.0, 0x00FDE047, 12))
+            .with_collider(Collider2D::trigger(8.0, 8.0))
+            .with_movement(Movement2D {
+                vx,
+                vy,
+                speed: (vx * vx + vy * vy).sqrt(),
+                is_player_controlled: false,
+                patrol: None,
+                mode: MovementMode::TopDown,
+            })
+            .with_projectile(Projectile2D::new(2.0, 10, source_id))
     }
 
     /// Gabarit : Mur solide bloquant AABB

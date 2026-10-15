@@ -1,7 +1,7 @@
 use crate::adaptation::AdaptationManager;
 use crate::audio::{AudioEngine, SoundType};
 use crate::editor::{EditorMode, EditorState, SelectedEntity};
-use crate::entity::{Entity, ShapeKind};
+use crate::entity::{Entity, MovementMode, ShapeKind};
 use crate::input::InputState;
 use crate::renderer::Canvas;
 use crate::scene::SceneData;
@@ -12,6 +12,13 @@ use kvl_runtime::*;
 use std::collections::HashMap;
 use std::fs;
 use winit::keyboard::KeyCode;
+
+pub const AVAILABLE_SCENES: &[(&str, &str)] = &[
+    ("assets/scenes/level_01.scene.json", "Aventure Donjon (Top-Down)"),
+    ("assets/scenes/platformer_01.scene.json", "Plateforme 2D (Gravite/Saut)"),
+    ("assets/scenes/space_01.scene.json", "Shoot'em Up (Inertie/Tirs)"),
+    ("assets/scenes/puzzle_01.scene.json", "Puzzle Sokoban (Blocs/Dalles)"),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Particle {
@@ -301,8 +308,21 @@ impl GameState {
         let scene_data = match SceneData::load_from_file(path) {
             Ok(s) => s,
             Err(_) => {
-                let default_json = include_str!("../../../assets/scenes/level_01.scene.json");
-                SceneData::from_json_str(default_json)?
+                if let Ok(s) = SceneData::load_from_file(format!("../../{}", path)) {
+                    s
+                } else if path.contains("platformer") {
+                    let json = include_str!("../../../assets/scenes/platformer_01.scene.json");
+                    SceneData::from_json_str(json)?
+                } else if path.contains("space") {
+                    let json = include_str!("../../../assets/scenes/space_01.scene.json");
+                    SceneData::from_json_str(json)?
+                } else if path.contains("puzzle") {
+                    let json = include_str!("../../../assets/scenes/puzzle_01.scene.json");
+                    SceneData::from_json_str(json)?
+                } else {
+                    let default_json = include_str!("../../../assets/scenes/level_01.scene.json");
+                    SceneData::from_json_str(default_json)?
+                }
             }
         };
 
@@ -354,7 +374,7 @@ impl GameState {
             particles: Vec::new(),
             kvl_graphs,
             kvl_context,
-            status_message: "Moteur KaractiRage initialisé ! Modèle ECS universel actif.".into(),
+            status_message: "Moteur KaractiRage initialisé ! Modèle ECS universel multi-genre actif.".into(),
             telemetry: Telemetry::new(),
             adaptation: AdaptationManager::new(),
             editor: EditorState::new(),
@@ -371,6 +391,80 @@ impl GameState {
             self.status_message = "Hot-Reloading ECS réussi depuis les fichiers JSON !".into();
         } else {
             self.status_message = "Erreur de rechargement JSON.".into();
+        }
+    }
+
+    pub fn cycle_scene_forward(&mut self) {
+        let current = &self.scene_path;
+        let idx = AVAILABLE_SCENES.iter().position(|(p, _)| current.contains(p) || p.contains(current.as_str())).unwrap_or(0);
+        let next_idx = (idx + 1) % AVAILABLE_SCENES.len();
+        let (next_path, next_genre) = AVAILABLE_SCENES[next_idx];
+        self.switch_scene(next_path);
+        self.status_message = format!("Genre basculé vers : {} (F2/F3: changer)", next_genre);
+    }
+
+    pub fn cycle_scene_backward(&mut self) {
+        let current = &self.scene_path;
+        let idx = AVAILABLE_SCENES.iter().position(|(p, _)| current.contains(p) || p.contains(current.as_str())).unwrap_or(0);
+        let prev_idx = if idx == 0 { AVAILABLE_SCENES.len() - 1 } else { idx - 1 };
+        let (prev_path, prev_genre) = AVAILABLE_SCENES[prev_idx];
+        self.switch_scene(prev_path);
+        self.status_message = format!("Genre basculé vers : {} (F2/F3: changer)", prev_genre);
+    }
+
+    pub fn switch_scene(&mut self, path: &str) -> bool {
+        if let Ok(new_state) = Self::load_from_scene(path) {
+            *self = new_state;
+            self.audio.play(SoundType::Teleport);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn fire_player_projectile(&mut self) -> bool {
+        if let Some(p_idx) = self.player_index() {
+            let (px, py, pw, ph, rot, mode) = {
+                let p = &self.entities[p_idx];
+                (
+                    p.transform.x,
+                    p.transform.y,
+                    p.transform.w,
+                    p.transform.h,
+                    p.transform.rotation,
+                    p.movement.as_ref().map_or(MovementMode::TopDown, |m| m.mode),
+                )
+            };
+
+            let (spawn_x, spawn_y, vx, vy) = match mode {
+                MovementMode::SpaceInertia { .. } => {
+                    let dir_x = rot.cos();
+                    let dir_y = rot.sin();
+                    let sx = px + pw * 0.5 + dir_x * (pw * 0.6);
+                    let sy = py + ph * 0.5 + dir_y * (ph * 0.6);
+                    (sx, sy, dir_x * 520.0, dir_y * 520.0)
+                }
+                MovementMode::Platformer { .. } => {
+                    let p_vx = self.entities[p_idx].movement.as_ref().map_or(1.0, |m| m.vx);
+                    let dir_x = if p_vx < -10.0 { -1.0 } else { 1.0 };
+                    let sx = if dir_x > 0.0 { px + pw + 4.0 } else { px - 12.0 };
+                    let sy = py + ph * 0.35;
+                    (sx, sy, dir_x * 480.0, 0.0)
+                }
+                MovementMode::TopDown | MovementMode::Grid { .. } => {
+                    let sx = px + pw * 0.5 - 4.0;
+                    let sy = py - 12.0;
+                    (sx, sy, 0.0, -480.0)
+                }
+            };
+
+            let next_id = self.entities.len() + 1;
+            let bullet = Entity::spawn_projectile(next_id, spawn_x, spawn_y, vx, vy, p_idx);
+            self.entities.push(bullet);
+            self.audio.play(SoundType::LaserShoot);
+            true
+        } else {
+            false
         }
     }
 
@@ -966,9 +1060,25 @@ impl GameState {
                 "Adaptation dynamique : MANUELLE".into()
             };
         }
+        if input.is_key_just_pressed(KeyCode::F4) || input.is_key_just_pressed(KeyCode::KeyL) {
+            self.cycle_scene_forward();
+            return;
+        }
+        if input.is_key_just_pressed(KeyCode::F5) {
+            self.cycle_scene_backward();
+            return;
+        }
         if input.is_key_just_pressed(KeyCode::KeyR) {
             self.reload();
             return;
+        }
+
+        // Action de tir universelle (Touche F ou Espace en mode Spatial)
+        let is_f = input.is_key_just_pressed(KeyCode::KeyF);
+        let is_space = input.is_key_just_pressed(KeyCode::Space);
+        let is_space_mode = self.player_entity().and_then(|p| p.movement.as_ref()).map_or(false, |m| matches!(m.mode, MovementMode::SpaceInertia { .. }));
+        if is_f || (is_space && is_space_mode) {
+            self.fire_player_projectile();
         }
 
         // Déplacement joueur via vecteur d'entrée
@@ -1027,49 +1137,326 @@ impl GameState {
         }
 
         // ==========================================
-        // SYSTEM 2 : PHYSIQUE ET GLISSEMENT AABB POUR LE JOUEUR
+        // SYSTEM 2 : PHYSIQUE ET GLISSEMENT AABB POUR LE JOUEUR (MULTI-GENRES)
         // ==========================================
         let mut player_pos = None;
         if let Some(p_idx) = self.player_index() {
-            let (px, py, pw, ph, speed) = {
-                let p = &mut self.entities[p_idx];
+            let (px, py, pw, ph, speed, p_mode) = {
+                let p = &self.entities[p_idx];
                 let speed = p.movement.as_ref().map_or(240.0, |m| m.speed) + speed_boost;
-                (p.transform.x, p.transform.y, p.transform.w, p.transform.h, speed)
+                let mode = p.movement.as_ref().map_or(MovementMode::TopDown, |m| m.mode);
+                (p.transform.x, p.transform.y, p.transform.w, p.transform.h, speed, mode)
             };
 
             let mut cur_x = px;
             let mut cur_y = py;
 
-            // Déplacement & résolution AABB axe X
-            if move_x != 0.0 {
-                cur_x += move_x * speed * dt;
-                cur_x = cur_x.clamp(30.0, 1160.0 - pw);
+            match p_mode {
+                MovementMode::TopDown => {
+                    // 1. Contrôleur Top-Down / Aventure / RPG (déplacement libre 4/8 axes)
+                    if move_x != 0.0 {
+                        cur_x += move_x * speed * dt;
+                        cur_x = cur_x.clamp(30.0, 1160.0 - pw);
 
-                let candidates = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
-                for item in candidates {
-                    if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
-                        if move_x > 0.0 {
-                            cur_x = item.x - pw;
-                        } else if move_x < 0.0 {
-                            cur_x = item.x + item.w;
+                        let mut cand_buf = [SpatialItem { id: 0, kind: SpatialKind::Solid, x: 0.0, y: 0.0, w: 0.0, h: 0.0 }; 16];
+                        let cand_count = {
+                            let raw = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
+                            let len = raw.len().min(16);
+                            cand_buf[..len].copy_from_slice(&raw[..len]);
+                            len
+                        };
+
+                        for item in &cand_buf[..cand_count] {
+                            if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
+                                let is_pushable = self.entities.get(item.id).and_then(|e| e.collider.as_ref()).map_or(false, |c| c.is_pushable);
+                                if is_pushable {
+                                    let bw = self.entities[item.id].transform.w;
+                                    let bh = self.entities[item.id].transform.h;
+                                    let bx = self.entities[item.id].transform.x;
+                                    let by = self.entities[item.id].transform.y;
+                                    let push_dx = move_x * speed * dt;
+                                    let target_bx = bx + push_dx;
+                                    let behind = self.spatial_grid.query_aabb(target_bx, by, bw, bh);
+                                    let blocked = behind.iter().any(|obs| obs.id != item.id && obs.id != p_idx && matches!(obs.kind, SpatialKind::Solid));
+                                    if !blocked && target_bx >= 30.0 && target_bx + bw <= 1160.0 {
+                                        self.entities[item.id].transform.x = target_bx;
+                                        self.audio.play(SoundType::BlockPush);
+                                    } else if move_x > 0.0 {
+                                        cur_x = item.x - pw;
+                                    } else if move_x < 0.0 {
+                                        cur_x = item.x + item.w;
+                                    }
+                                } else if move_x > 0.0 {
+                                    cur_x = item.x - pw;
+                                } else if move_x < 0.0 {
+                                    cur_x = item.x + item.w;
+                                }
+                            }
                         }
                     }
-                }
-            }
 
-            // Déplacement & résolution AABB axe Y
-            if move_y != 0.0 {
-                cur_y += move_y * speed * dt;
-                cur_y = cur_y.clamp(75.0, 595.0 - ph);
+                    if move_y != 0.0 {
+                        cur_y += move_y * speed * dt;
+                        cur_y = cur_y.clamp(75.0, 595.0 - ph);
 
-                let candidates = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
-                for item in candidates {
-                    if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
-                        if move_y > 0.0 {
-                            cur_y = item.y - ph;
-                        } else if move_y < 0.0 {
-                            cur_y = item.y + item.h;
+                        let mut cand_buf = [SpatialItem { id: 0, kind: SpatialKind::Solid, x: 0.0, y: 0.0, w: 0.0, h: 0.0 }; 16];
+                        let cand_count = {
+                            let raw = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
+                            let len = raw.len().min(16);
+                            cand_buf[..len].copy_from_slice(&raw[..len]);
+                            len
+                        };
+
+                        for item in &cand_buf[..cand_count] {
+                            if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
+                                let is_pushable = self.entities.get(item.id).and_then(|e| e.collider.as_ref()).map_or(false, |c| c.is_pushable);
+                                if is_pushable {
+                                    let bw = self.entities[item.id].transform.w;
+                                    let bh = self.entities[item.id].transform.h;
+                                    let bx = self.entities[item.id].transform.x;
+                                    let by = self.entities[item.id].transform.y;
+                                    let push_dy = move_y * speed * dt;
+                                    let target_by = by + push_dy;
+                                    let behind = self.spatial_grid.query_aabb(bx, target_by, bw, bh);
+                                    let blocked = behind.iter().any(|obs| obs.id != item.id && obs.id != p_idx && matches!(obs.kind, SpatialKind::Solid));
+                                    if !blocked && target_by >= 75.0 && target_by + bh <= 595.0 {
+                                        self.entities[item.id].transform.y = target_by;
+                                        self.audio.play(SoundType::BlockPush);
+                                    } else if move_y > 0.0 {
+                                        cur_y = item.y - ph;
+                                    } else if move_y < 0.0 {
+                                        cur_y = item.y + item.h;
+                                    }
+                                } else if move_y > 0.0 {
+                                    cur_y = item.y - ph;
+                                } else if move_y < 0.0 {
+                                    cur_y = item.y + item.h;
+                                }
+                            }
                         }
+                    }
+
+                    if let Some(ref mut mov) = self.entities[p_idx].movement {
+                        mov.vx = move_x * speed;
+                        mov.vy = move_y * speed;
+                    }
+                }
+
+                MovementMode::Platformer { gravity, jump_force, mut is_grounded, max_fall_speed } => {
+                    // 2. Contrôleur Plateforme 2D (Side-Scroller avec Gravité & Saut)
+                    let horiz_dir = if input.is_key_down(KeyCode::ArrowLeft) || input.is_key_down(KeyCode::KeyA) || input.is_key_down(KeyCode::KeyQ) {
+                        -1.0
+                    } else if input.is_key_down(KeyCode::ArrowRight) || input.is_key_down(KeyCode::KeyD) {
+                        1.0
+                    } else {
+                        0.0
+                    };
+
+                    let mut cur_vy = self.entities[p_idx].movement.as_ref().map_or(0.0, |m| m.vy);
+
+                    // Saut : déclenché par Espace ou Flèche Haut ou Z / W si posé au sol
+                    let jump_key = input.is_key_just_pressed(KeyCode::Space)
+                        || input.is_key_just_pressed(KeyCode::ArrowUp)
+                        || input.is_key_just_pressed(KeyCode::KeyW)
+                        || input.is_key_just_pressed(KeyCode::KeyZ);
+
+                    if jump_key && is_grounded {
+                        cur_vy = -jump_force;
+                        self.audio.play(SoundType::PlayerJump);
+                    }
+
+                    // Application de la pesanteur
+                    cur_vy += gravity * dt;
+                    cur_vy = cur_vy.min(max_fall_speed);
+
+                    // Résolution horizontale X
+                    if horiz_dir != 0.0 {
+                        cur_x += horiz_dir * speed * dt;
+                        cur_x = cur_x.clamp(30.0, 1160.0 - pw);
+
+                        let candidates = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
+                        for item in candidates {
+                            if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
+                                if horiz_dir > 0.0 {
+                                    cur_x = item.x - pw;
+                                } else if horiz_dir < 0.0 {
+                                    cur_x = item.x + item.w;
+                                }
+                            }
+                        }
+                    }
+
+                    // Résolution verticale Y (atterrissage ou plafond)
+                    cur_y += cur_vy * dt;
+                    cur_y = cur_y.clamp(75.0, 595.0 - ph);
+
+                    let mut grounded_this_frame = false;
+                    let candidates = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
+                    for item in candidates {
+                        if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
+                            if cur_vy > 0.0 {
+                                // Contact avec le sol sous les pieds
+                                cur_y = item.y - ph;
+                                cur_vy = 0.0;
+                                grounded_this_frame = true;
+                            } else if cur_vy < 0.0 {
+                                // Heurt de la tête contre un plafond
+                                cur_y = item.y + item.h;
+                                cur_vy = 0.0;
+                            }
+                        }
+                    }
+
+                    // Support du bas du viewport comme plancher
+                    if cur_y >= (590.0 - ph) {
+                        grounded_this_frame = true;
+                        cur_vy = 0.0;
+                    }
+
+                    is_grounded = grounded_this_frame;
+
+                    if let Some(ref mut mov) = self.entities[p_idx].movement {
+                        mov.vx = horiz_dir * speed;
+                        mov.vy = cur_vy;
+                        mov.mode = MovementMode::Platformer {
+                            gravity,
+                            jump_force,
+                            is_grounded,
+                            max_fall_speed,
+                        };
+                    }
+                }
+
+                MovementMode::SpaceInertia { angular_speed, thrust, drag } => {
+                    // 3. Contrôleur Vaisseau Spatial / Asteroids / Shmup (Inertie vectorielle et poussée)
+                    let rot_dir = if input.is_key_down(KeyCode::ArrowLeft) || input.is_key_down(KeyCode::KeyA) || input.is_key_down(KeyCode::KeyQ) {
+                        -1.0
+                    } else if input.is_key_down(KeyCode::ArrowRight) || input.is_key_down(KeyCode::KeyD) {
+                        1.0
+                    } else {
+                        0.0
+                    };
+
+                    self.entities[p_idx].transform.rotation += rot_dir * angular_speed * dt;
+                    let angle = self.entities[p_idx].transform.rotation;
+
+                    let is_thrusting = input.is_key_down(KeyCode::ArrowUp)
+                        || input.is_key_down(KeyCode::KeyW)
+                        || input.is_key_down(KeyCode::KeyZ);
+
+                    let mut cur_vx = self.entities[p_idx].movement.as_ref().map_or(0.0, |m| m.vx);
+                    let mut cur_vy = self.entities[p_idx].movement.as_ref().map_or(0.0, |m| m.vy);
+
+                    if is_thrusting {
+                        cur_vx += angle.cos() * thrust * dt;
+                        cur_vy += angle.sin() * thrust * dt;
+                        let cur_speed = (cur_vx * cur_vx + cur_vy * cur_vy).sqrt();
+                        if cur_speed > speed {
+                            cur_vx = (cur_vx / cur_speed) * speed;
+                            cur_vy = (cur_vy / cur_speed) * speed;
+                        }
+                    }
+
+                    // Amortissement de dérive (friction spatiale)
+                    let damping = drag.powf(dt * 60.0);
+                    cur_vx *= damping;
+                    cur_vy *= damping;
+
+                    cur_x += cur_vx * dt;
+                    cur_x = cur_x.clamp(30.0, 1160.0 - pw);
+                    let candidates_x = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
+                    for item in candidates_x {
+                        if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
+                            cur_vx = -cur_vx * 0.5;
+                            if cur_vx > 0.0 { cur_x = item.x + item.w; } else { cur_x = item.x - pw; }
+                        }
+                    }
+
+                    cur_y += cur_vy * dt;
+                    cur_y = cur_y.clamp(75.0, 595.0 - ph);
+                    let candidates_y = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
+                    for item in candidates_y {
+                        if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
+                            cur_vy = -cur_vy * 0.5;
+                            if cur_vy > 0.0 { cur_y = item.y + item.h; } else { cur_y = item.y - ph; }
+                        }
+                    }
+
+                    if let Some(ref mut mov) = self.entities[p_idx].movement {
+                        mov.vx = cur_vx;
+                        mov.vy = cur_vy;
+                    }
+                }
+
+                MovementMode::Grid { cell_size, cooldown, mut timer } => {
+                    // 4. Contrôleur Déplacement Grille / Sokoban (déplacement quantifié case par case)
+                    timer -= dt;
+                    let mut step_x = 0.0;
+                    let mut step_y = 0.0;
+
+                    if timer <= 0.0 {
+                        if input.is_key_just_pressed(KeyCode::ArrowLeft) || input.is_key_just_pressed(KeyCode::KeyA) || input.is_key_just_pressed(KeyCode::KeyQ) {
+                            step_x = -cell_size;
+                            timer = cooldown;
+                        } else if input.is_key_just_pressed(KeyCode::ArrowRight) || input.is_key_just_pressed(KeyCode::KeyD) {
+                            step_x = cell_size;
+                            timer = cooldown;
+                        } else if input.is_key_just_pressed(KeyCode::ArrowUp) || input.is_key_just_pressed(KeyCode::KeyW) || input.is_key_just_pressed(KeyCode::KeyZ) {
+                            step_y = -cell_size;
+                            timer = cooldown;
+                        } else if input.is_key_just_pressed(KeyCode::ArrowDown) || input.is_key_just_pressed(KeyCode::KeyS) {
+                            step_y = cell_size;
+                            timer = cooldown;
+                        }
+                    }
+
+                    if step_x != 0.0 || step_y != 0.0 {
+                        let target_x = (cur_x + step_x).clamp(30.0, 1160.0 - pw);
+                        let target_y = (cur_y + step_y).clamp(75.0, 595.0 - ph);
+
+                        let mut cand_buf = [SpatialItem { id: 0, kind: SpatialKind::Solid, x: 0.0, y: 0.0, w: 0.0, h: 0.0 }; 16];
+                        let cand_count = {
+                            let raw = self.spatial_grid.query_aabb(target_x, target_y, pw, ph);
+                            let len = raw.len().min(16);
+                            cand_buf[..len].copy_from_slice(&raw[..len]);
+                            len
+                        };
+
+                        let mut can_step = true;
+                        for item in &cand_buf[..cand_count] {
+                            if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
+                                let is_pushable = self.entities.get(item.id).and_then(|e| e.collider.as_ref()).map_or(false, |c| c.is_pushable);
+                                if is_pushable {
+                                    let bw = self.entities[item.id].transform.w;
+                                    let bh = self.entities[item.id].transform.h;
+                                    let bx = self.entities[item.id].transform.x;
+                                    let by = self.entities[item.id].transform.y;
+                                    let b_target_x = bx + step_x;
+                                    let b_target_y = by + step_y;
+                                    let behind = self.spatial_grid.query_aabb(b_target_x, b_target_y, bw, bh);
+                                    let blocked = behind.iter().any(|obs| obs.id != item.id && obs.id != p_idx && matches!(obs.kind, SpatialKind::Solid));
+                                    if !blocked && b_target_x >= 30.0 && b_target_x + bw <= 1160.0 && b_target_y >= 75.0 && b_target_y + bh <= 595.0 {
+                                        self.entities[item.id].transform.x = b_target_x;
+                                        self.entities[item.id].transform.y = b_target_y;
+                                        self.audio.play(SoundType::BlockPush);
+                                    } else {
+                                        can_step = false;
+                                    }
+                                } else {
+                                    can_step = false;
+                                }
+                            }
+                        }
+                        if can_step {
+                            cur_x = target_x;
+                            cur_y = target_y;
+                        }
+                    }
+
+                    if let Some(ref mut mov) = self.entities[p_idx].movement {
+                        mov.vx = if step_x != 0.0 { speed } else { 0.0 };
+                        mov.vy = if step_y != 0.0 { speed } else { 0.0 };
+                        mov.mode = MovementMode::Grid { cell_size, cooldown, timer };
                     }
                 }
             }
@@ -1077,6 +1464,66 @@ impl GameState {
             self.entities[p_idx].transform.x = cur_x;
             self.entities[p_idx].transform.y = cur_y;
             player_pos = Some((p_idx, cur_x, cur_y, pw, ph));
+        }
+
+        // ==========================================
+        // SYSTEM 2.5 : SIMULATION DES PROJECTILES BALISTIQUES (ZERO-ALLOCATION)
+        // ==========================================
+        let mut hit_events = Vec::new();
+        for (idx, ent) in self.entities.iter_mut().enumerate() {
+            if !ent.is_active {
+                continue;
+            }
+            if let Some(ref mut proj) = ent.projectile {
+                proj.lifetime += dt;
+                if proj.lifetime >= proj.max_lifetime {
+                    ent.is_active = false;
+                    continue;
+                }
+
+                if let Some(ref mov) = ent.movement {
+                    ent.transform.x += mov.vx * dt;
+                    ent.transform.y += mov.vy * dt;
+                }
+
+                let bx = ent.transform.x;
+                let by = ent.transform.y;
+                let bw = ent.transform.w;
+                let bh = ent.transform.h;
+
+                let candidates = self.spatial_grid.query_aabb(bx, by, bw, bh);
+                for item in candidates {
+                    if item.id == proj.source_id || item.id == idx {
+                        continue;
+                    }
+                    if matches!(item.kind, SpatialKind::Solid) {
+                        ent.is_active = false;
+                        hit_events.push((idx, item.id, false));
+                        break;
+                    } else if let SpatialKind::Entity(other_idx) = item.kind {
+                        ent.is_active = false;
+                        hit_events.push((idx, other_idx, true));
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (_, target_idx, is_entity) in hit_events {
+            if is_entity && target_idx < self.entities.len() {
+                if self.entities[target_idx].tag == "enemy" {
+                    self.entities[target_idx].is_active = false;
+                    self.audio.play(SoundType::BonusFanfare);
+                    let cur_score = match self.kvl_context.get_var("score") {
+                        Some(Value::Int(s)) => *s,
+                        _ => 0,
+                    };
+                    self.kvl_context.set_var("score", Value::Int(cur_score + 25));
+                    self.status_message = "Cible ennemie neutralisée par tir balistique ! (+25 pts)".into();
+                }
+            } else {
+                self.audio.play(SoundType::Sparkles);
+            }
         }
 
         // ==========================================
@@ -1184,7 +1631,8 @@ impl GameState {
                             let dist = (dx * dx + dy * dy).sqrt();
 
                             let max_reach = (pw.max(ph) * 0.5) + (ent.transform.w.max(ent.transform.h) * 0.5);
-                            if dist < max_reach {
+                            let is_collectible = ent.tag == "collectible" || ent.tag == "coin";
+                            if dist < max_reach && is_collectible {
                                 collected_indices.push(idx);
                             }
                         }
@@ -1238,6 +1686,71 @@ impl GameState {
                 }
 
                 self.status_message = format!("Entité '{}' collectée ! Score KVL : {}", ent_name, score);
+            }
+        }
+
+        // ==========================================
+        // SYSTEM 4.5 : GESTION DES DALLES DE PRESSION ET PUZZLES ENVIRONNEMENTAUX
+        // ==========================================
+        let mut plates_pressed = 0;
+        let mut total_plates = 0;
+        let mut plates_covered = Vec::new();
+
+        for (idx, ent) in self.entities.iter().enumerate() {
+            if ent.tag == "plate" && ent.is_active {
+                total_plates += 1;
+                let px = ent.transform.x;
+                let py = ent.transform.y;
+                let pw = ent.transform.w;
+                let ph = ent.transform.h;
+
+                let candidates = self.spatial_grid.query_aabb(px, py, pw, ph);
+                let has_crate = candidates.iter().any(|c| {
+                    c.id != idx && self.entities.get(c.id).map_or(false, |e| {
+                        e.is_active && (e.tag == "crate" || e.collider.map_or(false, |col| col.is_pushable))
+                    })
+                });
+
+                if has_crate {
+                    plates_pressed += 1;
+                    plates_covered.push(idx);
+                }
+            }
+        }
+
+        // Coloration dynamique des dalles activées (vert émeraude si pressée, cyan sinon)
+        for (idx, ent) in self.entities.iter_mut().enumerate() {
+            if ent.tag == "plate" {
+                if plates_covered.contains(&idx) {
+                    if let Some(ref mut r) = ent.renderable {
+                        r.color = 0x00065F46;
+                        r.outline_color = Some(0x0010B981);
+                    }
+                } else if let Some(ref mut r) = ent.renderable {
+                    r.color = 0x00082F49;
+                    r.outline_color = Some(0x000284C7);
+                }
+            }
+        }
+
+        // Déverrouillage automatique de la porte si toutes les dalles sont pressées
+        if total_plates > 0 && plates_pressed >= total_plates {
+            for ent in &mut self.entities {
+                if ent.tag == "door" {
+                    if let Some(ref mut col) = ent.collider {
+                        if col.is_solid {
+                            col.is_solid = false;
+                            if let Some(ref mut r) = ent.renderable {
+                                r.color = 0x0010B981;
+                                r.outline_color = Some(0x006EE7B7);
+                            }
+                            self.audio.play(SoundType::DoorOpen);
+                            self.audio.play(SoundType::BonusFanfare);
+                            spawn_requests.push((ent.transform.center_x(), ent.transform.center_y(), 30, 0x0010B981));
+                            self.status_message = "ENIGME RESOLUE ! Dalles enclenchées, portail ouvert !".to_string();
+                        }
+                    }
+                }
             }
         }
 
@@ -1559,20 +2072,41 @@ impl GameState {
 
             // Brand Badge Jeu
             canvas.draw_badge(16, 12, 140, 32, 0x00082F49, 0x000284C7, "KARACTIRAGE", 0x00E0F2FE, 2);
-            canvas.draw_badge(164, 12, 95, 32, 0x001E293B, 0x00334155, "LVL 01", 0x0094A3B8, 2);
+
+            let (genre_badge, genre_col, genre_bd) = if self.scene_path.contains("platformer") {
+                ("PLATEFORME 2D", 0x0010B981, 0x0034D399)
+            } else if self.scene_path.contains("space") {
+                ("ESPACE SHMUP", 0x00A855F7, 0x00C084FC)
+            } else if self.scene_path.contains("puzzle") {
+                ("PUZZLE SOKOBAN", 0x00F59E0B, 0x00FBBF24)
+            } else {
+                ("TOP-DOWN RPG", 0x000284C7, 0x0038BDF8)
+            };
+            canvas.draw_badge(164, 12, 120, 32, 0x001E293B, genre_bd, genre_badge, genre_col, 2);
 
             let score = match self.kvl_context.get_var("score") {
                 Some(Value::Int(s)) => *s,
                 _ => 0,
             };
 
-            // Carte d'objectif pédagogique dynamique au centre
-            let (obj_txt, obj_bg, obj_bd, obj_fg) = if score < 50 {
+            // Carte d'objectif dynamique adaptée au genre
+            let (obj_txt, obj_bg, obj_bd, obj_fg) = if self.scene_path.contains("platformer") {
+                ("OBJECTIF: SAUTEZ (ESPACE/Z) ET ATTEIGNEZ LE PORTAIL", 0x00064E3B, 0x0010B981, 0x006EE7B7)
+            } else if self.scene_path.contains("space") {
+                ("OBJECTIF: PILOTEZ LE VAISSEAU ET TIREZ (F/ESPACE)", 0x002E1065, 0x00A855F7, 0x00F3E8FF)
+            } else if self.scene_path.contains("puzzle") {
+                let is_open = self.entities.iter().any(|e| e.tag == "door" && e.collider.map_or(false, |c| !c.is_solid));
+                if is_open {
+                    ("OBJECTIF: ENIGME RESOLUE ! SORTIE DU SANCTUAIRE", 0x00064E3B, 0x0010B981, 0x006EE7B7)
+                } else {
+                    ("OBJECTIF: POUSSEZ LES 2 CAISSES SUR LES DALLES DE PRESSION", 0x00451A03, 0x00D97706, 0x00FDE047)
+                }
+            } else if score < 50 {
                 ("OBJECTIF: COLLECTEZ 50 OR POUR LA PORTE", 0x00451A03, 0x00D97706, 0x00FDE047)
             } else {
                 ("OBJECTIF ATTEINT ! PORTE OUVERTE, SORTEZ", 0x00064E3B, 0x0010B981, 0x006EE7B7)
             };
-            canvas.draw_badge(268, 12, 400, 32, obj_bg, obj_bd, obj_txt, obj_fg, 2);
+            canvas.draw_badge(292, 12, 380, 32, obj_bg, obj_bd, obj_txt, obj_fg, 2);
 
             // Score Pill
             let score_txt = format!("SCORE: {}", score);
@@ -1653,8 +2187,14 @@ impl GameState {
         // Légende discrète de zone de jeu
         let viewport_tag = if is_edit_mode {
             "STUDIO VIEWPORT (CLIQUEZ / GLISSEZ UNE ENTITE | P: SPAWN)"
+        } else if self.scene_path.contains("platformer") {
+            "PLATEFORME 2D (Q/D/FLECHES : COURIR | ESPACE/Z/HAUT : SAUTER | F : TIRER | F4/L : GENRE)"
+        } else if self.scene_path.contains("space") {
+            "ESPACE SHMUP (Q/D/FLECHES : TOURNER | Z/HAUT : POUSSEE | ESPACE/F : TIRER | F4/L : GENRE)"
+        } else if self.scene_path.contains("puzzle") {
+            "PUZZLE SOKOBAN (ZQSD/FLECHES : DEPLACER | POUSSER BLOCS SUR DALLES | F4/L : GENRE)"
         } else {
-            "MONDE 2D ECS (ZQSD / FLECHES : DEPLACEMENT | E / ESPACE : INTERACTION)"
+            "TOP-DOWN RPG (ZQSD / FLECHES : DEPLACEMENT | E : INTERACTION | F : TIRER | F4/L : GENRE)"
         };
         canvas.draw_text(30, 72, viewport_tag, 0x00475569, 1);
 
@@ -1776,6 +2316,16 @@ impl GameState {
                                 canvas.draw_rect(rx + 2, ry + 2, 4, 6, 0x000284C7);
                                 canvas.draw_rect(rx + rw as i32 - 6, ry + 2, 4, 6, 0x000284C7);
                             }
+
+                            // Viseur / Cockpit vectoriel orienté (Mode Spatial)
+                            if ent.transform.rotation != 0.0 {
+                                let cx = rx + (rw as i32 / 2);
+                                let cy = ry + (rh as i32 / 2);
+                                let nx = cx + (ent.transform.rotation.cos() * 18.0) as i32;
+                                let ny = cy + (ent.transform.rotation.sin() * 18.0) as i32;
+                                canvas.draw_line(cx, cy, nx, ny, 0x00FDE047);
+                                canvas.draw_circle(nx, ny, 3, 0x0038BDF8);
+                            }
                         }
                         "enemy" => {
                             // Sentinelle de patrouille / Droïde d'assaut
@@ -1886,6 +2436,11 @@ impl GameState {
                             canvas.draw_circle(cx - spec_offset, cy - spec_offset, (radius * 0.3).max(2.0) as i32, 0x00FEF08A);
                             // Relief central (losange / glyphe d'or)
                             canvas.draw_rect(cx - 2, cy - 2, 4, 4, 0x00FFFBEB);
+                        }
+                        "projectile" => {
+                            // Projectile balistique / laser étincelant
+                            canvas.draw_circle(cx, cy, radius as i32, 0x00FDE047);
+                            canvas.draw_circle(cx, cy, (radius * 0.5).max(1.0) as i32, 0x00FFFFFF);
                         }
                         "portal" => {
                             // Portail Quantique dimensionnel (anneaux concentriques)
@@ -2219,14 +2774,15 @@ impl GameState {
             }
         } else {
             let pills = [
+                ("F4 / L: Changer Genre", 0x00047857, 0x00D1FAE5),
                 ("ZQSD / Fleches: Bouger", 0x000369A1, 0x00E0F2FE),
-                ("E / Espace: Interagir", 0x00B45309, 0x00FDE68A),
+                ("F: Tirer Laser", 0x00B45309, 0x00FDE68A),
+                ("E: Interagir", 0x001E293B, 0x0094A3B8),
                 ("TAB: Studio ECS", 0x006B21A8, 0x00F3E8FF),
-                ("H: Guide Interactif", 0x004338CA, 0x00E0E7FF),
-                ("N: Radar", 0x00047857, 0x00D1FAE5),
-                ("G: Grille O(1)", 0x001E293B, 0x0094A3B8),
-                ("M: Audio", 0x001E293B, 0x0094A3B8),
-                ("F1: Telemetrie", 0x001E293B, 0x0094A3B8),
+                ("H: Guide", 0x004338CA, 0x00E0E7FF),
+                ("N: Radar", 0x001E293B, 0x0094A3B8),
+                ("G: Grille", 0x001E293B, 0x0094A3B8),
+                ("M: Son", 0x001E293B, 0x0094A3B8),
             ];
             let mut px = 20;
             for (p_txt, p_bg, p_fg) in pills {
@@ -2334,47 +2890,53 @@ impl GameState {
         canvas.draw_text(mx + 16, my + 11, "GUIDE PEDAGOGIQUE ET ARCHITECTURE DU MOTEUR", 0x00FFFFFF, 2);
         canvas.draw_badge(mx + mw - 110, my + 7, 95, 26, 0x000369A1, 0x0038BDF8, "[ECHAP]", 0x00E0F2FE, 1);
 
-        // Section 1 : LES 2 MODES DE TRAVAIL
+        // Section 1 : ARCHITECTURE UNIVERSELLE & MULTI-GENRES
         let mut cy = my + 54;
-        canvas.draw_badge(mx + 20, cy, 260, 24, 0x001E293B, 0x0038BDF8, "1. LES DEUX MODES DE TRAVAIL", 0x0038BDF8, 2);
+        canvas.draw_badge(mx + 20, cy, 380, 24, 0x001E293B, 0x0038BDF8, "1. ARCHITECTURE UNIVERSELLE & MULTI-GENRES", 0x0038BDF8, 2);
         cy += 30;
-        canvas.draw_text(mx + 24, cy, "- [TAB] MODE JEU : Test en direct, controle du joueur, physique et scripts KVL.", 0x00F8FAFC, 1);
+        canvas.draw_text(mx + 24, cy, "- MOTEUR AGNOSTIQUE : Concu pour creer TOUS les genres de jeu 2D sans limitation :", 0x00F8FAFC, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "- [TAB] MODE STUDIO ECS : Creation de scene, authoring d'objets, cablage visuel KVL.", 0x00F8FAFC, 1);
+        canvas.draw_text(mx + 36, cy, "* Top-Down RPG : Deplacement libre 4/8 axes, sentinelles a cone de vue raycaste.", 0x0094A3B8, 1);
+        cy += 18;
+        canvas.draw_text(mx + 36, cy, "* Plateforme 2D : Gravite continue, impulsion de saut, plateformes suspendues.", 0x0094A3B8, 1);
+        cy += 18;
+        canvas.draw_text(mx + 36, cy, "* Shoot'em Up Spatial : Poussee vectorielle, inertie newtonienne, rotation, lasers.", 0x0094A3B8, 1);
+        cy += 18;
+        canvas.draw_text(mx + 36, cy, "* Puzzle & Sokoban : Deplacement quantifie par grille, caisses poussables, dalles.", 0x0094A3B8, 1);
+        cy += 18;
+        canvas.draw_text(mx + 24, cy, "- BASCULE LIVE : [F4 / L] Cycle instantane entre les 4 genres de jeu de demonstration.", 0x0038BDF8, 1);
         cy += 28;
 
         // Section 2 : ARCHITECTURE ENTITE-COMPOSANTS (ECS)
         canvas.draw_badge(mx + 20, cy, 330, 24, 0x001E293B, 0x0010B981, "2. ARCHITECTURE ENTITE-COMPOSANTS (ECS)", 0x0010B981, 2);
         cy += 30;
-        canvas.draw_text(mx + 24, cy, "- ENTITE : Conteneur universel identifie par un ID unique, nom et tag.", 0x00E2E8F0, 1);
+        canvas.draw_text(mx + 24, cy, "- ENTITE : Conteneur universel modulaire identifie par ID unique, nom et tag.", 0x00E2E8F0, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "- COMPOSANTS : Caracteristiques modulaires attachables a toute entite :", 0x00E2E8F0, 1);
+        canvas.draw_text(mx + 24, cy, "- COMPOSANTS : Caracteristiques modulaires combinables a volonte :", 0x00E2E8F0, 1);
         cy += 18;
-        canvas.draw_text(mx + 36, cy, "* Transform2D (x, y, w, h) | Collider2D (Solide AABB / Trigger)", 0x0094A3B8, 1);
+        canvas.draw_text(mx + 36, cy, "* Transform2D | Collider2D (Solide, Trigger, Bloc Poussable)", 0x0094A3B8, 1);
         cy += 18;
-        canvas.draw_text(mx + 36, cy, "* Movement2D (Joueur ou IA) | VisionSensing (Raycast de vue)", 0x0094A3B8, 1);
+        canvas.draw_text(mx + 36, cy, "* Movement2D (TopDown, Platformer, SpaceInertia, Grid) | VisionSensing", 0x0094A3B8, 1);
         cy += 18;
-        canvas.draw_text(mx + 36, cy, "* ParticleEmitter2D (Flammes/Aura) | KVLScriptComponent (Logique)", 0x0094A3B8, 1);
-        cy += 18;
-        canvas.draw_text(mx + 24, cy, "- SYSTEMES AGNOSTIQUES : Boucles decouplees executant la logique (Zero Alloc per frame).", 0x00E2E8F0, 1);
+        canvas.draw_text(mx + 36, cy, "* Projectile2D (Balistique & degats) | ParticleEmitter2D | KVLScriptComponent", 0x0094A3B8, 1);
         cy += 28;
 
         // Section 3 : LANGAGE VISUEL KVL
         canvas.draw_badge(mx + 20, cy, 310, 24, 0x001E293B, 0x00F59E0B, "3. LE LANGAGE VISUEL KVL EN ACTION", 0x00F59E0B, 2);
         cy += 30;
-        canvas.draw_text(mx + 24, cy, "- EVENT : Point d'entree declenche par le moteur (OnOverlap, OnInteract, OnSeen).", 0x00FDE047, 1);
+        canvas.draw_text(mx + 24, cy, "- EVENT : Declenche par le moteur (OnOverlap, OnInteract, OnSeen, OnHit...).", 0x00FDE047, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "- CONDITION : Evaluation logique orientant vers [Vrai:Out] ou [Faux:Out].", 0x00FDE047, 1);
+        canvas.draw_text(mx + 24, cy, "- CONDITION : Logique orientant l'execution vers [Vrai:Out] ou [Faux:Out].", 0x00FDE047, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "- ACTION : Mutation du monde ou joueur (BonusPoints, BoostSpeed, ToggleDoor...).", 0x00FDE047, 1);
+        canvas.draw_text(mx + 24, cy, "- ACTION : Effet de jeu (BonusPoints, BoostSpeed, ToggleDoor, EmitBurst...).", 0x00FDE047, 1);
         cy += 28;
 
-        // Section 4 : RACCOURCIS CLAVIER DU STUDIO
-        canvas.draw_badge(mx + 20, cy, 320, 24, 0x001E293B, 0x00A855F7, "4. RACCOURCIS CLAVIER DU STUDIO", 0x00A855F7, 2);
+        // Section 4 : RACCOURCIS CLAVIER & CONTROLES
+        canvas.draw_badge(mx + 20, cy, 340, 24, 0x001E293B, 0x00A855F7, "4. RACCOURCIS CLAVIER & COMMANDES", 0x00A855F7, 2);
         cy += 30;
-        canvas.draw_text(mx + 24, cy, "P : Spawn Entite | Ctrl+D : Dupliquer | Suppr : Effacer | Ctrl+S : Sauvegarder", 0x00C084FC, 1);
+        canvas.draw_text(mx + 24, cy, "F4 / L : Changer Genre | F : Tirer Laser | Espace : Saut / Poussee | TAB : Mode Studio", 0x00C084FC, 1);
         cy += 18;
-        canvas.draw_text(mx + 24, cy, "Espace : Vue Macro / Cablage | N : Radar | G : Grille O(1) | M : Audio | F1 : Profilage", 0x00C084FC, 1);
+        canvas.draw_text(mx + 24, cy, "P : Spawn Entite | C+D : Dupliquer | Suppr : Effacer | G : Grille O(1) | M : Audio | F1 : Taux", 0x00C084FC, 1);
 
         // Bouton de fermeture
         let close_btn_y = my + mh - 46;
@@ -3165,5 +3727,168 @@ mod tests {
         let shadow_pixels = canvas.buffer.iter().filter(|&&p| p == 0x00060911).count();
         assert!(shadow_pixels > 50, "Des ombres portées au sol doivent être rasterisées");
     }
+
+    #[test]
+    fn test_platformer_physics_gravity_and_jump() {
+        let mut state = GameState::load_from_scene("assets/scenes/platformer_01.scene.json")
+            .expect("Chargement du niveau plateforme");
+
+        let p_idx = state.player_index().expect("Joueur plateforme présent");
+        assert!(matches!(
+            state.entities[p_idx].movement.as_ref().unwrap().mode,
+            MovementMode::Platformer { .. }
+        ), "Le joueur doit être configuré en mode Platformer");
+
+        let input = InputState::new();
+
+        // 1. Simuler quelques frames pour faire chuter le joueur sur le sol solide
+        for _ in 0..30 {
+            state.update(0.016, &input);
+        }
+
+        // Le joueur doit avoir atterri sur le sol et être grounded
+        let p = &state.entities[p_idx];
+        if let MovementMode::Platformer { is_grounded, .. } = p.movement.as_ref().unwrap().mode {
+            assert!(is_grounded, "Le joueur doit être au sol après la chute initiale");
+            assert_eq!(p.movement.as_ref().unwrap().vy, 0.0, "La vitesse verticale doit être nulle au sol");
+        } else {
+            panic!("Mode Platformer attendu");
+        }
+
+        // 2. Déclencher un saut avec la touche Espace
+        let mut jump_input = InputState::new();
+        jump_input.on_key_down(KeyCode::Space);
+        state.update(0.016, &jump_input);
+
+        let p_jumping = &state.entities[p_idx];
+        assert!(p_jumping.movement.as_ref().unwrap().vy < 0.0, "Le saut doit donner une impulsion vers le haut (vy < 0)");
+    }
+
+    #[test]
+    fn test_space_inertia_physics_and_projectile_shooting() {
+        let mut state = GameState::load_from_scene("assets/scenes/space_01.scene.json")
+            .expect("Chargement du niveau spatial");
+
+        let p_idx = state.player_index().expect("Joueur spatial présent");
+        assert!(matches!(
+            state.entities[p_idx].movement.as_ref().unwrap().mode,
+            MovementMode::SpaceInertia { .. }
+        ), "Le joueur doit être configuré en mode SpaceInertia");
+
+        // 1. Rotation vers la droite
+        let mut rot_input = InputState::new();
+        rot_input.on_key_down(KeyCode::ArrowRight);
+        state.update(0.05, &rot_input);
+        assert!(state.entities[p_idx].transform.rotation > 0.0, "Le vaisseau doit tourner vers la droite");
+
+        // 2. Poussée vectorielle
+        let mut thrust_input = InputState::new();
+        thrust_input.on_key_down(KeyCode::ArrowUp);
+        state.update(0.05, &thrust_input);
+        let mov = state.entities[p_idx].movement.as_ref().unwrap();
+        assert!(mov.vx.abs() > 0.0 || mov.vy.abs() > 0.0, "La poussée doit générer une vitesse vectorielle");
+
+        // 3. Tir de projectile
+        let initial_entity_count = state.entities.len();
+        let fired = state.fire_player_projectile();
+        assert!(fired, "Le tir balistique doit réussir");
+        assert_eq!(state.entities.len(), initial_entity_count + 1);
+
+        let bullet = state.entities.last().unwrap();
+        assert_eq!(bullet.tag, "projectile");
+        assert!(bullet.projectile.is_some());
+        assert!(bullet.movement.is_some());
+    }
+
+    #[test]
+    fn test_multi_genre_scene_switching() {
+        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Chargement de la scène initiale");
+
+        assert!(state.scene_name.contains("Niveau 1") || state.scene_name.contains("Salle"));
+
+        // 1. Bascule vers la scène suivante (Platformer 2D)
+        state.cycle_scene_forward();
+        assert!(state.scene_path.contains("platformer"));
+        assert!(state.scene_name.contains("Plateforme"));
+
+        // 2. Bascule vers la scène suivante (Space Shmup)
+        state.cycle_scene_forward();
+        assert!(state.scene_path.contains("space"));
+        assert!(state.scene_name.contains("Spatial"));
+
+        // 3. Bascule vers la scène suivante (Puzzle Sokoban)
+        state.cycle_scene_forward();
+        assert!(state.scene_path.contains("puzzle"));
+        assert!(state.scene_name.contains("Sanctuaire"));
+
+        // 4. Rebouclage vers la première scène (Top-Down Aventure)
+        state.cycle_scene_forward();
+        assert!(state.scene_path.contains("level_01"));
+    }
+
+    #[test]
+    fn test_puzzle_sokoban_pushable_block_and_pressure_plates() {
+        let mut state = GameState::load_from_scene("assets/scenes/puzzle_01.scene.json")
+            .expect("Chargement du niveau puzzle");
+
+        let p_idx = state.player_index().expect("Joueur puzzle présent");
+        assert_eq!(state.entities[p_idx].tag, "player");
+
+        // Vérifier la présence des caisses poussables et des dalles
+        let crate_count = state.entities.iter().filter(|e| e.tag == "crate").count();
+        let plate_count = state.entities.iter().filter(|e| e.tag == "plate").count();
+        let door_idx = state.entities.iter().position(|e| e.tag == "door").expect("Porte de sanctuaire présente");
+
+        assert_eq!(crate_count, 2, "Le niveau puzzle doit contenir 2 caisses");
+        assert_eq!(plate_count, 2, "Le niveau puzzle doit contenir 2 dalles de pression");
+        assert!(state.entities[door_idx].collider.as_ref().unwrap().is_solid, "La porte doit être fermée initialement");
+
+        // 1. Positionner directement les deux caisses sur leurs dalles respectives
+        let plate_positions: Vec<(f32, f32)> = state.entities.iter()
+            .filter(|e| e.tag == "plate")
+            .map(|e| (e.transform.x, e.transform.y))
+            .collect();
+
+        let crate_indices: Vec<usize> = state.entities.iter()
+            .enumerate()
+            .filter(|(_, e)| e.tag == "crate")
+            .map(|(idx, _)| idx)
+            .collect();
+
+        for (i, &c_idx) in crate_indices.iter().enumerate() {
+            let (px, py) = plate_positions[i];
+            state.entities[c_idx].transform.x = px;
+            state.entities[c_idx].transform.y = py;
+        }
+
+        // 2. Mettre à jour une frame pour déclencher SYSTEM 4.5
+        let input = InputState::new();
+        state.update(0.016, &input);
+
+        // La porte doit maintenant être déverrouillée (is_solid = false)
+        assert!(!state.entities[door_idx].collider.as_ref().unwrap().is_solid, "Les deux caisses sur les dalles doivent ouvrir la porte !");
+    }
+
+    #[test]
+    fn test_grid_movement_controller() {
+        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène chargée");
+
+        let p_idx = state.player_index().unwrap();
+        // Remplacer le mouvement par le mode Grille (40px par case, cooldown 0.1s)
+        state.entities[p_idx].movement = Some(Movement2D::grid(40.0, 0.1));
+
+        let initial_x = state.entities[p_idx].transform.x;
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyD);
+
+        state.update(0.016, &input);
+
+        // Le joueur s'est déplacé d'exactement 40 pixels (une case de grille)
+        let new_x = state.entities[p_idx].transform.x;
+        assert_eq!(new_x, initial_x + 40.0, "Le joueur en mode Grille doit avancer d'une case complète");
+    }
 }
+
 
