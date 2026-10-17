@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TITLE}} — Jeu Autonome KaractiRage</title>
+  <meta name="description" content="{{TITLE}} par {{AUTHOR}} — Moteur KaractiRage 2D & Logique KVL 60 FPS">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Outfit:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-deep: #060913;
+      --card-bg: #0D1322;
+      --accent-cyan: #38BDF8;
+      --accent-purple: #A855F7;
+      --accent-emerald: #10B981;
+      --accent-amber: #F59E0B;
+      --text-main: #F8FAFC;
+      --text-muted: #94A3B8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-deep);
+      color: var(--text-main);
+      font-family: 'Outfit', -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow-x: hidden;
+    }
+    .game-shell {
+      width: 100%;
+      max-width: 1240px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .game-header {
+      background: var(--card-bg);
+      border: 1px solid #1E293B;
+      border-radius: 8px;
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+    .title-group h1 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .title-group h1 span { color: var(--accent-cyan); }
+    .author-tag { font-size: 13px; color: var(--text-muted); }
+    .header-badges {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .badge {
+      font-family: 'Fira Code', monospace;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-wasm { background: #082F49; color: var(--accent-cyan); border: 1px solid #0284C7; }
+    .badge-fps { background: #064E3B; color: #A7F3D0; border: 1px solid #059669; }
+    .badge-genre { background: #2E1065; color: #E9D5FF; border: 1px solid var(--accent-purple); }
+    .btn-fullscreen {
+      background: #1E293B;
+      color: var(--text-main);
+      border: 1px solid #334155;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.15s ease;
+    }
+    .btn-fullscreen:hover {
+      background: #334155;
+      border-color: var(--accent-cyan);
+      color: var(--accent-cyan);
+    }
+    .viewport-container {
+      position: relative;
+      background: #000;
+      border: 2px solid #1E293B;
+      border-radius: 8px;
+      overflow: hidden;
+      aspect-ratio: 1200 / 800;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    }
+    #game-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      image-rendering: pixelated;
+    }
+    .overlay-start {
+      position: absolute;
+      inset: 0;
+      background: rgba(6, 9, 19, 0.85);
+      backdrop-filter: blur(4px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 10;
+      cursor: pointer;
+      transition: opacity 0.25s ease;
+    }
+    .overlay-start.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .start-card {
+      background: var(--card-bg);
+      border: 2px solid var(--accent-cyan);
+      border-radius: 12px;
+      padding: 32px 48px;
+      text-align: center;
+      box-shadow: 0 0 30px rgba(56, 189, 248, 0.25);
+    }
+    .start-btn {
+      background: #0284C7;
+      color: #FFF;
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      padding: 12px 28px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 14px;
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
+    }
+    .game-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 4px 8px;
+    }
+    .controls-hint {
+      display: flex;
+      gap: 12px;
+    }
+    .key {
+      background: #1E293B;
+      color: #E2E8F0;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Fira Code', monospace;
+      font-size: 11px;
+      border: 1px solid #334155;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-shell">
+    <header class="game-header">
+      <div class="title-group">
+        <h1><span>⚡</span> {{TITLE}}</h1>
+        <p class="author-tag">Créé par {{AUTHOR}} • Moteur KaractiRage 2D &amp; KVL</p>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge-genre">{{GENRE}}</span>
+        <span class="badge badge-wasm">WASM • 60 FPS</span>
+        <button id="btn-fullscreen" class="btn-fullscreen">⛶ PLEIN ÉCRAN</button>
+      </div>
+    </header>
+
+    <div class="viewport-container" id="viewport-box">
+      <canvas id="game-canvas" width="1200" height="800"></canvas>
+
+      <div class="overlay-start" id="overlay-start">
+        <div class="start-card">
+          <h2 style="font-size: 24px; font-weight: 700; color: #FFF; margin-bottom: 6px;">{{TITLE}}</h2>
+          <p style="color: #94A3B8; font-size: 14px;">Prêt à jouer • ZQSD / Flèches pour se déplacer</p>
+          <button class="start-btn" id="start-btn">▶ LANCER LE JEU</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="game-footer">
+      <div class="controls-hint">
+        <span><span class="key">ZQSD</span> / <span class="key">Flèches</span> Déplacement</span>
+        <span><span class="key">Espace</span> Action / Dialogue</span>
+        <span><span class="key">1-5</span> Objets Hotbar</span>
+        <span><span class="key">N</span> Radar</span>
+        <span><span class="key">M</span> Muet</span>
+      </div>
+      <div>Autonome • KaractiRage Engine Standalone v1.0</div>
+    </footer>
+  </div>
+
+  <script id="embedded-package" type="application/json">
+{{EMBEDDED_JSON}}
+  </script>
+
+  <script type="module">
+    // Données du jeu embarquées dans le HTML
+    const rawData = document.getElementById('embedded-package').textContent;
+    const gamePackage = JSON.parse(rawData);
+    console.log("🎮 KaractiRage Standalone:", gamePackage.metadata.title, gamePackage);
+
+    const canvas = document.getElementById('game-canvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const overlayStart = document.getElementById('overlay-start');
+    const startBtn = document.getElementById('start-btn');
+    const btnFullscreen = document.getElementById('btn-fullscreen');
+    const viewportBox = document.getElementById('viewport-box');
+
+    let gameStarted = false;
+
+    // Plein écran réactif
+    btnFullscreen.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        viewportBox.requestFullscreen().catch(err => console.warn(err));
+      } else {
+        document.exitFullscreen().catch(err => console.warn(err));
+      }
+    });
+
+    // Démarrage du jeu
+    function launchGame() {
+      if (gameStarted) return;
+      gameStarted = true;
+      overlayStart.classList.add('hidden');
+      canvas.focus();
+    }
+
+    overlayStart.addEventListener('click', launchGame);
+    startBtn.addEventListener('click', launchGame);
+
+    // Initialisation du runtime WASM avec fallback gracieux
+    async function initRuntime() {
+      try {
+        const wasmModule = await import('./pkg/karactirage_wasm.js');
+        await wasmModule.default();
+        wasmModule.wasm_init_engine();
+
+        if (typeof wasmModule.wasm_import_game_package === 'function') {
+          wasmModule.wasm_import_game_package(JSON.stringify(gamePackage));
+        }
+
+        const width = wasmModule.wasm_get_canvas_width();
+        const height = wasmModule.wasm_get_canvas_height();
+
+        let lastTime = performance.now();
+        function loop(now) {
+          const dt = Math.min((now - lastTime) / 1000.0, 0.1);
+          lastTime = now;
+
+          wasmModule.wasm_render_frame(dt);
+          const ptr = wasmModule.wasm_get_framebuffer_ptr();
+          if (ptr !== 0) {
+            const pixels = new Uint8ClampedArray(wasmModule.wasm_memory ? wasmModule.wasm_memory().buffer : wasmModule.__wbindgen_memory().buffer, ptr, width * height * 4);
+            const img = new ImageData(pixels, width, height);
+            ctx.putImageData(img, 0, 0);
+          }
+          requestAnimationFrame(loop);
+        }
+        requestAnimationFrame(loop);
+      } catch (err) {
+        console.info("Info: Runtime WASM externe non détecté, affichage pré-calculé.");
+        ctx.fillStyle = "#0D1322";
+        ctx.fillRect(0, 0, 1200, 800);
+        ctx.fillStyle = "#38BDF8";
+        ctx.font = "bold 24px sans-serif";
+        ctx.fillText(gamePackage.metadata.title, 80, 120);
+        ctx.fillStyle = "#94A3B8";
+        ctx.font = "16px sans-serif";
+        ctx.fillText("Entités : " + gamePackage.entities.length + " | Graphes KVL : " + Object.keys(gamePackage.kvl_graphs).length, 80, 160);
+      }
+    }
+
+    initRuntime();
+  </script>
+</body>
+</html>

@@ -669,3 +669,808 @@ kbd {
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
 }
+
+/* ==========================================================================
+   6. EXPORTATEUR STANDALONE & MODALE DARK ATELIER
+   ========================================================================== */
+.toolbar-btn-amber {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #fef3c7;
+}
+
+.toolbar-btn-amber:hover {
+  background: rgba(245, 158, 11, 0.25);
+  border-color: #f59e0b;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.35);
+}
+
+.export-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 7, 18, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 1.5rem;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.export-modal-overlay.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.export-modal-card {
+  background: #0b0f19;
+  border: 1px solid #38bdf8;
+  box-shadow: 0 0 35px rgba(56, 189, 248, 0.25), 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+  border-radius: var(--radius-lg);
+  max-width: 720px;
+  width: 100%;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  position: relative;
+  animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalPop {
+  0% { transform: scale(0.94) translateY(12px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+.export-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.2);
+  padding-bottom: 0.85rem;
+}
+
+.modal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.modal-icon {
+  font-size: 1.6rem;
+}
+
+.export-modal-header h2 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #f8fafc;
+  text-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+}
+
+.modal-close-btn {
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: #94a3b8;
+  font-size: 1.1rem;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.modal-close-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #f87171;
+}
+
+.export-modal-subtitle {
+  font-size: 0.875rem;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.export-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.export-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.export-form-group label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #38bdf8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: var(--font-mono);
+}
+
+.export-form-group input {
+  background: #030712;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+  color: #f1f5f9;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.export-form-group input:focus {
+  outline: none;
+  border-color: #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+}
+
+.export-options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.85rem;
+}
+
+.export-option-card {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 1rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.export-option-card:hover {
+  border-color: #0ea5e9;
+  background: rgba(14, 165, 233, 0.08);
+  transform: translateY(-2px);
+}
+
+.export-option-card.active {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.25);
+}
+
+.opt-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 0.6rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.export-option-card[data-format="json"] .opt-badge {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.export-option-card[data-format="desktop"] .opt-badge {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.export-option-card h4 {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #f8fafc;
+  margin-top: 0.85rem;
+}
+
+.export-option-card p {
+  font-size: 0.725rem;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.export-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid rgba(56, 189, 248, 0.2);
+  padding-top: 1.15rem;
+  margin-top: 0.5rem;
+}
+
+.btn-secondary {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  padding: 0.65rem 1.15rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background: #334155;
+  border-color: #64748b;
+  color: #f8fafc;
+}
+
+.btn-primary-export {
+  background: linear-gradient(135deg, #059669, #10b981);
+  border: 1px solid #34d399;
+  color: #ffffff;
+  padding: 0.7rem 1.5rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+  transition: all 0.2s ease;
+}
+
+.btn-primary-export:hover {
+  background: linear-gradient(135deg, #047857, #059669);
+  box-shadow: 0 0 25px rgba(16, 185, 129, 0.6);
+  transform: translateY(-1px);
+}
+
+/* ==========================================================================
+   10. BOÎTE MODALE ASSISTANT DE RECETTE DE JEU (GAME RECIPE WIZARD)
+   ========================================================================== */
+.recipe-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 12, 22, 0.88);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  padding: 1.5rem;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.recipe-modal-card {
+  background: linear-gradient(145deg, #0f172a, #111827);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 920px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.75), 0 0 35px rgba(168, 85, 247, 0.2);
+  overflow: hidden;
+  animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.recipe-modal-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(168, 85, 247, 0.05);
+}
+
+.recipe-modal-subtitle {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-top: 0.2rem;
+}
+
+.recipe-meta-row {
+  display: flex;
+  gap: 1.25rem;
+  padding: 0.85rem 1.5rem;
+  background: rgba(15, 23, 42, 0.6);
+  border-bottom: 1px solid var(--border-slate);
+}
+
+.recipe-meta-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.recipe-meta-group label {
+  font-family: var(--font-mono);
+  font-size: 0.725rem;
+  font-weight: 700;
+  color: #cbd5e1;
+  letter-spacing: 0.05em;
+}
+
+.recipe-meta-group input {
+  background: #090d16;
+  border: 1px solid var(--border-slate);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.75rem;
+  color: #f8fafc;
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  transition: border-color 0.15s ease;
+}
+
+.recipe-meta-group input:focus {
+  border-color: var(--neon-purple);
+  outline: none;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
+}
+
+/* Stepper 6 Étapes */
+.recipe-stepper {
+  display: flex;
+  background: #090d16;
+  border-bottom: 1px solid var(--border-slate);
+  padding: 0.5rem 1rem;
+  gap: 0.5rem;
+  overflow-x: auto;
+}
+
+.step-indicator {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: #64748b;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 0.785rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.step-indicator .step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1e293b;
+  color: #94a3b8;
+  font-family: var(--font-mono);
+  font-size: 0.725rem;
+  font-weight: 700;
+}
+
+.step-indicator.active {
+  background: rgba(168, 85, 247, 0.15);
+  border-color: rgba(168, 85, 247, 0.4);
+  color: #f3e8ff;
+}
+
+.step-indicator.active .step-num {
+  background: var(--neon-purple);
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
+}
+
+.step-indicator.done {
+  color: #34d399;
+}
+
+.step-indicator.done .step-num {
+  background: #065f46;
+  color: #34d399;
+}
+
+/* Corps des étapes */
+.recipe-steps-body {
+  padding: 1.25rem 1.5rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.recipe-step-view {
+  display: none;
+}
+
+.recipe-step-view.active {
+  display: block;
+  animation: fadeIn 0.2s ease;
+}
+
+.step-section-title {
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  letter-spacing: 0.04em;
+  margin: 1rem 0 0.75rem 0;
+}
+
+.step-section-title:first-child {
+  margin-top: 0;
+}
+
+/* Bandeau Archetypes Rapides */
+.preset-banner {
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px dashed rgba(168, 85, 247, 0.35);
+  border-radius: var(--radius-md);
+  padding: 0.65rem 1rem;
+  margin-bottom: 1.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.preset-title {
+  font-family: var(--font-mono);
+  font-size: 0.725rem;
+  font-weight: 700;
+  color: #d8b4fe;
+}
+
+.preset-buttons {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.btn-preset-archetype {
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  color: #e9d5ff;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-preset-archetype:hover {
+  background: rgba(168, 85, 247, 0.25);
+  border-color: var(--neon-purple);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+/* Grille des 12 Genres */
+.genres-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+
+.genre-card {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid var(--border-slate);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.genre-card:hover {
+  border-color: var(--neon-purple);
+  background: rgba(168, 85, 247, 0.08);
+  transform: translateY(-1px);
+}
+
+.genre-card.active {
+  background: rgba(168, 85, 247, 0.18);
+  border-color: var(--neon-purple);
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.3);
+}
+
+.genre-card .genre-icon {
+  font-size: 1.35rem;
+}
+
+.genre-card h4 {
+  font-size: 0.825rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.genre-card p {
+  font-size: 0.685rem;
+  color: #94a3b8;
+  line-height: 1.3;
+}
+
+.secondary-genre-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 0.65rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-slate);
+  margin-top: 0.5rem;
+}
+
+.secondary-genre-row label {
+  font-size: 0.775rem;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.recipe-select {
+  background: #090d16;
+  border: 1px solid var(--border-slate);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.65rem;
+  color: #f8fafc;
+  font-size: 0.8rem;
+  font-family: var(--font-ui);
+}
+
+/* Grilles d'Options (Dimension, Caméra, Déplacement, Perf) */
+.options-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.15rem;
+}
+
+.choice-card {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid var(--border-slate);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.choice-card:hover {
+  border-color: var(--neon-cyan);
+  background: rgba(56, 189, 248, 0.08);
+  transform: translateY(-1px);
+}
+
+.choice-card.active {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.25);
+}
+
+.choice-card .choice-icon {
+  font-size: 1.5rem;
+  margin-bottom: 0.4rem;
+  display: block;
+}
+
+.choice-card h4 {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #f8fafc;
+  margin-bottom: 0.25rem;
+}
+
+.choice-card p {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  line-height: 1.35;
+}
+
+/* Checkboxes & Toggles */
+.checkboxes-matrix {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+
+.recipe-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--border-slate);
+  padding: 0.55rem 0.85rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #e2e8f0;
+  transition: all 0.15s ease;
+}
+
+.recipe-checkbox:hover {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: #64748b;
+}
+
+.recipe-checkbox input[type="checkbox"] {
+  accent-color: var(--neon-purple);
+  width: 16px;
+  height: 16px;
+}
+
+.toggle-group-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.15rem;
+}
+
+.recipe-toggle-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--border-slate);
+  border-radius: 20px;
+  padding: 0.45rem 1rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #cbd5e1;
+  transition: all 0.15s ease;
+}
+
+.recipe-toggle-pill:hover {
+  border-color: var(--electric-emerald);
+}
+
+.recipe-toggle-pill input[type="checkbox"] {
+  accent-color: var(--electric-emerald);
+  width: 16px;
+  height: 16px;
+}
+
+/* Encart d'Audit de Dépendances */
+.audit-card {
+  background: #090d16;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+}
+
+.audit-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.audit-card-header h4 {
+  font-family: var(--font-mono);
+  font-size: 0.775rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  letter-spacing: 0.05em;
+}
+
+.badge-audit-ok {
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid #10b981;
+  color: #34d399;
+  font-family: var(--font-mono);
+  font-size: 0.725rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+.badge-audit-warn {
+  background: rgba(245, 158, 11, 0.2);
+  border: 1px solid #f59e0b;
+  color: #fbbf24;
+  font-family: var(--font-mono);
+  font-size: 0.725rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+.audit-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+/* Pied de page du Recipe Wizard */
+.recipe-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid rgba(168, 85, 247, 0.2);
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.footer-left-buttons,
+.footer-right-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.btn-nav {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  padding: 0.6rem 1.15rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-nav:hover:not(:disabled) {
+  background: #334155;
+  color: #ffffff;
+}
+
+.btn-nav:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-nav-primary {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(126, 34, 206, 0.5));
+  border-color: var(--neon-purple);
+  color: #f3e8ff;
+}
+
+.btn-nav-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.45), rgba(126, 34, 206, 0.7));
+  color: #ffffff;
+}
+
+.btn-primary-apply {
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  border: 1px solid #c084fc;
+  color: #ffffff;
+  padding: 0.65rem 1.35rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 0 15px rgba(168, 85, 247, 0.4);
+  transition: all 0.2s ease;
+}
+
+.btn-primary-apply:hover {
+  background: linear-gradient(135deg, #6d28d9, #9333ea);
+  box-shadow: 0 0 25px rgba(168, 85, 247, 0.6);
+  transform: translateY(-1px);
+}
+
+

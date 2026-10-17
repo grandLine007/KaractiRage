@@ -12,7 +12,10 @@ pub use category::Category;
 pub use connection::Connection;
 pub use error::KvlError;
 pub use graph::{Graph, Variable};
-pub use guided::{CollectibleIntent, DoorConditionType, DoorIntent, DoorTriggerType, GuidedBuilder};
+pub use guided::{
+    ChestIntent, CollectibleIntent, DoorConditionType, DoorIntent, DoorTriggerType,
+    GuidedBuilder, HazardIntent, SwitchPlateIntent, TeleportIntent,
+};
 pub use node::{Node, NodeKind};
 pub use pin::{Pin, PinDirection};
 pub use types::{DataType, Value};
@@ -135,6 +138,56 @@ mod tests {
         let json = graph.to_json().unwrap();
         assert!(json.contains("Émeraude"));
         assert!(json.contains("gem_ping.wav"));
+
+        // Test Coffre & Clé
+        let chest_intent = ChestIntent {
+            chest_name: "Coffre Royal".into(),
+            required_key: Some("key_bronze".into()),
+            reward_score: 100,
+            reward_item: Some("potion_heal".into()),
+            play_sound: Some("fanfare.wav".into()),
+        };
+        let chest_graph = GuidedBuilder::build_chest(&chest_intent);
+        assert_eq!(Validator::validate(&chest_graph).len(), 0);
+
+        // Test Piège / Danger
+        let hazard_intent = HazardIntent {
+            hazard_name: "Piques de Feu".into(),
+            damage_amount: 25,
+            play_sound: Some("burn.wav".into()),
+        };
+        let hazard_graph = GuidedBuilder::build_hazard(&hazard_intent);
+        assert_eq!(Validator::validate(&hazard_graph).len(), 0);
+
+        // Test Porte avec condition de score
+        let door_intent = DoorIntent {
+            door_name: "Porte Sécurisée".into(),
+            trigger: DoorTriggerType::OnKeyPress("E".into()),
+            condition: DoorConditionType::ScoreRequired(50),
+            toggle: false,
+            play_sound: Some("door_open.wav".into()),
+        };
+        let door_graph = GuidedBuilder::build_door(&door_intent);
+        assert_eq!(Validator::validate(&door_graph).len(), 0);
+
+        // Test Téléporteur
+        let tp_intent = TeleportIntent {
+            portal_name: "Portail Astral".into(),
+            target_x: 640.0,
+            target_y: 480.0,
+            play_sound: Some("teleport.wav".into()),
+        };
+        let tp_graph = GuidedBuilder::build_teleport(&tp_intent);
+        assert_eq!(Validator::validate(&tp_graph).len(), 0);
+
+        // Test Dalle Pression / Interrupteur
+        let switch_intent = SwitchPlateIntent {
+            switch_name: "Dalle Nord".into(),
+            door_var_to_open: "door_is_open".into(),
+            play_sound: Some("click.wav".into()),
+        };
+        let switch_graph = GuidedBuilder::build_switch_plate(&switch_intent);
+        assert_eq!(Validator::validate(&switch_graph).len(), 0);
     }
 
     #[test]

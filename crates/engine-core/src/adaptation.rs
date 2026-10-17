@@ -14,6 +14,7 @@ impl QualityProfile {
         }
     }
 
+    #[allow(dead_code)]
     pub fn color(&self) -> u32 {
         match self {
             QualityProfile::Compatibility => 0x0010B981, // Vert émeraude

@@ -1,0 +1,161 @@
+{
+  "id": "graph_guard_patrol",
+  "name": "IA : Garde Sentinelle",
+  "description": "Logique d'alerte : déclenche l'alarme, un geyser d'alerte et verrouille les portes si le joueur est repéré.",
+  "version": 1,
+  "variables": {
+    "alarm_active": {
+      "name": "alarm_active",
+      "data_type": "Bool",
+      "initial_value": {
+        "type": "Bool",
+        "value": false
+      }
+    }
+  },
+  "nodes": {
+    "act_trigger_alarm": {
+      "id": "act_trigger_alarm",
+      "name": "Activer Alerte",
+      "category": "World",
+      "description": "Déclenche l'état d'alerte générale et la sirène.",
+      "kind": {
+        "Action": {
+          "action_type": "TriggerAlarm"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 200.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "evt_player_seen": {
+      "id": "evt_player_seen",
+      "name": "Joueur Repéré",
+      "category": "Interactions",
+      "description": "Déclenché quand le joueur entre dans le cône de vision non occulté.",
+      "kind": {
+        "Event": {
+          "event_type": "OnPlayerSeen"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_alert_sparks": {
+      "id": "act_alert_sparks",
+      "name": "Émission Particules Alerte",
+      "category": "World",
+      "description": "Projette des étincelles d'alerte rouge sur le joueur.",
+      "kind": {
+        "Action": {
+          "action_type": "SpawnSparkles"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 400.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_lock_doors": {
+      "id": "act_lock_doors",
+      "name": "Verrouiller Portes d'Urgence",
+      "category": "World",
+      "description": "Ferme immédiatement toute issue pour confiner l'intrus.",
+      "kind": {
+        "Action": {
+          "action_type": "LockAllDoors"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 600.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    }
+  },
+  "connections": [
+    {
+      "id": "conn_seen_to_alarm",
+      "from_node": "evt_player_seen",
+      "from_pin": "out_trigger",
+      "to_node": "act_trigger_alarm",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_alarm_to_sparks",
+      "from_node": "act_trigger_alarm",
+      "from_pin": "out_trigger",
+      "to_node": "act_alert_sparks",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_sparks_to_lock",
+      "from_node": "act_alert_sparks",
+      "from_pin": "out_trigger",
+      "to_node": "act_lock_doors",
+      "to_pin": "in_trigger"
+    }
+  ]
+}

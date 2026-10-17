@@ -16,6 +16,21 @@ export class OutputDevice {
 }
 
 /**
+ * Instancie une recette de jeu et charge la scène minimale jouable dans le moteur
+ */
+export function wasm_apply_recipe(recipe_json: string): number;
+
+/**
+ * Exporte le package universel KaractiRage (.karacti.json)
+ */
+export function wasm_export_game_package(title: string, author: string): string;
+
+/**
+ * Exporte le jeu courant en fichier HTML5 standalone complet autonome
+ */
+export function wasm_export_standalone_html(title: string, author: string): string;
+
+/**
  * Retourne la hauteur native du Canvas (800 px)
  */
 export function wasm_get_canvas_height(): number;
@@ -54,6 +69,11 @@ export function wasm_get_spatial_queries(): number;
  * Récupère le message de statut courant (UTF-8)
  */
 export function wasm_get_status_message(): string;
+
+/**
+ * Importe et instancie un package universel (.karacti.json) dans le moteur
+ */
+export function wasm_import_game_package(package_json: string): number;
 
 /**
  * Initialise l'instance WebAssembly du moteur KaractiRage
@@ -105,12 +125,20 @@ export function wasm_toggle_radar(): number;
  */
 export function wasm_toggle_spatial_grid(): number;
 
+/**
+ * Valide une recette de jeu (JSON) et résout automatiquement ses dépendances
+ */
+export function wasm_validate_recipe(recipe_json: string): string;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_outputdevice_free: (a: number, b: number) => void;
     readonly outputdevice_close: (a: number) => void;
+    readonly wasm_apply_recipe: (a: number, b: number) => number;
+    readonly wasm_export_game_package: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly wasm_export_standalone_html: (a: number, b: number, c: number, d: number) => [number, number];
     readonly wasm_get_canvas_height: () => number;
     readonly wasm_get_canvas_width: () => number;
     readonly wasm_get_cpu_us: () => number;
@@ -119,6 +147,7 @@ export interface InitOutput {
     readonly wasm_get_score: () => number;
     readonly wasm_get_spatial_queries: () => number;
     readonly wasm_get_status_message: () => [number, number];
+    readonly wasm_import_game_package: (a: number, b: number) => number;
     readonly wasm_init_engine: () => number;
     readonly wasm_on_key_down: (a: number) => void;
     readonly wasm_on_key_up: (a: number) => void;
@@ -129,6 +158,7 @@ export interface InitOutput {
     readonly wasm_toggle_editor_mode: () => number;
     readonly wasm_toggle_radar: () => number;
     readonly wasm_toggle_spatial_grid: () => number;
+    readonly wasm_validate_recipe: (a: number, b: number) => [number, number];
     readonly wasm_bindgen__convert__closures_____invoke__hf89d7653fac0de47: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

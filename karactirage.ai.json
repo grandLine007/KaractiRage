@@ -1,0 +1,7 @@
+{
+  "provider": "LmStudio",
+  "custom_endpoint": "http://127.0.0.1:1234/v1/chat/completions",
+  "custom_model": "nvidia/nemotron-3-nano-4b",
+  "custom_api_key": null,
+  "timeout_seconds": 120
+}

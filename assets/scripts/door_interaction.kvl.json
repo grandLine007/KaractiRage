@@ -22,32 +22,6 @@
     }
   },
   "nodes": {
-    "act_deny_access": {
-      "id": "act_deny_access",
-      "name": "Alerte Accès Refusé",
-      "category": "World",
-      "description": "Signale le refus d'accès et empêche le passage.",
-      "kind": {
-        "Action": {
-          "action_type": "DenyAccess"
-        }
-      },
-      "inputs": [
-        {
-          "id": "in_trigger",
-          "name": "Exécution",
-          "direction": "Input",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "outputs": [],
-      "ui": {
-        "position_x": 340.0,
-        "position_y": 80.0,
-        "color_tag": null
-      }
-    },
     "act_toggle_door": {
       "id": "act_toggle_door",
       "name": "Déverrouiller Porte",
@@ -71,6 +45,32 @@
       "ui": {
         "position_x": 340.0,
         "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_deny_access": {
+      "id": "act_deny_access",
+      "name": "Alerte Accès Refusé",
+      "category": "World",
+      "description": "Signale le refus d'accès et empêche le passage.",
+      "kind": {
+        "Action": {
+          "action_type": "DenyAccess"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 340.0,
+        "position_y": 80.0,
         "color_tag": null
       }
     },

@@ -1,0 +1,26 @@
+=================================================================
+🎮 KARACTIRAGE — BUNDLE STANDALONE DESKTOP : KaractiRage_Demonstrateur
+=================================================================
+
+Ce jeu a été conçu et exporté depuis le Studio KaractiRage.
+Moteur 2D déterministe en Rust, physique SAT/AABB et logique KVL.
+
+INSTRUCTIONS DE LANCEMENT :
+  • macOS / Linux : Double-cliquez sur 'lancer_le_jeu.sh' ou exécutez './karactirage'
+  • Windows : Double-cliquez sur 'lancer_le_jeu.bat'
+
+COMMANDES EN JEU :
+  • ZQSD ou Flèches : Déplacement du personnage
+  • Espace / Z       : Saut (Plateforme) / Poussée
+  • F                : Tir laser balistique
+  • E                : Interagir (Portes, PNJ, Trésors)
+  • 1 à 5 + U        : Sélection & Utilisation d'objet d'inventaire
+  • TAB              : Bascule Studio Atelier / Mode Jeu
+  • M                : Audio On/Off
+  • N                : Radar Tactique Minimap
+  • G                : Grille Spatiale O(1)
+  • F4 / L           : Cycle instantané de genre (5 genres)
+  • H                : Guide Pédagogique Interactif
+  • R                : Réinitialiser la scène
+
+Performance : 60 FPS constants, profil Low-End First, zéro allocation per-frame.

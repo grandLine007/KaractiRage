@@ -26,6 +26,9 @@ pub enum SoundType {
     ItemPickup,
     PotionDrink,
     KeyUnlock,
+    BossRoar,
+    BossTelegraph,
+    BossSlam,
 }
 
 struct ActiveVoice {
@@ -61,6 +64,9 @@ impl ActiveVoice {
             SoundType::ItemPickup => 0.28,
             SoundType::PotionDrink => 0.35,
             SoundType::KeyUnlock => 0.25,
+            SoundType::BossRoar => 0.65,
+            SoundType::BossTelegraph => 0.30,
+            SoundType::BossSlam => 0.40,
         };
 
         let duration_samples = (duration_secs * sample_rate as f32) as usize;
@@ -319,6 +325,38 @@ impl ActiveVoice {
                 let env = (1.0 - pulse_progress).powf(2.2);
                 (square * 0.4 + sine * 0.6) * env * 0.7
             }
+
+            SoundType::BossRoar => {
+                // Rugissement colossal guttural et grondant (onde complexe modulée 55 Hz -> 95 Hz avec distorsion)
+                let mod_freq = 55.0 + (progress * 40.0) + (t * 14.0 * std::f32::consts::TAU).sin() * 15.0;
+                let sub_sine = (t * (mod_freq * 0.5) * std::f32::consts::TAU).sin();
+                let main_saw = 2.0 * ((t * mod_freq).fract()) - 1.0;
+                let noise = (((t * 12345.67).sin() * 43758.5453).fract() - 0.5) * 0.35;
+                let env = if progress < 0.15 {
+                    progress / 0.15
+                } else {
+                    (1.0 - progress).powf(1.2)
+                };
+                ((sub_sine * 0.5 + main_saw * 0.3 + noise * 0.2) * env).clamp(-1.0, 1.0) * 0.85
+            }
+
+            SoundType::BossTelegraph => {
+                // Impulsion de charge télégraphiée aiguë (sweep rapide ascendant 700 Hz -> 1400 Hz avec pulsation)
+                let freq = 700.0 + progress * 700.0;
+                let pulse = (t * 40.0 * std::f32::consts::TAU).sin().abs();
+                let sine = (t * freq * std::f32::consts::TAU).sin();
+                let env = (1.0 - (progress - 0.5).abs() * 1.5).clamp(0.0, 1.0);
+                sine * pulse * env * 0.7
+            }
+
+            SoundType::BossSlam => {
+                // Slam tellurique lourd : impact sourd (120 Hz chutant à 35 Hz) + grondement tellurique
+                let freq = (120.0 - progress * 85.0).max(30.0);
+                let sine = (t * freq * std::f32::consts::TAU).sin();
+                let triangle = 2.0 * (2.0 * (t * freq - (t * freq + 0.5).floor()).abs()) - 1.0;
+                let env = (1.0 - progress).powf(2.5);
+                (sine * 0.7 + triangle * 0.3) * env * 0.9
+            }
         };
 
         raw_wave * self.volume
@@ -461,6 +499,9 @@ mod tests {
             SoundType::ItemPickup,
             SoundType::PotionDrink,
             SoundType::KeyUnlock,
+            SoundType::BossRoar,
+            SoundType::BossTelegraph,
+            SoundType::BossSlam,
         ];
 
         let sample_rate = 44100.0;

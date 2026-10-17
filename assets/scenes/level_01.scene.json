@@ -29,6 +29,7 @@
         "h": 44.0,
         "is_solid": true,
         "is_trigger": false,
+        "is_pushable": false,
         "layer": 1
       },
       "movement": {
@@ -36,10 +37,21 @@
         "vy": 0.0,
         "speed": 300.0,
         "is_player_controlled": true,
-        "patrol": null
+        "patrol": null,
+        "mode": "TopDown"
       },
       "vision": null,
       "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": {
+        "current": 3.0,
+        "max": 3.0,
+        "invulnerability_timer": 0.0,
+        "is_dead": false
+      },
+      "dialogue": null,
+      "item_pickup": null,
       "is_active": true
     },
     {
@@ -68,11 +80,17 @@
         "h": 170.0,
         "is_solid": true,
         "is_trigger": false,
+        "is_pushable": false,
         "layer": 1
       },
       "movement": null,
       "vision": null,
       "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
       "is_active": true
     },
     {
@@ -101,11 +119,17 @@
         "h": 220.0,
         "is_solid": true,
         "is_trigger": false,
+        "is_pushable": false,
         "layer": 1
       },
       "movement": null,
       "vision": null,
       "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
       "is_active": true
     },
     {
@@ -134,11 +158,17 @@
         "h": 180.0,
         "is_solid": true,
         "is_trigger": false,
+        "is_pushable": false,
         "layer": 1
       },
       "movement": null,
       "vision": null,
       "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
       "is_active": true
     },
     {
@@ -167,11 +197,17 @@
         "h": 240.0,
         "is_solid": true,
         "is_trigger": false,
+        "is_pushable": false,
         "layer": 1
       },
       "movement": null,
       "vision": null,
       "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
       "is_active": true
     },
     {
@@ -200,6 +236,7 @@
         "h": 120.0,
         "is_solid": true,
         "is_trigger": false,
+        "is_pushable": false,
         "layer": 1
       },
       "movement": null,
@@ -210,6 +247,11 @@
         "on_interact_event": "OnDoorInteract",
         "on_seen_event": null
       },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
       "is_active": true
     },
     {
@@ -242,6 +284,7 @@
         "h": 36.0,
         "is_solid": false,
         "is_trigger": true,
+        "is_pushable": false,
         "layer": 2
       },
       "movement": null,
@@ -252,7 +295,12 @@
         "on_interact_event": null,
         "on_seen_event": null
       },
-      "is_active": false
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
     },
     {
       "id": 8,
@@ -284,6 +332,7 @@
         "h": 36.0,
         "is_solid": false,
         "is_trigger": true,
+        "is_pushable": false,
         "layer": 2
       },
       "movement": null,
@@ -294,7 +343,12 @@
         "on_interact_event": null,
         "on_seen_event": null
       },
-      "is_active": false
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
     },
     {
       "id": 9,
@@ -326,6 +380,7 @@
         "h": 36.0,
         "is_solid": false,
         "is_trigger": true,
+        "is_pushable": false,
         "layer": 2
       },
       "movement": null,
@@ -336,7 +391,12 @@
         "on_interact_event": null,
         "on_seen_event": null
       },
-      "is_active": false
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
     },
     {
       "id": 10,
@@ -368,6 +428,7 @@
         "h": 36.0,
         "is_solid": false,
         "is_trigger": true,
+        "is_pushable": false,
         "layer": 2
       },
       "movement": null,
@@ -378,7 +439,12 @@
         "on_interact_event": null,
         "on_seen_event": null
       },
-      "is_active": false
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
     },
     {
       "id": 11,
@@ -386,7 +452,7 @@
       "tag": "enemy",
       "transform": {
         "x": 760.0,
-        "y": 283.2848,
+        "y": 384.0,
         "w": 40.0,
         "h": 40.0,
         "rotation": 0.0
@@ -409,7 +475,8 @@
           "min_y": 120.0,
           "max_y": 500.0,
           "dir": 1.0
-        }
+        },
+        "mode": "TopDown"
       },
       "vision": {
         "range": 220.0,
@@ -422,6 +489,11 @@
         "on_interact_event": null,
         "on_seen_event": "OnPlayerSeen"
       },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
       "is_active": true
     },
     {
@@ -430,7 +502,7 @@
       "tag": "enemy",
       "transform": {
         "x": 438.60156,
-        "y": 518.2031,
+        "y": 404.0,
         "w": 40.0,
         "h": 40.0,
         "rotation": 0.0
@@ -452,8 +524,9 @@
         "patrol": {
           "min_y": 120.0,
           "max_y": 500.0,
-          "dir": 1.0
-        }
+          "dir": -1.0
+        },
+        "mode": "TopDown"
       },
       "vision": {
         "range": 220.0,
@@ -466,6 +539,11 @@
         "on_interact_event": null,
         "on_seen_event": "OnPlayerSeen"
       },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
       "is_active": true
     },
     {
@@ -494,11 +572,1075 @@
         "h": 170.0,
         "is_solid": true,
         "is_trigger": false,
+        "is_pushable": false,
         "layer": 1
       },
       "movement": null,
       "vision": null,
       "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 14,
+      "name": "wall_14",
+      "tag": "wall",
+      "transform": {
+        "x": 576.0,
+        "y": 160.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 15,
+      "name": "wall_15",
+      "tag": "wall",
+      "transform": {
+        "x": 544.0,
+        "y": 160.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 16,
+      "name": "wall_16",
+      "tag": "wall",
+      "transform": {
+        "x": 544.0,
+        "y": 192.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 17,
+      "name": "wall_17",
+      "tag": "wall",
+      "transform": {
+        "x": 512.0,
+        "y": 192.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 18,
+      "name": "wall_18",
+      "tag": "wall",
+      "transform": {
+        "x": 512.0,
+        "y": 224.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 19,
+      "name": "wall_19",
+      "tag": "wall",
+      "transform": {
+        "x": 64.0,
+        "y": 192.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 20,
+      "name": "wall_20",
+      "tag": "wall",
+      "transform": {
+        "x": 64.0,
+        "y": 224.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 21,
+      "name": "wall_21",
+      "tag": "wall",
+      "transform": {
+        "x": 64.0,
+        "y": 288.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 22,
+      "name": "wall_22",
+      "tag": "wall",
+      "transform": {
+        "x": 64.0,
+        "y": 320.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 23,
+      "name": "wall_23",
+      "tag": "wall",
+      "transform": {
+        "x": 64.0,
+        "y": 352.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 24,
+      "name": "wall_24",
+      "tag": "wall",
+      "transform": {
+        "x": 64.0,
+        "y": 384.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 25,
+      "name": "wall_25",
+      "tag": "wall",
+      "transform": {
+        "x": 64.0,
+        "y": 416.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 26,
+      "name": "wall_26",
+      "tag": "wall",
+      "transform": {
+        "x": 128.0,
+        "y": 384.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 27,
+      "name": "wall_27",
+      "tag": "wall",
+      "transform": {
+        "x": 128.0,
+        "y": 416.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 28,
+      "name": "wall_28",
+      "tag": "wall",
+      "transform": {
+        "x": 128.0,
+        "y": 448.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 29,
+      "name": "trap_29",
+      "tag": "hazard",
+      "transform": {
+        "x": 384.0,
+        "y": 288.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 4524554,
+        "outline_color": 15680580,
+        "outline_width": 2,
+        "z_index": 3,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 30,
+      "name": "trap_30",
+      "tag": "hazard",
+      "transform": {
+        "x": 416.0,
+        "y": 160.0,
+        "w": 32.0,
+        "h": 32.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 4524554,
+        "outline_color": 15680580,
+        "outline_width": 2,
+        "z_index": 3,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32.0,
+        "h": 32.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 31,
+      "name": "coin_31",
+      "tag": "collectible",
+      "transform": {
+        "x": 576.0,
+        "y": 96.0,
+        "w": 24.0,
+        "h": 24.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": {
+          "Circle": {
+            "radius": 12.0
+          }
+        },
+        "color": 16096779,
+        "outline_color": null,
+        "outline_width": 0,
+        "z_index": 5,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 24.0,
+        "h": 24.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": {
+        "script_path": "assets/scripts/coin_pickup.kvl.json",
+        "on_overlap_event": "OnPlayerOverlap",
+        "on_interact_event": null,
+        "on_seen_event": null
+      },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 32,
+      "name": "coin_32",
+      "tag": "collectible",
+      "transform": {
+        "x": 704.0,
+        "y": 128.0,
+        "w": 24.0,
+        "h": 24.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": {
+          "Circle": {
+            "radius": 12.0
+          }
+        },
+        "color": 16096779,
+        "outline_color": null,
+        "outline_width": 0,
+        "z_index": 5,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 24.0,
+        "h": 24.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": {
+        "script_path": "assets/scripts/coin_pickup.kvl.json",
+        "on_overlap_event": "OnPlayerOverlap",
+        "on_interact_event": null,
+        "on_seen_event": null
+      },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 33,
+      "name": "coin_33",
+      "tag": "collectible",
+      "transform": {
+        "x": 480.0,
+        "y": 96.0,
+        "w": 24.0,
+        "h": 24.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": {
+          "Circle": {
+            "radius": 12.0
+          }
+        },
+        "color": 16096779,
+        "outline_color": null,
+        "outline_width": 0,
+        "z_index": 5,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 24.0,
+        "h": 24.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": {
+        "script_path": "assets/scripts/coin_pickup.kvl.json",
+        "on_overlap_event": "OnPlayerOverlap",
+        "on_interact_event": null,
+        "on_seen_event": null
+      },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 34,
+      "name": "coin_34",
+      "tag": "collectible",
+      "transform": {
+        "x": 576.0,
+        "y": 224.0,
+        "w": 24.0,
+        "h": 24.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": {
+          "Circle": {
+            "radius": 12.0
+          }
+        },
+        "color": 16096779,
+        "outline_color": null,
+        "outline_width": 0,
+        "z_index": 5,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 24.0,
+        "h": 24.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": {
+        "script_path": "assets/scripts/coin_pickup.kvl.json",
+        "on_overlap_event": "OnPlayerOverlap",
+        "on_interact_event": null,
+        "on_seen_event": null
+      },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 35,
+      "name": "heart_35",
+      "tag": "heart",
+      "transform": {
+        "x": 628.0,
+        "y": 84.0,
+        "w": 24.0,
+        "h": 24.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": {
+          "Circle": {
+            "radius": 12.0
+          }
+        },
+        "color": 15680580,
+        "outline_color": 16698058,
+        "outline_width": 1,
+        "z_index": 6,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 24.0,
+        "h": 24.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 36,
+      "name": "heart_36",
+      "tag": "heart",
+      "transform": {
+        "x": 628.0,
+        "y": 180.0,
+        "w": 24.0,
+        "h": 24.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": {
+          "Circle": {
+            "radius": 12.0
+          }
+        },
+        "color": 15680580,
+        "outline_color": 16698058,
+        "outline_width": 1,
+        "z_index": 6,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 24.0,
+        "h": 24.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 37,
+      "name": "crate_37",
+      "tag": "crate",
+      "transform": {
+        "x": 736.0,
+        "y": 32.0,
+        "w": 44.0,
+        "h": 44.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 11817737,
+        "outline_color": 16035690,
+        "outline_width": 2,
+        "z_index": 5,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 44.0,
+        "h": 44.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": true,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 38,
+      "name": "plate_38",
+      "tag": "plate",
+      "transform": {
+        "x": 736.0,
+        "y": 192.0,
+        "w": 48.0,
+        "h": 48.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 536393,
+        "outline_color": 165063,
+        "outline_width": 2,
+        "z_index": 2,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 48.0,
+        "h": 48.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 39,
+      "name": "plate_39",
+      "tag": "plate",
+      "transform": {
+        "x": 736.0,
+        "y": 224.0,
+        "w": 48.0,
+        "h": 48.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 536393,
+        "outline_color": 165063,
+        "outline_width": 2,
+        "z_index": 2,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 48.0,
+        "h": 48.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
       "is_active": true
     }
   ],

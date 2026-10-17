@@ -344,4 +344,176 @@ mod tests {
         assert_eq!(steps2, 3);
         assert_eq!(ctx.get_var("item_count_potion_heal"), Some(&Value::Int(2)));
     }
+
+    #[test]
+    fn test_boss_fight_phase_transitions_and_telegraph_actions() {
+        let mut graph = Graph::new("test_boss", "Test Boss Logic", "Scénario de combat de Boss KVL");
+
+        // Event : OnBossPhaseChange
+        let evt_phase = Node::new("evt_phase", "Changement Phase Boss", Category::Interactions, "", NodeKind::Event {
+            event_type: "OnBossPhaseChange".into(),
+        })
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        // Action : SetBossPhase:2
+        let act_p2 = Node::new("act_p2", "Passer Phase 2", Category::Progression, "", NodeKind::Action {
+            action_type: "SetBossPhase:2".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        // Action : TriggerBossTelegraph:TargetedSpread
+        let act_tele = Node::new("act_tele", "Armer Télégraphie", Category::World, "", NodeKind::Action {
+            action_type: "TriggerBossTelegraph:TargetedSpread".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        // Condition : BossHpLt:20 -> BossEnrage
+        let cond_enrage = Node::new("cond_enrage", "Boss PV < 20", Category::MathLogic, "", NodeKind::Condition {
+            operator: "BossHpLt:20".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_true", "Vrai", PinDirection::Output))
+        .with_output(Pin::new_trigger("out_false", "Faux", PinDirection::Output));
+
+        let act_enrage = Node::new("act_enrage", "Activer Overdrive", Category::Progression, "", NodeKind::Action {
+            action_type: "BossEnrage".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph.add_node(evt_phase);
+        graph.add_node(act_p2);
+        graph.add_node(act_tele);
+        graph.add_node(cond_enrage);
+        graph.add_node(act_enrage);
+
+        graph.connect_pins("evt_phase", "out_trigger", "act_p2", "in_trigger").unwrap();
+        graph.connect_pins("act_p2", "out_trigger", "act_tele", "in_trigger").unwrap();
+        graph.connect_pins("act_tele", "out_trigger", "cond_enrage", "in_trigger").unwrap();
+        graph.connect_pins("cond_enrage", "out_true", "act_enrage", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        ctx.set_var("boss_hp", Value::Int(15)); // HP bas (< 20)
+        ctx.set_var("boss_phase", Value::Int(1));
+
+        let steps = Interpreter::trigger_event(&graph, &mut ctx, "OnBossPhaseChange").unwrap();
+        assert_eq!(steps, 5);
+        assert_eq!(ctx.get_var("boss_phase"), Some(&Value::Int(2)));
+        assert_eq!(ctx.get_var("boss_telegraph_attack"), Some(&Value::String("TargetedSpread".into())));
+        assert_eq!(ctx.get_var("boss_enraged"), Some(&Value::Bool(true)));
+
+        // Test de défaite
+        let mut defeat_graph = Graph::new("test_defeat", "Test Boss Defeat", "");
+        let evt_def = Node::new("evt_def", "Boss Mort", Category::Interactions, "", NodeKind::Event {
+            event_type: "OnBossDefeated".into(),
+        })
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let act_def = Node::new("act_def", "Victoire", Category::Progression, "", NodeKind::Action {
+            action_type: "SetBossDefeated".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        defeat_graph.add_node(evt_def);
+        defeat_graph.add_node(act_def);
+        defeat_graph.connect_pins("evt_def", "out_trigger", "act_def", "in_trigger").unwrap();
+
+        Interpreter::trigger_event(&defeat_graph, &mut ctx, "OnBossDefeated").unwrap();
+        assert_eq!(ctx.get_var("boss_defeated"), Some(&Value::Bool(true)));
+        assert_eq!(ctx.get_var("boss_phase"), Some(&Value::Int(4)));
+    }
+
+    #[test]
+    fn test_navigation_kvl_actions_and_conditions() {
+        let mut graph = Graph::new("test_navigation", "Test Navigation", "Test IA Navigation A*");
+
+        // Event : OnAlert
+        let evt = Node::new("evt_alert", "Alerte Ennemi", Category::Interactions, "", NodeKind::Event {
+            event_type: "OnAlert".into(),
+        })
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        // Action : NavChasePlayer
+        let act_chase = Node::new("act_chase", "Traquer Joueur", Category::ArtificialIntelligence, "", NodeKind::Action {
+            action_type: "NavChasePlayer".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        // Condition : IsNavigating
+        let cond_nav = Node::new("cond_nav", "En Navigation ?", Category::MathLogic, "", NodeKind::Condition {
+            operator: "IsNavigating".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_true", "True", PinDirection::Output))
+        .with_output(Pin::new_trigger("out_false", "False", PinDirection::Output));
+
+        // Action : NavGoTo (si out_true)
+        let act_goto = Node::new("act_goto", "Aller Cible", Category::Movement, "", NodeKind::Action {
+            action_type: "NavGoTo:250,180".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph.add_node(evt);
+        graph.add_node(act_chase);
+        graph.add_node(cond_nav);
+        graph.add_node(act_goto);
+
+        graph.connect_pins("evt_alert", "out_trigger", "act_chase", "in_trigger").unwrap();
+        graph.connect_pins("act_chase", "out_trigger", "cond_nav", "in_trigger").unwrap();
+        graph.connect_pins("cond_nav", "out_true", "act_goto", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        let steps = Interpreter::trigger_event(&graph, &mut ctx, "OnAlert").unwrap();
+        assert_eq!(steps, 4, "Les 4 nœuds doivent être exécutés séquentiellement");
+
+        assert_eq!(ctx.get_var("nav_mode"), Some(&Value::String("GoTo:250,180".into())));
+        assert_eq!(ctx.get_var("nav_target_x"), Some(&Value::Int(250)));
+        assert_eq!(ctx.get_var("nav_target_y"), Some(&Value::Int(180)));
+    }
+
+    #[test]
+    fn test_swarm_flocking_kvl_actions_and_conditions() {
+        let mut graph = Graph::new("test_swarm", "Test Swarm Logic", "");
+
+        let evt = Node::new("evt_scatter", "On Bomb", Category::Interactions, "", NodeKind::Event {
+            event_type: "OnBombExplode".into(),
+        })
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        let act_scatter = Node::new("act_scatter", "Scatter Swarm", Category::Movement, "", NodeKind::Action {
+            action_type: "SwarmScatter:1,3.5".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        let cond_scatter = Node::new("cond_scatter", "Is Scattered ?", Category::MathLogic, "", NodeKind::Condition {
+            operator: "SwarmIsScattered:1".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_true", "True", PinDirection::Output));
+
+        let act_target = Node::new("act_target", "Target Point", Category::Movement, "", NodeKind::Action {
+            action_type: "SwarmSetTarget:1,400,300".into(),
+        })
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph.add_node(evt);
+        graph.add_node(act_scatter);
+        graph.add_node(cond_scatter);
+        graph.add_node(act_target);
+
+        graph.connect_pins("evt_scatter", "out_trigger", "act_scatter", "in_trigger").unwrap();
+        graph.connect_pins("act_scatter", "out_trigger", "cond_scatter", "in_trigger").unwrap();
+        graph.connect_pins("cond_scatter", "out_true", "act_target", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        let steps = Interpreter::trigger_event(&graph, &mut ctx, "OnBombExplode").unwrap();
+        assert_eq!(steps, 4);
+
+        assert_eq!(ctx.get_var("swarm_is_scattered_1"), Some(&Value::Bool(true)));
+        assert_eq!(ctx.get_var("swarm_scatter_1"), Some(&Value::Float(3.5)));
+        assert_eq!(ctx.get_var("swarm_target_x_1"), Some(&Value::Int(400)));
+        assert_eq!(ctx.get_var("swarm_target_y_1"), Some(&Value::Int(300)));
+    }
 }

@@ -25,6 +25,64 @@ export class OutputDevice {
 if (Symbol.dispose) OutputDevice.prototype[Symbol.dispose] = OutputDevice.prototype.free;
 
 /**
+ * Instancie une recette de jeu et charge la scène minimale jouable dans le moteur
+ * @param {string} recipe_json
+ * @returns {number}
+ */
+export function wasm_apply_recipe(recipe_json) {
+    const ptr0 = passStringToWasm0(recipe_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.wasm_apply_recipe(ptr0, len0);
+    return ret;
+}
+
+/**
+ * Exporte le package universel KaractiRage (.karacti.json)
+ * @param {string} title
+ * @param {string} author
+ * @returns {string}
+ */
+export function wasm_export_game_package(title, author) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(title, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(author, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasm_export_game_package(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Exporte le jeu courant en fichier HTML5 standalone complet autonome
+ * @param {string} title
+ * @param {string} author
+ * @returns {string}
+ */
+export function wasm_export_standalone_html(title, author) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(title, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(author, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasm_export_standalone_html(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Retourne la hauteur native du Canvas (800 px)
  * @returns {number}
  */
@@ -102,6 +160,18 @@ export function wasm_get_status_message() {
     } finally {
         wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
     }
+}
+
+/**
+ * Importe et instancie un package universel (.karacti.json) dans le moteur
+ * @param {string} package_json
+ * @returns {number}
+ */
+export function wasm_import_game_package(package_json) {
+    const ptr0 = passStringToWasm0(package_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.wasm_import_game_package(ptr0, len0);
+    return ret;
 }
 
 /**
@@ -189,6 +259,26 @@ export function wasm_toggle_radar() {
 export function wasm_toggle_spatial_grid() {
     const ret = wasm.wasm_toggle_spatial_grid();
     return ret >>> 0;
+}
+
+/**
+ * Valide une recette de jeu (JSON) et résout automatiquement ses dépendances
+ * @param {string} recipe_json
+ * @returns {string}
+ */
+export function wasm_validate_recipe(recipe_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(recipe_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasm_validate_recipe(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
 }
 function __wbg_get_imports() {
     const import0 = {
@@ -292,7 +382,7 @@ function __wbg_get_imports() {
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 80, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 138, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__hf89d7653fac0de47);
             return ret;
         },

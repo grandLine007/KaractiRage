@@ -76,8 +76,8 @@
         <button id="btn-toggle-grid" class="toolbar-btn" title="Quadrillage spatial O(1) de 64px (Touche G)">
           <span class="key-badge">G</span> Grille O(1)
         </button>
-        <button id="btn-tool-genre" class="toolbar-btn toolbar-btn-purple" title="Cycle instantané entre les 4 genres de jeu (Touche F4 ou L)">
-          <span class="key-badge">F4</span> Changer Genre
+        <button id="btn-tool-genre" class="toolbar-btn toolbar-btn-purple" title="Cycle instantané entre les 5 genres de jeu (Touche F4 ou L) : Aventure, Platformer, Space Shmup, Sokoban, Boss Fight">
+          <span class="key-badge">F4</span> Changer Genre (5)
         </button>
         <button id="btn-toggle-audio" class="toolbar-btn" title="Couper / Activer la synthèse sonore temps réel (Touche M)">
           <span class="key-badge">M</span> Audio Synthé
@@ -87,6 +87,24 @@
         </button>
         <button id="btn-reload" class="toolbar-btn" title="Réinitialiser la scène courante (Touche R)">
           <span class="key-badge">R</span> Réinitialiser
+        </button>
+      </div>
+
+      <div class="toolbar-separator"></div>
+
+      <div class="toolbar-group">
+        <span class="toolbar-label">RECETTE DE JEU :</span>
+        <button id="btn-open-recipe-wizard" class="toolbar-btn toolbar-btn-purple" title="Assistant de Création en 6 Étapes & Résolveur de Dépendances (Touche W)">
+          <span class="key-badge">W</span> 🪄 Nouvelle Recette (6 Étapes)
+        </button>
+      </div>
+
+      <div class="toolbar-separator"></div>
+
+      <div class="toolbar-group">
+        <span class="toolbar-label">DISTRIBUTION :</span>
+        <button id="btn-export-game" class="toolbar-btn toolbar-btn-amber" title="Exporter le jeu créé en 1 clic (Fichier HTML5 autonome ou Package .karacti.json)">
+          <span class="key-badge">📦</span> Exporter Standalone (U)
         </button>
       </div>
     </nav>
@@ -194,7 +212,7 @@
             <li><kbd>Clic Gauche</kbd> : Sélectionner &amp; déplacer des entités</li>
             <li><kbd>V</kbd> / <kbd>B</kbd> / <kbd>X</kbd> : Outils Sélection, Pinceau, Gomme</li>
             <li><kbd>P</kbd> : Palette de création d'entités</li>
-            <li><kbd>F4</kbd> / <kbd>L</kbd> : Changer de genre (4 modes disponibles)</li>
+            <li><kbd>F4</kbd> / <kbd>L</kbd> : Changer de genre (5 modes : Aventure, Plateforme, Spatial, Puzzle, Boss)</li>
             <li><kbd>H</kbd> : Guide pédagogique interactif complet</li>
             <li><kbd>F1</kbd> : Télémétrie intégrée &amp; Historique frame</li>
           </ul>
@@ -212,6 +230,442 @@
         <span>Cible : WebAssembly (wasm32-unknown-unknown) &bull; Rendu Canvas 2D</span>
       </div>
     </footer>
+
+    <!-- Boîte Modale d'Assistant de Recette de Jeu en 6 Étapes (Game Recipe Wizard) -->
+    <div id="recipe-modal" class="recipe-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="recipe-modal-title">
+      <div class="recipe-modal-card">
+        <div class="recipe-modal-header">
+          <div class="modal-title-wrap">
+            <span class="modal-icon">🪄</span>
+            <div>
+              <h2 id="recipe-modal-title">ASSISTANT DE CRÉATION DE JEU (GAME RECIPE)</h2>
+              <p class="recipe-modal-subtitle">Concevez un jeu complet en 6 étapes selon les spécifications universelles du moteur KaractiRage.</p>
+            </div>
+          </div>
+          <button id="btn-close-recipe-modal" class="modal-close-btn" aria-label="Fermer la modale de recette">✕</button>
+        </div>
+
+        <!-- Méta-informations de base -->
+        <div class="recipe-meta-row">
+          <div class="recipe-meta-group">
+            <label for="recipe-game-title">Titre du Jeu :</label>
+            <input type="text" id="recipe-game-title" value="Mon Aventure Épique" maxlength="50" />
+          </div>
+          <div class="recipe-meta-group">
+            <label for="recipe-game-author">Créateur :</label>
+            <input type="text" id="recipe-game-author" value="Atelier KaractiRage" maxlength="40" />
+          </div>
+        </div>
+
+        <!-- Fil d'Ariane des 6 Étapes -->
+        <nav class="recipe-stepper" aria-label="Étapes de la recette">
+          <button class="step-indicator active" data-step="1">
+            <span class="step-num">1</span>
+            <span class="step-name">Genre(s)</span>
+          </button>
+          <button class="step-indicator" data-step="2">
+            <span class="step-num">2</span>
+            <span class="step-name">Univers</span>
+          </button>
+          <button class="step-indicator" data-step="3">
+            <span class="step-num">3</span>
+            <span class="step-name">Joueur</span>
+          </button>
+          <button class="step-indicator" data-step="4">
+            <span class="step-num">4</span>
+            <span class="step-name">Monde</span>
+          </button>
+          <button class="step-indicator" data-step="5">
+            <span class="step-num">5</span>
+            <span class="step-name">Gameplay</span>
+          </button>
+          <button class="step-indicator" data-step="6">
+            <span class="step-num">6</span>
+            <span class="step-name">Validation</span>
+          </button>
+        </nav>
+
+        <!-- Corps des Étapes Dynamiques -->
+        <div class="recipe-steps-body">
+          <!-- Étape 1 : Genre(s) -->
+          <div id="recipe-step-1" class="recipe-step-view active">
+            <div class="preset-banner">
+              <span class="preset-title">⚡ ARCHETYPES RAPIDES (1 Clic) :</span>
+              <div class="preset-buttons">
+                <button type="button" class="btn-preset-archetype" data-preset="rpg_dungeon">🏰 Donjon &amp; Énigmes</button>
+                <button type="button" class="btn-preset-archetype" data-preset="platformer">🏃 Cyber Platformer 2D</button>
+                <button type="button" class="btn-preset-archetype" data-preset="shootemup">🚀 Shmup Stellaire</button>
+                <button type="button" class="btn-preset-archetype" data-preset="puzzle_sokoban">📦 Puzzle Sokoban</button>
+                <button type="button" class="btn-preset-archetype" data-preset="boss_arena">👹 Arène du Titan</button>
+              </div>
+            </div>
+
+            <h3 class="step-section-title">Sélectionnez le Genre Principal (12 Genres supportés) :</h3>
+            <div class="genres-grid" id="primary-genres-grid">
+              <div class="genre-card active" data-genre="adventure">
+                <span class="genre-icon">🗺️</span>
+                <h4>Aventure</h4>
+                <p>Exploration, énigmes, collecte de clés et quêtes.</p>
+              </div>
+              <div class="genre-card" data-genre="action">
+                <span class="genre-icon">⚔️</span>
+                <h4>Action</h4>
+                <p>Combats en temps réel, réactivité et obstacles.</p>
+              </div>
+              <div class="genre-card" data-genre="platformer">
+                <span class="genre-icon">🏃</span>
+                <h4>Plateforme</h4>
+                <p>Gravité 2D, sauts précis, plateformes et pièges.</p>
+              </div>
+              <div class="genre-card" data-genre="shoot_em_up">
+                <span class="genre-icon">🚀</span>
+                <h4>Shoot'em up</h4>
+                <p>Inertie newtonienne, tirs continus et esquives.</p>
+              </div>
+              <div class="genre-card" data-genre="rpg">
+                <span class="genre-icon">🛡️</span>
+                <h4>RPG</h4>
+                <p>Inventaire, dialogues PNJ, santé et progression.</p>
+              </div>
+              <div class="genre-card" data-genre="puzzle">
+                <span class="genre-icon">🧩</span>
+                <h4>Puzzle / Casse-tête</h4>
+                <p>Déplacement par grille, blocs poussables, dalles.</p>
+              </div>
+              <div class="genre-card" data-genre="horror">
+                <span class="genre-icon">👁️</span>
+                <h4>Horreur</h4>
+                <p>Tension, ressources comptées, ambiance sombre.</p>
+              </div>
+              <div class="genre-card" data-genre="combat">
+                <span class="genre-icon">🥊</span>
+                <h4>Combat</h4>
+                <p>Arènes fermées, jauges de vie, combos et duels.</p>
+              </div>
+              <div class="genre-card" data-genre="strategy">
+                <span class="genre-icon">♟️</span>
+                <h4>Stratégie</h4>
+                <p>Positionnement réfléchi, gestion et vision tactique.</p>
+              </div>
+              <div class="genre-card" data-genre="racing">
+                <span class="genre-icon">🏎️</span>
+                <h4>Course</h4>
+                <p>Vitesse, chronomètre, trajectoires et checkpoints.</p>
+              </div>
+              <div class="genre-card" data-genre="simulation">
+                <span class="genre-icon">⚙️</span>
+                <h4>Simulation</h4>
+                <p>Cycles d'états, interactions physiques et systèmes.</p>
+              </div>
+              <div class="genre-card" data-genre="educational">
+                <span class="genre-icon">🎓</span>
+                <h4>Éducatif</h4>
+                <p>Feedback immédiat, apprentissage interactif et score.</p>
+              </div>
+            </div>
+
+            <div class="secondary-genre-row">
+              <label for="recipe-secondary-genre">Genre Secondaire (Optionnel pour gameplay hybride) :</label>
+              <select id="recipe-secondary-genre" class="recipe-select">
+                <option value="none">Aucun (Genre pur)</option>
+                <option value="rpg">RPG (Inventaire &amp; Quêtes)</option>
+                <option value="puzzle">Puzzle (Énigmes)</option>
+                <option value="action">Action (Combats réactifs)</option>
+                <option value="platformer">Plateforme (Gravité)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Étape 2 : Univers & Caméra -->
+          <div id="recipe-step-2" class="recipe-step-view">
+            <h3 class="step-section-title">Dimension d'Affichage :</h3>
+            <div class="options-choice-grid" id="dimension-grid">
+              <div class="choice-card active" data-dimension="top_down">
+                <span class="choice-icon">⬇️</span>
+                <h4>Vue du Dessus (Top-Down)</h4>
+                <p>Aventure, RPG, Donjon sans gravité verticale.</p>
+              </div>
+              <div class="choice-card" data-dimension="pure_2d">
+                <span class="choice-icon">📐</span>
+                <h4>2D Pure Orthogonale</h4>
+                <p>Affichage plan rigoureux sans perspective.</p>
+              </div>
+              <div class="choice-card" data-dimension="side_view">
+                <span class="choice-icon">↔️</span>
+                <h4>Vue de Côté (Side-Scroller)</h4>
+                <p>Idéal pour la plateforme et les jeux de combat.</p>
+              </div>
+              <div class="choice-card" data-dimension="isometric">
+                <span class="choice-icon">📦</span>
+                <h4>2.5D Isométrique</h4>
+                <p>Perspective oblique en losange avec profondeur.</p>
+              </div>
+            </div>
+
+            <h3 class="step-section-title">Comportement de la Caméra :</h3>
+            <div class="options-choice-grid" id="camera-grid">
+              <div class="choice-card active" data-camera="follow_player">
+                <span class="choice-icon">🎥</span>
+                <h4>Suivi Centré Dynamique</h4>
+                <p>Caméra centrée sur le joueur avec zone morte fluide.</p>
+              </div>
+              <div class="choice-card" data-camera="room_by_room">
+                <span class="choice-icon">🚪</span>
+                <h4>Fixe par Salle</h4>
+                <p>Transition par écran complet style Zelda classique.</p>
+              </div>
+              <div class="choice-card" data-camera="free_pan">
+                <span class="choice-icon">🔍</span>
+                <h4>Caméra Libre / Panning</h4>
+                <p>Déplacement fluide au curseur pour éditer et observer.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Étape 3 : Joueur & Capacités -->
+          <div id="recipe-step-3" class="recipe-step-view">
+            <h3 class="step-section-title">Modèle de Déplacement :</h3>
+            <div class="options-choice-grid" id="movement-grid">
+              <div class="choice-card active" data-move="four_directions">
+                <span class="choice-icon">🧭</span>
+                <h4>4 Directions Orthogonales</h4>
+                <p>Haut, Bas, Gauche, Droite sans diagonales.</p>
+              </div>
+              <div class="choice-card" data-move="eight_directions">
+                <span class="choice-icon">✳️</span>
+                <h4>8 Directions Libres</h4>
+                <p>Déplacement omnidirectionnel avec normalisation.</p>
+              </div>
+              <div class="choice-card" data-move="horizontal_only">
+                <span class="choice-icon">↔️</span>
+                <h4>Horizontal Seul (Plateforme)</h4>
+                <p>Déplacement gauche/droite combiné au saut vertical.</p>
+              </div>
+              <div class="choice-card" data-move="free_inertia">
+                <span class="choice-icon">🚀</span>
+                <h4>Inertie Spatiale Newtonienne</h4>
+                <p>Poussée vectorielle, rotation angulaire et dérive.</p>
+              </div>
+            </div>
+
+            <h3 class="step-section-title">Paramètres &amp; Capacités Motrices :</h3>
+            <div class="checkboxes-matrix">
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-ability-jump" />
+                <span>🦘 Saut Vertical Impulsionnel</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-ability-dash" />
+                <span>💨 Dash / Esquive Rapide</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-ability-shoot" />
+                <span>🔫 Tir de Projectiles Balistiques</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-ability-melee" checked />
+                <span>🗡️ Frappe au Corps-à-Corps</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-ability-interact" checked />
+                <span>🖐️ Interaction Contextuelle [E]</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Étape 4 : Monde & Éléments Interactifs -->
+          <div id="recipe-step-4" class="recipe-step-view">
+            <h3 class="step-section-title">Physique &amp; Environnement :</h3>
+            <div class="toggle-group-row">
+              <label class="recipe-toggle-pill">
+                <input type="checkbox" id="chk-world-gravity" />
+                <span>🌍 Gravité Active (980 px/s²)</span>
+              </label>
+              <label class="recipe-toggle-pill">
+                <input type="checkbox" id="chk-world-daynight" />
+                <span>🌙 Cycle Jour / Nuit</span>
+              </label>
+              <label class="recipe-toggle-pill">
+                <input type="checkbox" id="chk-world-lighting" />
+                <span>💡 Éclairage Dynamique / Torche</span>
+              </label>
+            </div>
+
+            <h3 class="step-section-title">Composants Interactifs Disponibles dans le Monde :</h3>
+            <div class="checkboxes-matrix">
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-elem-collectible" checked />
+                <span>🪙 Pièces d'Or / Objets à Collecter</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-elem-door" checked />
+                <span>🚪 Portes &amp; Barrières Verrouillées</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-elem-chest" checked />
+                <span>📦 Coffres au Trésor &amp; Clés</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-elem-lever" />
+                <span>⚡ Leviers &amp; Dalles de Pression</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-elem-trap" />
+                <span>⚠️ Pièges &amp; Piques Rétractables</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-elem-moving-plat" />
+                <span>🚡 Plateformes Mobiles Flottantes</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Étape 5 : Gameplay & Objectifs -->
+          <div id="recipe-step-5" class="recipe-step-view">
+            <h3 class="step-section-title">Systèmes de Gameplay Activés :</h3>
+            <div class="checkboxes-matrix">
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-feat-inventory" checked />
+                <span>🎒 Inventaire &amp; Barre Hotbar (Slots 1 à 5)</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-feat-dialogues" checked />
+                <span>💬 Dialogues PNJ à Choix Multiples</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-feat-quests" checked />
+                <span>📜 Arbre d'Objectifs &amp; Quêtes Hiérarchiques</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-feat-boss" />
+                <span>👹 Combat de Boss (Phases Normal $\rightarrow$ Enragé, Télégraphie)</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-feat-score" checked />
+                <span>⭐ Système de Score &amp; Variables KVL</span>
+              </label>
+              <label class="recipe-checkbox">
+                <input type="checkbox" id="chk-feat-waves" />
+                <span>🌊 Spawner de Vagues d'Ennemis Coordonnées</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Étape 6 : Matériel & Audit Dépendances -->
+          <div id="recipe-step-6" class="recipe-step-view">
+            <h3 class="step-section-title">Profil Matériel &amp; Performance Cible :</h3>
+            <div class="options-choice-grid" id="perf-grid">
+              <div class="choice-card active" data-perf="low_end">
+                <span class="choice-icon">⚡</span>
+                <h4>Modeste (Low-End First)</h4>
+                <p>60 FPS constants, budget CPU &lt; 16.6ms, zéro-alloc hot path.</p>
+              </div>
+              <div class="choice-card" data-perf="balanced">
+                <span class="choice-icon">⚖️</span>
+                <h4>Équilibré</h4>
+                <p>PC de bureau standard, effets de particules enrichis.</p>
+              </div>
+              <div class="choice-card" data-perf="high_end">
+                <span class="choice-icon">🌟</span>
+                <h4>Élevé / Ultra</h4>
+                <p>Éclairage avancé, particules denses et décors complexes.</p>
+              </div>
+            </div>
+
+            <div class="audit-card">
+              <div class="audit-card-header">
+                <h4>🛡️ AUDIT DU RÉSOLVEUR DE DÉPENDANCES (RÈGLES 1 À 6) :</h4>
+                <span id="recipe-audit-badge" class="badge-audit-ok">✓ RECETTE VALIDE</span>
+              </div>
+              <div id="recipe-audit-details" class="audit-details">
+                <div class="audit-item text-emerald">● Règle 1 (2D Pure) : Projection orthogonale active.</div>
+                <div class="audit-item text-cyan">● Règle 3 (Boss) : Dépendance résolue automatiquement.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pied de page avec actions et navigation -->
+        <div class="recipe-modal-footer">
+          <div class="footer-left-buttons">
+            <input type="file" id="input-import-recipe" accept=".json,.recipe.json" style="display: none;" />
+            <button type="button" id="btn-import-recipe-json" class="btn-secondary" title="Charger un fichier de recette JSON">
+              📥 Importer .json
+            </button>
+            <button type="button" id="btn-export-recipe-json" class="btn-secondary" title="Sauvegarder la recette en JSON">
+              💾 Exporter .json
+            </button>
+          </div>
+
+          <div class="footer-right-buttons">
+            <button type="button" id="btn-recipe-prev" class="btn-nav" disabled>← Précédent</button>
+            <button type="button" id="btn-recipe-next" class="btn-nav btn-nav-primary">Suivant →</button>
+            <button type="button" id="btn-recipe-apply" class="btn-primary-apply hidden">
+              🚀 Générer &amp; Jouer le Jeu
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Boîte Modale d'Exportation Standalone Universelle -->
+    <div id="export-modal" class="export-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
+      <div class="export-modal-card">
+        <div class="export-modal-header">
+          <div class="modal-title-wrap">
+            <span class="modal-icon">📦</span>
+            <h2 id="export-modal-title">EXPORTATEUR STANDALONE UNIVERSEL</h2>
+          </div>
+          <button id="btn-close-export-modal" class="modal-close-btn" aria-label="Fermer la modale d'export">✕</button>
+        </div>
+
+        <p class="export-modal-subtitle">
+          Exportez et distribuez instantanément votre jeu sans aucune dépendance. Fichier jouable immédiatement hors-ligne ou partageable.
+        </p>
+
+        <div class="export-form-row">
+          <div class="export-form-group">
+            <label for="export-game-title">Titre du Jeu :</label>
+            <input type="text" id="export-game-title" value="KaractiRage : Donjon Maudit" maxlength="60" />
+          </div>
+
+          <div class="export-form-group">
+            <label for="export-game-author">Auteur / Créateur :</label>
+            <input type="text" id="export-game-author" value="Atelier Créateur" maxlength="40" />
+          </div>
+        </div>
+
+        <div class="export-options-grid">
+          <div class="export-option-card active" data-format="html">
+            <div class="opt-badge">RECOMMANDÉ</div>
+            <h4>🌐 HTML5 Standalone (.html)</h4>
+            <p>Fichier HTML unique autonome embarquant le moteur WASM et toutes les entités KVL. Se lance dans n'importe quel navigateur par simple double-clic.</p>
+          </div>
+
+          <div class="export-option-card" data-format="json">
+            <div class="opt-badge">PORTABLE</div>
+            <h4>📄 Package Universel (.karacti.json)</h4>
+            <p>Structure JSON normalisée contenant la scène complète, la physique et les graphes KVL. Réimportable dans n'importe quel Studio.</p>
+          </div>
+
+          <div class="export-option-card" data-format="desktop">
+            <div class="opt-badge">BUNDLE NATIF</div>
+            <h4>🖥️ Bundle Desktop Local</h4>
+            <p>Archive exécutable native 60 FPS sans navigateur (macOS, Linux, Windows) avec lanceurs de démarrage inclus.</p>
+          </div>
+        </div>
+
+        <div class="export-modal-footer">
+          <input type="file" id="input-import-package" accept=".json,.karacti.json" style="display: none;" />
+          <button id="btn-trigger-import" class="btn-secondary" title="Importer un package JSON existant">
+            📥 Importer un Package JSON
+          </button>
+          <button id="btn-confirm-export" class="btn-primary-export">
+            🚀 Générer &amp; Télécharger en 1 Clic
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="app.js"></script>

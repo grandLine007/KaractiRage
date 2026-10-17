@@ -1,0 +1,303 @@
+{
+  "id": "graph_boss_titan",
+  "name": "IA Boss : Titan Proto-Sentinelle",
+  "description": "Script KVL régissant les transitions de phases, le mode Enragé sous 33% de santé, et la fanfare de victoire.",
+  "version": 1,
+  "variables": {
+    "boss_hp": {
+      "name": "boss_hp",
+      "data_type": "Int",
+      "initial_value": {
+        "type": "Int",
+        "value": 60
+      }
+    },
+    "boss_phase": {
+      "name": "boss_phase",
+      "data_type": "Int",
+      "initial_value": {
+        "type": "Int",
+        "value": 1
+      }
+    },
+    "boss_enraged": {
+      "name": "boss_enraged",
+      "data_type": "Bool",
+      "initial_value": {
+        "type": "Bool",
+        "value": false
+      }
+    },
+    "boss_defeated": {
+      "name": "boss_defeated",
+      "data_type": "Bool",
+      "initial_value": {
+        "type": "Bool",
+        "value": false
+      }
+    },
+    "sparkle_burst": {
+      "name": "sparkle_burst",
+      "data_type": "Int",
+      "initial_value": {
+        "type": "Int",
+        "value": 0
+      }
+    }
+  },
+  "nodes": {
+    "evt_boss_phase": {
+      "id": "evt_boss_phase",
+      "name": "Changement de Phase Boss",
+      "category": "Interactions",
+      "description": "Déclenché quand le Boss franchit un seuil de santé (66% ou 33%).",
+      "kind": {
+        "Event": {
+          "event_type": "OnBossPhaseChange"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 40.0,
+        "position_y": 60.0,
+        "color_tag": "#00F59E0B"
+      }
+    },
+    "act_phase_sparks": {
+      "id": "act_phase_sparks",
+      "name": "Gerbe Énergétique",
+      "category": "World",
+      "description": "Projette une gerbe d'étincelles marquant la transition de puissance.",
+      "kind": {
+        "Action": {
+          "action_type": "SpawnSparkles"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 260.0,
+        "position_y": 60.0,
+        "color_tag": null
+      }
+    },
+    "cond_enrage_check": {
+      "id": "cond_enrage_check",
+      "name": "Vérifier Seuil Critique (PV < 20)",
+      "category": "MathLogic",
+      "description": "Vérifie si les points de vie du Boss sont tombés sous la barre des 33% pour enrager.",
+      "kind": {
+        "Condition": {
+          "operator": "BossHpLt:20"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_true",
+          "name": "Vrai",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        },
+        {
+          "id": "out_false",
+          "name": "Faux",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 480.0,
+        "position_y": 60.0,
+        "color_tag": "#00EF4444"
+      }
+    },
+    "act_trigger_enrage": {
+      "id": "act_trigger_enrage",
+      "name": "Activer Mode Enragé",
+      "category": "Progression",
+      "description": "Bascule l'indicateur de surcharge enragée et accélère les cycles d'attaque.",
+      "kind": {
+        "Action": {
+          "action_type": "BossEnrage"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 720.0,
+        "position_y": 60.0,
+        "color_tag": "#00DC2626"
+      }
+    },
+    "evt_boss_defeat": {
+      "id": "evt_boss_defeat",
+      "name": "Victoire : Boss Neutralisé",
+      "category": "Interactions",
+      "description": "Déclenché lorsque la santé du Boss atteint 0 PV.",
+      "kind": {
+        "Event": {
+          "event_type": "OnBossDefeated"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 40.0,
+        "position_y": 240.0,
+        "color_tag": "#0010B981"
+      }
+    },
+    "act_boss_defeat": {
+      "id": "act_boss_defeat",
+      "name": "Validation Défaite",
+      "category": "Progression",
+      "description": "Définit le boss comme terrassé et déverrouille l'arène.",
+      "kind": {
+        "Action": {
+          "action_type": "SetBossDefeated"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 260.0,
+        "position_y": 240.0,
+        "color_tag": null
+      }
+    },
+    "act_boss_bonus": {
+      "id": "act_boss_bonus",
+      "name": "Bonus Victoire Triomphale",
+      "category": "Progression",
+      "description": "Accorde un bonus majeur de points et déclenche la fanfare.",
+      "kind": {
+        "Action": {
+          "action_type": "BonusPoints"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 480.0,
+        "position_y": 240.0,
+        "color_tag": "#00FDE047"
+      }
+    }
+  },
+  "connections": [
+    {
+      "from_node": "evt_boss_phase",
+      "from_pin": "out_trigger",
+      "to_node": "act_phase_sparks",
+      "to_pin": "in_trigger"
+    },
+    {
+      "from_node": "act_phase_sparks",
+      "from_pin": "out_trigger",
+      "to_node": "cond_enrage_check",
+      "to_pin": "in_trigger"
+    },
+    {
+      "from_node": "cond_enrage_check",
+      "from_pin": "out_true",
+      "to_node": "act_trigger_enrage",
+      "to_pin": "in_trigger"
+    },
+    {
+      "from_node": "evt_boss_defeat",
+      "from_pin": "out_trigger",
+      "to_node": "act_boss_defeat",
+      "to_pin": "in_trigger"
+    },
+    {
+      "from_node": "act_boss_defeat",
+      "from_pin": "out_trigger",
+      "to_node": "act_boss_bonus",
+      "to_pin": "in_trigger"
+    }
+  ]
+}

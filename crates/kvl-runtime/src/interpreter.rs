@@ -236,6 +236,66 @@ impl Interpreter {
                             ctx.set_var("speed_boost", Value::Int(current_boost + delta));
                             ctx.record_step(&next_node.id, &next_node.name, format!("Vitesse modifiée ({:+} px/s) !", delta));
                         }
+                        "NavChasePlayer" | "ChasePlayer" => {
+                            ctx.set_var("nav_mode", Value::String("ChasePlayer".into()));
+                            ctx.record_step(&next_node.id, &next_node.name, "IA : Ordre de traque A* du joueur activé !");
+                        }
+                        "NavStop" | "StopNavigation" => {
+                            ctx.set_var("nav_mode", Value::String("Idle".into()));
+                            ctx.record_step(&next_node.id, &next_node.name, "IA : Ordre d'arrêt de navigation.");
+                        }
+                        op if op.starts_with("NavGoTo:") || op.starts_with("NavigateTo:") => {
+                            let prefix = if op.starts_with("NavGoTo:") { "NavGoTo:" } else { "NavigateTo:" };
+                            let coords = op.trim_start_matches(prefix);
+                            let mut parts = coords.split(',');
+                            let tx = parts.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+                            let ty = parts.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+                            ctx.set_var("nav_mode", Value::String(format!("GoTo:{},{}", tx, ty)));
+                            ctx.set_var("nav_target_x", Value::Int(tx));
+                            ctx.set_var("nav_target_y", Value::Int(ty));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("IA : Navigation A* vers ({}, {}) !", tx, ty));
+                        }
+                        "SwarmScatter" => {
+                            ctx.set_var("swarm_scatter_1", Value::Float(2.0));
+                            ctx.set_var("swarm_is_scattered_1", Value::Bool(true));
+                            ctx.record_step(&next_node.id, &next_node.name, "Meute : Éparpillement d'urgence (Scatter) activé !");
+                        }
+                        op if op.starts_with("SwarmScatter:") => {
+                            let rest = op.trim_start_matches("SwarmScatter:");
+                            let mut parts = rest.split(',');
+                            let swarm_id = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                            let dur = parts.next().and_then(|s| s.parse::<f64>().ok()).unwrap_or(2.0);
+                            ctx.set_var(format!("swarm_scatter_{}", swarm_id), Value::Float(dur));
+                            ctx.set_var(format!("swarm_is_scattered_{}", swarm_id), Value::Bool(true));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Meute #{} : Éparpillement d'urgence ({:.1}s) déclenché !", swarm_id, dur));
+                        }
+                        "SwarmTargetPlayer" => {
+                            ctx.set_var("swarm_target_mode_1", Value::String("Player".into()));
+                            ctx.record_step(&next_node.id, &next_node.name, "Meute : Traque collective du joueur enclenchée !");
+                        }
+                        op if op.starts_with("SwarmTargetPlayer:") => {
+                            let swarm_id = op.trim_start_matches("SwarmTargetPlayer:").parse::<u32>().unwrap_or(1);
+                            ctx.set_var(format!("swarm_target_mode_{}", swarm_id), Value::String("Player".into()));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Meute #{} : Traque collective du joueur enclenchée !", swarm_id));
+                        }
+                        op if op.starts_with("SwarmSetTarget:") => {
+                            let rest = op.trim_start_matches("SwarmSetTarget:");
+                            let mut parts = rest.split(',');
+                            let swarm_id = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                            let tx = parts.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+                            let ty = parts.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+                            ctx.set_var(format!("swarm_target_x_{}", swarm_id), Value::Int(tx));
+                            ctx.set_var(format!("swarm_target_y_{}", swarm_id), Value::Int(ty));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Meute #{} : Cible collective assignée en ({}, {})", swarm_id, tx, ty));
+                        }
+                        op if op.starts_with("SwarmSetCohesion:") => {
+                            let rest = op.trim_start_matches("SwarmSetCohesion:");
+                            let mut parts = rest.split(',');
+                            let swarm_id = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                            let weight = parts.next().and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
+                            ctx.set_var(format!("swarm_cohesion_{}", swarm_id), Value::Float(weight));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Meute #{} : Poids de cohésion ajusté à {:.2}", swarm_id, weight));
+                        }
                         op if op.starts_with("IncrementCounter:") => {
                             let counter_name = op.trim_start_matches("IncrementCounter:");
                             let current_count = match ctx.get_var(counter_name) {
@@ -399,6 +459,36 @@ impl Interpreter {
                             let item_id = op.trim_start_matches("UseItem:");
                             ctx.set_var(format!("used_item_{}", item_id), Value::Bool(true));
                             ctx.record_step(&next_node.id, &next_node.name, format!("Objet '{}' utilisé via KVL !", item_id));
+                        }
+                        op if op.starts_with("SetBossPhase:") => {
+                            let phase_str = op.trim_start_matches("SetBossPhase:");
+                            let phase_val = match phase_str {
+                                "1" | "Phase1" => 1,
+                                "2" | "Phase2" => 2,
+                                "3" | "Phase3" => 3,
+                                "Defeated" | "0" | "4" => 4,
+                                _ => phase_str.parse::<i64>().unwrap_or(1),
+                            };
+                            ctx.set_var("boss_phase", Value::Int(phase_val));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Phase du Boss basculée vers {}", phase_str));
+                        }
+                        "BossEnrage" => {
+                            ctx.set_var("boss_enraged", Value::Bool(true));
+                            ctx.record_step(&next_node.id, &next_node.name, "Le Boss entre en mode OVERDRIVE ENRAGÉ !");
+                        }
+                        "SetBossDefeated" => {
+                            ctx.set_var("boss_defeated", Value::Bool(true));
+                            ctx.set_var("boss_phase", Value::Int(4));
+                            ctx.record_step(&next_node.id, &next_node.name, "Le Boss est terrassé ! Victoire totale !");
+                        }
+                        op if op.starts_with("TriggerBossTelegraph:") => {
+                            let atk = op.trim_start_matches("TriggerBossTelegraph:");
+                            ctx.set_var("boss_telegraph_attack", Value::String(atk.to_string()));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Télégraphie d'attaque armée : [{}]", atk));
+                        }
+                        "TriggerBossRoar" => {
+                            ctx.set_var("boss_roar_triggered", Value::Bool(true));
+                            ctx.record_step(&next_node.id, &next_node.name, "Grondement terrifiant du Boss !");
                         }
                         _ => {
                             ctx.record_step(&next_node.id, &next_node.name, format!("Action personnalisée {}", action_type));
@@ -595,6 +685,91 @@ impl Interpreter {
                             let target_slot = op.trim_start_matches("HotbarSlotEq:").parse::<i64>().unwrap_or(0);
                             match ctx.get_var("hotbar_selected_slot") {
                                 Some(Value::Int(s)) => *s == target_slot,
+                                _ => false,
+                            }
+                        }
+                        op if op.starts_with("BossPhaseEq:") || op.starts_with("BossPhaseIs:") => {
+                            let target_str = if op.starts_with("BossPhaseEq:") {
+                                op.trim_start_matches("BossPhaseEq:")
+                            } else {
+                                op.trim_start_matches("BossPhaseIs:")
+                            };
+                            let target_phase = match target_str {
+                                "1" | "Phase1" => 1,
+                                "2" | "Phase2" => 2,
+                                "3" | "Phase3" => 3,
+                                "Defeated" | "4" => 4,
+                                _ => target_str.parse::<i64>().unwrap_or(1),
+                            };
+                            match ctx.get_var("boss_phase") {
+                                Some(Value::Int(p)) => *p == target_phase,
+                                _ => false,
+                            }
+                        }
+                        "IsBossEnraged" => {
+                            match ctx.get_var("boss_enraged") {
+                                Some(Value::Bool(b)) => *b,
+                                _ => false,
+                            }
+                        }
+                        "IsBossDefeated" => {
+                            match ctx.get_var("boss_defeated") {
+                                Some(Value::Bool(b)) => *b,
+                                _ => false,
+                            }
+                        }
+                        op if op.starts_with("BossHpLt:") => {
+                            let threshold = op.trim_start_matches("BossHpLt:").parse::<i64>().unwrap_or(1);
+                            match ctx.get_var("boss_hp") {
+                                Some(Value::Int(hp)) => *hp < threshold,
+                                _ => false,
+                            }
+                        }
+                        op if op.starts_with("BossHpGte:") => {
+                            let threshold = op.trim_start_matches("BossHpGte:").parse::<i64>().unwrap_or(1);
+                            match ctx.get_var("boss_hp") {
+                                Some(Value::Int(hp)) => *hp >= threshold,
+                                _ => false,
+                            }
+                        }
+                        "IsNavigating" | "HasPath" => {
+                            match ctx.get_var("nav_mode") {
+                                Some(Value::String(m)) => m != "Idle",
+                                _ => false,
+                            }
+                        }
+                        op if op.starts_with("NavModeIs:") => {
+                            let expected = op.trim_start_matches("NavModeIs:");
+                            match ctx.get_var("nav_mode") {
+                                Some(Value::String(m)) => m == expected,
+                                _ => false,
+                            }
+                        }
+                        op if op.starts_with("SwarmCountGreater:") || op.starts_with("SwarmCountGte:") => {
+                            let rest = if op.starts_with("SwarmCountGreater:") {
+                                op.trim_start_matches("SwarmCountGreater:")
+                            } else {
+                                op.trim_start_matches("SwarmCountGte:")
+                            };
+                            let mut parts = rest.split(',');
+                            let swarm_id = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                            let threshold = parts.next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                            let count = match ctx.get_var(&format!("swarm_count_{}", swarm_id)) {
+                                Some(Value::Int(c)) => *c,
+                                _ => 0,
+                            };
+                            count >= threshold
+                        }
+                        op if op.starts_with("SwarmIsScattered:") => {
+                            let swarm_id = op.trim_start_matches("SwarmIsScattered:").parse::<u32>().unwrap_or(1);
+                            match ctx.get_var(&format!("swarm_is_scattered_{}", swarm_id)) {
+                                Some(Value::Bool(b)) => *b,
+                                _ => false,
+                            }
+                        }
+                        "IsSwarmScattered" => {
+                            match ctx.get_var("swarm_is_scattered_1") {
+                                Some(Value::Bool(b)) => *b,
                                 _ => false,
                             }
                         }

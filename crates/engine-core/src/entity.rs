@@ -7,6 +7,21 @@ pub struct Transform2D {
     pub w: f32,
     pub h: f32,
     pub rotation: f32,
+    /// Coordonnée X de la frame précédente pour interpolation de rendu variable (alpha lerp)
+    #[serde(default)]
+    pub prev_x: f32,
+    /// Coordonnée Y de la frame précédente pour interpolation de rendu variable (alpha lerp)
+    #[serde(default)]
+    pub prev_y: f32,
+    /// Identifiant de l'entité parente pour le graphe de scène hiérarchique
+    #[serde(default)]
+    pub parent_id: Option<usize>,
+    /// Décalage X relatif à l'entité parente
+    #[serde(default)]
+    pub local_offset_x: f32,
+    /// Décalage Y relatif à l'entité parente
+    #[serde(default)]
+    pub local_offset_y: f32,
 }
 
 impl Transform2D {
@@ -17,6 +32,11 @@ impl Transform2D {
             w,
             h,
             rotation: 0.0,
+            prev_x: x,
+            prev_y: y,
+            parent_id: None,
+            local_offset_x: 0.0,
+            local_offset_y: 0.0,
         }
     }
 
@@ -29,6 +49,43 @@ impl Transform2D {
     pub fn center_y(&self) -> f32 {
         self.y + self.h * 0.5
     }
+
+    /// Enregistre la position actuelle comme position précédente avant le tick de simulation
+    #[inline]
+    pub fn snapshot_prev(&mut self) {
+        self.prev_x = self.x;
+        self.prev_y = self.y;
+    }
+
+    /// Calcule la position X interpolée pour le rendu fluide à taux de rafraîchissement élevé
+    #[inline]
+    #[allow(dead_code)]
+    pub fn interpolated_x(&self, alpha: f32) -> f32 {
+        let a = alpha.clamp(0.0, 1.0);
+        self.prev_x + (self.x - self.prev_x) * a
+    }
+
+    /// Calcule la position Y interpolée pour le rendu fluide à taux de rafraîchissement élevé
+    #[inline]
+    #[allow(dead_code)]
+    pub fn interpolated_y(&self, alpha: f32) -> f32 {
+        let a = alpha.clamp(0.0, 1.0);
+        self.prev_y + (self.y - self.prev_y) * a
+    }
+
+    /// Attache cette entité à une entité parente avec un décalage spatial relatif
+    #[allow(dead_code)]
+    pub fn attach_to(&mut self, parent_id: usize, offset_x: f32, offset_y: f32) {
+        self.parent_id = Some(parent_id);
+        self.local_offset_x = offset_x;
+        self.local_offset_y = offset_y;
+    }
+
+    /// Détache cette entité de son parent
+    #[allow(dead_code)]
+    pub fn detach(&mut self) {
+        self.parent_id = None;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,6 +93,7 @@ pub enum ShapeKind {
     Rect,
     Circle { radius: f32 },
     Text { label: String, scale: u32 },
+    PixelMatrix { width: u32, height: u32, pixels: Vec<u32> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,6 +127,297 @@ impl Renderable2D {
             z_index,
             visible: true,
         }
+    }
+
+    pub fn pixel_matrix(width: u32, height: u32, pixels: Vec<u32>, z_index: i32) -> Self {
+        Self {
+            shape: ShapeKind::PixelMatrix { width, height, pixels },
+            color: 0x00FFFFFF,
+            outline_color: None,
+            outline_width: 0,
+            z_index,
+            visible: true,
+        }
+    }
+
+    /// Construit un sprite pixel-art à partir d'une grille ASCII et d'une palette de couleurs (0x00000000 = transparent)
+    pub fn from_ascii_grid(rows: &[&str], palette: &std::collections::HashMap<char, u32>, z_index: i32) -> Self {
+        let height = rows.len() as u32;
+        let width = rows.iter().map(|r| r.chars().count()).max().unwrap_or(0) as u32;
+        let mut pixels = Vec::with_capacity((width * height) as usize);
+
+        for row in rows {
+            let mut count = 0;
+            for ch in row.chars() {
+                if count < width {
+                    let color = palette.get(&ch).copied().unwrap_or(0x00000000);
+                    pixels.push(color);
+                    count += 1;
+                }
+            }
+            while count < width {
+                pixels.push(0x00000000);
+                count += 1;
+            }
+        }
+
+        Self::pixel_matrix(width, height, pixels, z_index)
+    }
+
+    /// Bibliothèque procédurale de sprites 16x16 pixel-art rétro haute fidélité pour KaractiRage
+    pub fn procedural_sprite(archetype: &str, accent_color: u32, z_index: i32) -> Self {
+        let mut pal = std::collections::HashMap::new();
+        pal.insert('.', 0x00000000); // Transparent
+        pal.insert('X', 0x000F172A); // Contour sombre / bordure
+        pal.insert('A', accent_color); // Couleur d'accentuation principale
+        pal.insert('W', 0x00FFFFFF); // Blanc éclat / reflet
+        pal.insert('Y', 0x00FBBF24); // Or / Jaune vif
+        pal.insert('R', 0x00EF4444); // Rouge rubis
+        pal.insert('G', 0x0010B981); // Vert émeraude
+        pal.insert('B', 0x0038BDF8); // Cyan / Bleu ciel
+        pal.insert('D', 0x00334155); // Gris métal sombre
+        pal.insert('L', 0x0094A3B8); // Gris métal clair
+        pal.insert('P', 0x00A855F7); // Violet mystique
+        pal.insert('O', 0x00F97316); // Orange magma
+
+        let rows: &[&str] = match archetype.to_lowercase().as_str() {
+            "ninja" | "player_ninja" => &[
+                "....XXXXXXXX....",
+                "...XAAAAAAAAX...",
+                "..XAAAAAAAAAAX..",
+                "..XAAWWXAAWWAAX.",
+                "..XAAXXXAAXXXAX.",
+                "..XAAAAAAAAAAX..",
+                "...XXXXXXXXXX...",
+                "....XAAAAAAX....",
+                "...XAAAYYAAAX...",
+                "..XAAAAXXAAAAX..",
+                "..XAAAX..XAAAX..",
+                "..XAAAX..XAAAX..",
+                "..XXXXX..XXXXX..",
+                "..XDDDX..XDDDX..",
+                ".XDDDDX..XDDDDX.",
+                "................",
+            ],
+            "knight" | "player_knight" | "warrior" => &[
+                "....XLLLLLLX....",
+                "...XLLLLLLLLX...",
+                "..XLLLLYYYYLLX..",
+                "..XLLWWXLLWWLX..",
+                "..XLLXXXLLXXLX..",
+                "..XLLLLLLLLLLX..",
+                "...XLLLLLLLLX...",
+                "....XAAAAAAX....",
+                "...XAAAAAAAAX...",
+                "..XAAAWWWAAAAX..",
+                "..XAAAXLLXAAAX..",
+                "..XLLX....XLLX..",
+                "..XLLX....XLLX..",
+                "..XDDX....XDDX..",
+                ".XDDDX....XDDDX.",
+                "................",
+            ],
+            "drone" | "enemy_drone" | "cyber_drone" => &[
+                ".....XXXXXX.....",
+                "...XXDDDDDXX...",
+                "..XDDDLLLLDDX..",
+                ".XDDLLWXXWLLDX.",
+                ".XDLLXXAAXXLLX.",
+                "XDLLXAAAAAAXLX.",
+                "XDLLXAAAAAAXLX.",
+                ".XDLLXXAAXXLLX.",
+                ".XDDLLWXXWLLDX.",
+                "..XDDDLLLLDDX..",
+                "...XXDDDDDXX...",
+                ".....XOOOOX.....",
+                "....XOOYYOOX....",
+                ".....XOOOOX.....",
+                "......XYYX......",
+                ".......XX.......",
+            ],
+            "slime" | "enemy_slime" => &[
+                "................",
+                "................",
+                "......XXXX......",
+                "....XXGGGGXX....",
+                "...XGGGGGGGGX...",
+                "..XGGWWGGWWGGX..",
+                ".XGGWXXGGWXXGGX.",
+                ".XGGGGGGGGGGGGX.",
+                ".XGGAAAGGGAAAGX.",
+                "XGGGAAGGGGAAAGX.",
+                "XGGGGGGGGGGGGGX.",
+                "XGGGGGGGGGGGGGX.",
+                "XGGGGGGGGGGGGGX.",
+                ".XXXXXXXXXXXXX..",
+                "................",
+                "................",
+            ],
+            "skull" | "skeleton" | "enemy_skull" => &[
+                "....XXXXXXXX....",
+                "..XXWWWWWWWWXX..",
+                ".XWWWWWWWWWWWWX.",
+                "XWWWWWWWWWWWWWWX",
+                "XWWWWXXWWWWXXWWX",
+                "XWWXXDDXXWWXXDDX",
+                "XWWXXDDXXWWXXDDX",
+                "XWWWWXXWWWWXXWWX",
+                "XWWWWWWXXXXWWWWX",
+                ".XWWWWWWWWWWWWX.",
+                "..XXWXXWWXXWXX..",
+                "...XWXXWWXXWX...",
+                "...XWXXWWXXWX...",
+                "....XXXXXXXX....",
+                "................",
+                "................",
+            ],
+            "boss" | "titan" | "golem" => &[
+                "..XXXXXXXXXXXX..",
+                ".XPPPPPPPPPPPPX.",
+                "XPPXXPPPPPPXXPPX",
+                "XPXWWXPPPPXWWXPX",
+                "XPXXXPPPPPPXXXPX",
+                "XPPPPPPPPPPPPPPX",
+                "XPPPPPOOOOPPPPPX",
+                ".XPPPOOYYOOPPPX.",
+                ".XPPPOOYYOOPPPX.",
+                "..XPPOOOOPPXX...",
+                "..XDDDDDDDDDDX..",
+                ".XDDWWDDDDWWDDX.",
+                ".XDDDDDDDDDDDDX.",
+                ".XDDXDDDDDDXDDX.",
+                "..XXXDDDDDDXXX..",
+                "....XXXXXXXX....",
+            ],
+            "chest" | "item_chest" | "treasure" => &[
+                "................",
+                "...XXXXXXXXXX...",
+                "..XYYYYYYYYYYX..",
+                ".XYOOOOOOOOOOYX.",
+                ".XYOXXXXXXXXOYX.",
+                ".XYOODDDDDDOOYX.",
+                "XXXXXXXXXXXXXX..",
+                "XDDDDDDDDDDDDX..",
+                "XDDDDYYYYDDDDX..",
+                "XDDDDYXXYDDDDX..",
+                "XDDDDYYYYDDDDX..",
+                "XDDDDDDDDDDDDX..",
+                "XYYYYDDDDDDYYYYX",
+                "XXXXXXXXXXXXXX..",
+                "................",
+                "................",
+            ],
+            "key" | "item_key" => &[
+                "................",
+                ".....YYYYY......",
+                "....YYWWWWYY....",
+                "...YYWXXXXWYY...",
+                "...YYWXXXXWYY...",
+                "....YYWWWWYY....",
+                ".....YYYYY......",
+                "......YYY.......",
+                "......YYY.......",
+                "......YYYYYY....",
+                "......YYY.......",
+                "......YYYYYY....",
+                "......YYYY......",
+                "......YYY.......",
+                "......YY........",
+                "................",
+            ],
+            "potion" | "item_potion" | "heal" => &[
+                "......XXXX......",
+                "......XDDX......",
+                ".....XDDDDX.....",
+                "....XWWWWWWX....",
+                "...XWWXXXXWWX...",
+                "..XWWXRRRRXWWX..",
+                ".XWWXRRRRRRXWWX.",
+                ".XWXRRRRRRRRXWX.",
+                ".XWXRRWWRRRRXWX.",
+                ".XWXRRWWRRRRXWX.",
+                ".XWXRRRRRRRRXWX.",
+                ".XWXRRRRRRRRXWX.",
+                "..XWXXXXXXXXWX..",
+                "...XXXXXXXXXX...",
+                "................",
+                "................",
+            ],
+            "door" | "portal" => &[
+                "...XXXXXXXXXX...",
+                "..XPPPPPPPPPPX..",
+                ".XPWWPPPPPPWWPX.",
+                ".XPWPBBBBBBWPXP.",
+                "XPWPBBWWWWBBWPXP",
+                "XPWPBBWXXWBBWPXP",
+                "XPWPBBWXXWBBWPXP",
+                "XPWPBBWWWWBBWPXP",
+                "XPWPBBBBBBBBWPXP",
+                "XPWPBBBBBBBBWPXP",
+                "XPWPBBBBBBBBWPXP",
+                "XPWPBBBBBBBBWPXP",
+                ".XPWPBBBBBBWPXP.",
+                ".XPWWPPPPPPWWPX.",
+                "..XPPPPPPPPPPX..",
+                "...XXXXXXXXXX...",
+            ],
+            "coin" | "item_coin" | "gem" => &[
+                ".....XXXXXX.....",
+                "...XXYYYYYYXX...",
+                "..XYYWWWWWWYYX..",
+                ".XYWWYYYYYYWWYX.",
+                ".XYWYYYYYYYYWYX.",
+                "XYWYYYXXXXYYYWYY",
+                "XYWYYXXXXXXYYWYY",
+                "XYWYYXXXXXXYYWYY",
+                "XYWYYYXXXXYYYWYY",
+                ".XYWYYYYYYYYWYX.",
+                ".XYWWYYYYYYWWYX.",
+                "..XYYWWWWWWYYX..",
+                "...XXYYYYYYXX...",
+                ".....XXXXXX.....",
+                "................",
+                "................",
+            ],
+            "spikes" | "hazard_spikes" => &[
+                "................",
+                "................",
+                ".......X........",
+                "......XWX.......",
+                ".....XWWX.......",
+                ".....XWLX...X...",
+                "....XWLLX..XWX..",
+                "...XWLLLX.XWWX..",
+                "..XWLLLLXXWLLX..",
+                ".XWLLLLLWLLLLX..",
+                "XWLLLLLLLLLLLLX.",
+                "XDDDDDDDDDDDDDDX",
+                "XDDDDDDDDDDDDDDX",
+                "XRRRRRRRRRRRRRRX",
+                "XXXXXXXXXXXXXXXX",
+                "................",
+            ],
+            _ => &[
+                "XXXXXXXXXXXXXXXX",
+                "XAAAAAAAAAAAAAAX",
+                "XAWWWWWWWWWWWWAX",
+                "XAWAAAAAAAAAAWAX",
+                "XAWAAAAAAAAAAWAX",
+                "XAWAAAAAAAAAAWAX",
+                "XAWAAAAAAAAAAWAX",
+                "XAWAAAAAAAAAAWAX",
+                "XAWAAAAAAAAAAWAX",
+                "XAWAAAAAAAAAAWAX",
+                "XAWAAAAAAAAAAWAX",
+                "XAWAAAAAAAAAAWAX",
+                "XAWWWWWWWWWWWWAX",
+                "XAAAAAAAAAAAAAAX",
+                "XXXXXXXXXXXXXXXX",
+                "................",
+            ],
+        };
+
+        Self::from_ascii_grid(rows, &pal, z_index)
     }
 
     pub fn with_outline(mut self, color: u32, width: u32) -> Self {
@@ -599,6 +948,176 @@ impl DialogueComponent {
     }
 }
 
+/// Phases d'affrontement et états dynamiques de combat de Boss
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BossPhase {
+    /// Phase 1 : Éveil du Titan (100% à 66% PV) - Tirs en éventail et anneaux lents
+    Phase1,
+    /// Phase 2 : Surcharge Plasmique (66% à 33% PV) - Vitesse accrue et frappes sismiques
+    Phase2,
+    /// Phase 3 : Mode Overdrive Enragé (33% à 0% PV) - Rafales frénétiques et bombardements orbitaux
+    Phase3,
+    /// Défaite : Vaincu et anéanti (0 PV)
+    Defeated,
+}
+
+impl BossPhase {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Phase1 => "PHASE 1 : EVEIL",
+            Self::Phase2 => "PHASE 2 : SURCHARGE",
+            Self::Phase3 => "PHASE 3 : OVERDRIVE ENRAGE",
+            Self::Defeated => "VAINCU",
+        }
+    }
+
+    pub fn color(&self) -> u32 {
+        match self {
+            Self::Phase1 => 0x0006B6D4, // Cyan éclatant
+            Self::Phase2 => 0x00F59E0B, // Ambre flamboyant
+            Self::Phase3 => 0x00EF4444, // Rouge cramoisi agressif
+            Self::Defeated => 0x0010B981, // Vert triomphe
+        }
+    }
+}
+
+/// Archétypes d'attaques télégraphiées et de motifs balistiques de Boss
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BossAttackType {
+    /// Anneau circulaire de projectiles expansifs (Nova à 360 degrés)
+    RadialNova,
+    /// Salve en éventail de 5 à 7 projectiles orientés vers le joueur
+    TargetedSpread,
+    /// Frappe tellurique / Écrasement au sol avec zone d'onde de choc dévastatrice
+    SeismicSlam,
+    /// Bombardement orbital / Pluie de météores ciblant les alentours du joueur
+    OrbitalStrike,
+}
+
+impl BossAttackType {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::RadialNova => "NOVA RADIALE",
+            Self::TargetedSpread => "TIR EN EVENTAIL",
+            Self::SeismicSlam => "SLAM SISMIQUE",
+            Self::OrbitalStrike => "BOMBARDEMENT ORBITAL",
+        }
+    }
+}
+
+/// Forme géométrique de la zone d'avertissement au sol (Télégraphie)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum TelegraphShape {
+    Circle { radius: f32 },
+    Rect { w: f32, h: f32 },
+    Line { length: f32, thickness: f32, angle: f32 },
+}
+
+/// Zone de préavis visuel (Telegraphing) avant impact d'attaque
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TelegraphZone {
+    pub x: f32,
+    pub y: f32,
+    pub shape: TelegraphShape,
+    pub duration: f32,
+    pub timer: f32,
+    pub attack_type: BossAttackType,
+    pub color: u32,
+    pub damage: f32,
+    pub is_active: bool,
+}
+
+impl TelegraphZone {
+    pub fn new_circle(x: f32, y: f32, radius: f32, duration: f32, attack_type: BossAttackType, color: u32, damage: f32) -> Self {
+        Self {
+            x,
+            y,
+            shape: TelegraphShape::Circle { radius },
+            duration,
+            timer: 0.0,
+            attack_type,
+            color,
+            damage,
+            is_active: true,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn new_rect(x: f32, y: f32, w: f32, h: f32, duration: f32, attack_type: BossAttackType, color: u32, damage: f32) -> Self {
+        Self {
+            x,
+            y,
+            shape: TelegraphShape::Rect { w, h },
+            duration,
+            timer: 0.0,
+            attack_type,
+            color,
+            damage,
+            is_active: true,
+        }
+    }
+
+    pub fn new_line(x: f32, y: f32, length: f32, thickness: f32, angle: f32, duration: f32, attack_type: BossAttackType, color: u32, damage: f32) -> Self {
+        Self {
+            x,
+            y,
+            shape: TelegraphShape::Line { length, thickness, angle },
+            duration,
+            timer: 0.0,
+            attack_type,
+            color,
+            damage,
+            is_active: true,
+        }
+    }
+
+    #[inline]
+    pub fn progress(&self) -> f32 {
+        if self.duration <= 0.0 {
+            1.0
+        } else {
+            (self.timer / self.duration).clamp(0.0, 1.0)
+        }
+    }
+}
+
+/// Composant Boss ECS pour affrontements épiques multi-phases et télégraphies
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BossComponent {
+    pub phase: BossPhase,
+    pub phase_timer: f32,
+    pub attack_cooldown: f32,
+    pub attack_timer: f32,
+    pub current_attack: Option<BossAttackType>,
+    pub telegraphs: Vec<TelegraphZone>,
+    pub enrage_multiplier: f32,
+    pub attack_counter: usize,
+    pub name: String,
+    pub boss_title: String,
+}
+
+impl BossComponent {
+    pub fn new(name: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            phase: BossPhase::Phase1,
+            phase_timer: 0.0,
+            attack_cooldown: 2.4,
+            attack_timer: 0.8,
+            current_attack: None,
+            telegraphs: Vec::new(),
+            enrage_multiplier: 1.0,
+            attack_counter: 0,
+            name: name.into(),
+            boss_title: title.into(),
+        }
+    }
+
+    pub fn with_cooldown(mut self, cooldown: f32) -> Self {
+        self.attack_cooldown = cooldown;
+        self
+    }
+}
+
 /// Modèle d'Entité Universel du moteur KaractiRage
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
@@ -618,6 +1137,12 @@ pub struct Entity {
     pub dialogue: Option<DialogueComponent>,
     #[serde(default)]
     pub item_pickup: Option<ItemPickupComponent>,
+    #[serde(default)]
+    pub boss: Option<BossComponent>,
+    #[serde(default)]
+    pub nav_agent: Option<crate::navigation::NavAgent>,
+    #[serde(default)]
+    pub flock: Option<crate::flocking::FlockMember>,
     pub is_active: bool,
 }
 
@@ -638,8 +1163,28 @@ impl Entity {
             health: None,
             dialogue: None,
             item_pickup: None,
+            boss: None,
+            nav_agent: None,
+            flock: None,
             is_active: true,
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_flock(mut self, flock: crate::flocking::FlockMember) -> Self {
+        self.flock = Some(flock);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_nav_agent(mut self, nav: crate::navigation::NavAgent) -> Self {
+        self.nav_agent = Some(nav);
+        self
+    }
+
+    pub fn with_boss(mut self, b: BossComponent) -> Self {
+        self.boss = Some(b);
+        self
     }
 
     pub fn with_health(mut self, h: Health2D) -> Self {
@@ -826,5 +1371,63 @@ impl Entity {
             .with_renderable(Renderable2D::circle(size * 0.5, color, 6).with_outline(0x00FFFFFF, 1))
             .with_collider(Collider2D::trigger(size, size))
             .with_item_pickup(ItemPickupComponent::new(item, count, y))
+    }
+
+    /// Gabarit : Boss imposant multi-phases avec télégraphie et motifs balistiques
+    pub fn spawn_boss(
+        id: usize,
+        name: impl Into<String>,
+        x: f32,
+        y: f32,
+        size: f32,
+        max_hp: f32,
+        script_path: &str,
+    ) -> Self {
+        let name_str = name.into();
+        Self::new(id, name_str.clone(), "boss", Transform2D::new(x, y, size, size))
+            .with_renderable(
+                Renderable2D::rect(0x0006B6D4, 9)
+                    .with_outline(0x0038BDF8, 3),
+            )
+            .with_collider(Collider2D::solid(size, size))
+            .with_health(Health2D::new(max_hp))
+            .with_boss(BossComponent::new(name_str, "GARDIEN ANCESTRAL KVL").with_cooldown(2.2))
+            .with_script(
+                KVLScriptComponent::new(script_path)
+                    .with_overlap("OnBossOverlap")
+                    .with_seen("OnBossPhaseChange"),
+            )
+    }
+
+    /// Gabarit : Drone de meute intelligent (Essaim Boid)
+    #[allow(dead_code)]
+    pub fn spawn_flock_drone(
+        id: usize,
+        swarm_id: u32,
+        x: f32,
+        y: f32,
+        is_leader: bool,
+    ) -> Self {
+        let size = if is_leader { 22.0 } else { 16.0 };
+        let color = if is_leader { 0x00F59E0B } else { 0x0038BDF8 };
+        let outline = if is_leader { 0x00FEF08A } else { 0x00E0E7FF };
+        let tag = if is_leader { "swarm_leader" } else { "swarm_drone" };
+        let name = format!("boid_{}_{}", swarm_id, id);
+
+        let mut flock = crate::flocking::FlockMember::drone(swarm_id);
+        flock = flock.with_leader(is_leader);
+
+        Self::new(id, name, tag, Transform2D::new(x, y, size, size))
+            .with_renderable(Renderable2D::circle(size * 0.5, color, 7).with_outline(outline, 2))
+            .with_collider(Collider2D::solid(size, size))
+            .with_movement(Movement2D {
+                vx: 0.0,
+                vy: 0.0,
+                speed: flock.max_speed,
+                is_player_controlled: false,
+                patrol: None,
+                mode: MovementMode::TopDown,
+            })
+            .with_flock(flock)
     }
 }

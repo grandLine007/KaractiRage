@@ -56,6 +56,7 @@ fn web_key_to_keycode(key: u32) -> Option<KeyCode> {
         32 => Some(KeyCode::Digit3),
         33 => Some(KeyCode::Digit4),
         34 => Some(KeyCode::Digit5),
+        35 => Some(KeyCode::KeyI),
         _ => None,
     }
 }
@@ -63,10 +64,11 @@ fn web_key_to_keycode(key: u32) -> Option<KeyCode> {
 /// Initialise l'instance WebAssembly du moteur KaractiRage
 #[wasm_bindgen]
 pub fn wasm_init_engine() -> i32 {
-    let game = match GameState::load_from_scene("assets/scenes/level_01.scene.json") {
+    let mut game = match GameState::load_from_scene("assets/scenes/level_01.scene.json") {
         Ok(g) => g,
         Err(_) => return -1,
     };
+    game.editor.show_welcome_modal = true;
 
     let canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT);
     let input = InputState::new();
@@ -211,10 +213,7 @@ pub fn wasm_get_score() -> i32 {
     RUNTIME.with(|rt| {
         let borrow = rt.borrow();
         if let Some(ref r) = *borrow {
-            match r.game.kvl_context.get_var("score") {
-                Some(kvl_core::Value::Int(s)) => *s as i32,
-                _ => 0,
-            }
+            r.game.kvl_context.get_var("score").map_or(0, |v| match v { kvl_core::Value::Int(s) => *s as i32, _ => 0 })
         } else {
             0
         }
@@ -317,3 +316,94 @@ pub fn wasm_get_status_message() -> String {
         }
     })
 }
+
+/// Exporte le jeu courant en fichier HTML5 standalone complet autonome
+#[wasm_bindgen]
+pub fn wasm_export_standalone_html(title: &str, author: &str) -> String {
+    RUNTIME.with(|rt| {
+        let borrow = rt.borrow();
+        if let Some(ref r) = *borrow {
+            crate::exporter::StandaloneExporter::export_html(&r.game, title, author)
+        } else {
+            String::new()
+        }
+    })
+}
+
+/// Exporte le package universel KaractiRage (.karacti.json)
+#[wasm_bindgen]
+pub fn wasm_export_game_package(title: &str, author: &str) -> String {
+    RUNTIME.with(|rt| {
+        let borrow = rt.borrow();
+        if let Some(ref r) = *borrow {
+            crate::exporter::StandaloneExporter::export_package_json(&r.game, title, author)
+                .unwrap_or_else(|_| "{}".to_string())
+        } else {
+            "{}".to_string()
+        }
+    })
+}
+
+/// Importe et instancie un package universel (.karacti.json) dans le moteur
+#[wasm_bindgen]
+pub fn wasm_import_game_package(package_json: &str) -> i32 {
+    let package = match crate::exporter::KaractiGamePackage::from_json(package_json) {
+        Ok(p) => p,
+        Err(_) => return -1,
+    };
+
+    RUNTIME.with(|rt| {
+        let mut borrow = rt.borrow_mut();
+        if let Some(ref mut r) = *borrow {
+            crate::exporter::StandaloneExporter::import_package(&mut r.game, &package);
+            0
+        } else {
+            -2
+        }
+    })
+}
+
+/// Valide une recette de jeu (JSON) et résout automatiquement ses dépendances
+#[wasm_bindgen]
+pub fn wasm_validate_recipe(recipe_json: &str) -> String {
+    let mut recipe = match crate::recipe::KaractiGameRecipe::from_json(recipe_json) {
+        Ok(r) => r,
+        Err(e) => return format!("{{\"is_valid\":false,\"conflicts\":[\"JSON invalide: {}\"]}}", e),
+    };
+
+    let report = crate::recipe::DependencyResolver::resolve(&mut recipe);
+    serde_json::to_string(&report).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Instancie une recette de jeu et charge la scène minimale jouable dans le moteur
+#[wasm_bindgen]
+pub fn wasm_apply_recipe(recipe_json: &str) -> i32 {
+    let mut recipe = match crate::recipe::KaractiGameRecipe::from_json(recipe_json) {
+        Ok(r) => r,
+        Err(_) => return -1,
+    };
+
+    let report = crate::recipe::DependencyResolver::resolve(&mut recipe);
+    if !report.is_valid {
+        return -2;
+    }
+
+    let (scene, kvl_graphs) = crate::recipe::RecipeProjectGenerator::generate(&recipe);
+
+    RUNTIME.with(|rt| {
+        let mut borrow = rt.borrow_mut();
+        if let Some(ref mut r) = *borrow {
+            r.game.scene_name = scene.name;
+            r.game.entities = scene.entities;
+            r.game.kvl_graphs = kvl_graphs;
+            r.game.editor.selected = crate::editor::SelectedEntity::None;
+            r.game.editor.mode = crate::editor::EditorMode::Play;
+            r.game.set_status(&format!("Recette '{}' instanciée avec succès !", recipe.title));
+            0
+        } else {
+            -3
+        }
+    })
+}
+
+

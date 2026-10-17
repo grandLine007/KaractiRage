@@ -48,32 +48,6 @@
         "color_tag": null
       }
     },
-    "act_lock_doors": {
-      "id": "act_lock_doors",
-      "name": "Verrouiller Portes d'Urgence",
-      "category": "World",
-      "description": "Ferme immédiatement toute issue pour confiner l'intrus.",
-      "kind": {
-        "Action": {
-          "action_type": "LockAllDoors"
-        }
-      },
-      "inputs": [
-        {
-          "id": "in_trigger",
-          "name": "Exécution",
-          "direction": "Input",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "outputs": [],
-      "ui": {
-        "position_x": 600.0,
-        "position_y": 0.0,
-        "color_tag": null
-      }
-    },
     "evt_player_seen": {
       "id": "evt_player_seen",
       "name": "Joueur Repéré",
@@ -130,6 +104,32 @@
       ],
       "ui": {
         "position_x": 400.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_lock_doors": {
+      "id": "act_lock_doors",
+      "name": "Verrouiller Portes d'Urgence",
+      "category": "World",
+      "description": "Ferme immédiatement toute issue pour confiner l'intrus.",
+      "kind": {
+        "Action": {
+          "action_type": "LockAllDoors"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 600.0,
         "position_y": 0.0,
         "color_tag": null
       }

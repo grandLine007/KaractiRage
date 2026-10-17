@@ -157,6 +157,8 @@ pub struct Inventory {
     #[serde(skip)]
     pub hotbar_hitboxes: [Option<(i32, i32, u32, u32)>; HOTBAR_SLOTS_COUNT],
     #[serde(skip)]
+    pub use_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    #[serde(skip)]
     pub notification: Option<(String, f32)>, // (message, temps restant en secondes)
 }
 
@@ -178,8 +180,15 @@ impl Inventory {
             capacity: cap,
             selected_hotbar_index: 0,
             hotbar_hitboxes: [None; HOTBAR_SLOTS_COUNT],
+            use_btn_hitbox: None,
             notification: None,
         }
+    }
+
+    pub fn is_use_btn_clicked(&self, mx: f32, my: f32) -> bool {
+        self.use_btn_hitbox.map_or(false, |(x, y, w, h)| {
+            mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32
+        })
     }
 
     /// Ajoute des objets dans l'inventaire en empilant en priorité, puis sur slots libres.
@@ -389,12 +398,20 @@ impl Inventory {
     }
 
     /// Rendu de la barre d'action rapide (Hotbar) et des notifications au bas de l'écran
+    #[allow(dead_code)]
     pub fn render_hotbar(&mut self, canvas: &mut Canvas, screen_w: u32, screen_h: u32) {
-        let slot_size: u32 = 42;
-        let spacing: u32 = 8;
-        let total_w = HOTBAR_SLOTS_COUNT as u32 * slot_size + (HOTBAR_SLOTS_COUNT as u32 - 1) * spacing;
-        let start_x = ((screen_w as i32 - total_w as i32) / 2).max(10);
-        let start_y = (screen_h as i32 - slot_size as i32 - 14).max(10);
+        self.render_hotbar_at(canvas, (screen_w / 2) as i32, (screen_h - 14) as i32);
+    }
+
+    /// Rendu de la barre d'action rapide (Hotbar) centrée à des coordonnées précises
+    pub fn render_hotbar_at(&mut self, canvas: &mut Canvas, center_x: i32, bottom_y: i32) {
+        let slot_size: u32 = 36;
+        let spacing: u32 = 6;
+        let slots_w = HOTBAR_SLOTS_COUNT as u32 * slot_size + (HOTBAR_SLOTS_COUNT as u32 - 1) * spacing;
+        let use_btn_w = 66u32;
+        let total_w = slots_w + spacing + use_btn_w;
+        let start_x = (center_x - (total_w as i32 / 2)).max(10);
+        let start_y = (bottom_y - slot_size as i32).max(10);
 
         // 1. Fond du bandeau de la barre d'actions
         let pad = 6;
@@ -469,7 +486,13 @@ impl Inventory {
             }
         }
 
-        // 3. Info-bulle de l'objet sélectionné (au-dessus de la barre)
+        // 3. Bouton d'utilisation rapide [U] UTIL
+        let use_x = start_x + slots_w as i32 + spacing as i32;
+        let use_y = start_y;
+        canvas.draw_badge(use_x, use_y, use_btn_w, slot_size, 0x00064E3B, 0x0010B981, "[U] UTIL", 0x00D1FAE5, 1);
+        self.use_btn_hitbox = Some((use_x, use_y, use_btn_w, slot_size));
+
+        // 4. Info-bulle de l'objet sélectionné (au-dessus de la barre)
         if let Some(ref slot) = self.selected_slot() {
             let label = format!("[{}] {}", self.selected_hotbar_index + 1, slot.item.name);
             let tip_x = start_x;
@@ -481,7 +504,7 @@ impl Inventory {
         if let Some((ref msg, _)) = self.notification {
             let notif_y = bg_y - 36;
             let notif_w = (msg.len() * 6 + 16) as u32;
-            let notif_x = (screen_w as i32 - notif_w as i32) / 2;
+            let notif_x = center_x - (notif_w as i32 / 2);
             canvas.draw_badge(
                 notif_x,
                 notif_y,

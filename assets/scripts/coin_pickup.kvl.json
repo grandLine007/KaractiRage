@@ -14,6 +14,32 @@
     }
   },
   "nodes": {
+    "evt_overlap": {
+      "id": "evt_overlap",
+      "name": "Quand le joueur touche la pièce",
+      "category": "Interactions",
+      "description": "Détecte la collision entre le joueur et l'objet.",
+      "kind": {
+        "Event": {
+          "event_type": "OnPlayerOverlap"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
     "act_add_score": {
       "id": "act_add_score",
       "name": "Ajouter 10 au score",
@@ -44,32 +70,6 @@
       ],
       "ui": {
         "position_x": 180.0,
-        "position_y": 0.0,
-        "color_tag": null
-      }
-    },
-    "evt_overlap": {
-      "id": "evt_overlap",
-      "name": "Quand le joueur touche la pièce",
-      "category": "Interactions",
-      "description": "Détecte la collision entre le joueur et l'objet.",
-      "kind": {
-        "Event": {
-          "event_type": "OnPlayerOverlap"
-        }
-      },
-      "inputs": [],
-      "outputs": [
-        {
-          "id": "out_trigger",
-          "name": "Exécution",
-          "direction": "Output",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "ui": {
-        "position_x": 0.0,
         "position_y": 0.0,
         "color_tag": null
       }
