@@ -27,6 +27,7 @@ mod telemetry;
 mod exporter;
 mod recipe;
 pub mod ai_client;
+pub mod project;
 
 use game::GameState;
 use input::InputState;
@@ -70,6 +71,7 @@ fn main() {
     let init_logical_w = (init_sz.width as f64 / init_scale).round().max(400.0) as usize;
     let init_logical_h = (init_sz.height as f64 / init_scale).round().max(300.0) as usize;
     let mut canvas = Canvas::new(init_logical_w, init_logical_h);
+    renderer::warmup_glyph_cache();
 
     let mut input = InputState::new();
     let mut game = GameState::load_from_scene("assets/scenes/level_01.scene.json")
@@ -115,7 +117,23 @@ fn main() {
                 WindowEvent::KeyboardInput { event: key_event, .. } => {
                     if let PhysicalKey::Code(key) = key_event.physical_key {
                         match key_event.state {
-                            ElementState::Pressed => input.on_key_down(key),
+                            ElementState::Pressed => {
+                                input.on_key_down(key);
+                                // Capture universelle du texte produit par l'OS (AZERTY, QWERTY, accents français, chiffres, etc.)
+                                if let Some(ref text) = key_event.text {
+                                    for ch in text.chars() {
+                                        if !ch.is_control() {
+                                            input.on_char(ch);
+                                        }
+                                    }
+                                } else if let winit::keyboard::Key::Character(ref smol) = key_event.logical_key {
+                                    for ch in smol.chars() {
+                                        if !ch.is_control() {
+                                            input.on_char(ch);
+                                        }
+                                    }
+                                }
+                            }
                             ElementState::Released => input.on_key_up(key),
                         }
                     }

@@ -423,11 +423,19 @@ pub struct RecipeProjectGenerator;
 impl RecipeProjectGenerator {
     /// Construit une scène de départ et un ensemble de graphes KVL immédiatement jouables
     pub fn generate(recipe: &KaractiGameRecipe) -> (SceneData, HashMap<String, Graph>) {
-        let mut scene = SceneData {
+        let (objective_text, entities) = match recipe.genres.primary {
+            GameGenre::Platformer => Self::generate_platformer_world(recipe),
+            GameGenre::ShootEmUp => Self::generate_shmup_world(recipe),
+            GameGenre::Puzzle => Self::generate_sokoban_world(recipe),
+            GameGenre::Combat => Self::generate_boss_arena_world(recipe),
+            _ => Self::generate_dungeon_world(recipe),
+        };
+
+        let scene = SceneData {
             name: format!("{}: Niveau 1", recipe.title),
-            description: format!("Niveau initial généré selon la recette '{}'", recipe.title),
-            objective: Some("Explorer le monde et accomplir les objectifs".to_string()),
-            entities: Vec::new(),
+            description: format!("Niveau initial complet généré selon la recette '{}'", recipe.title),
+            objective: Some(objective_text),
+            entities,
             player: None,
             coins: Vec::new(),
             doors: Vec::new(),
@@ -435,87 +443,364 @@ impl RecipeProjectGenerator {
             enemies: Vec::new(),
         };
 
+        // Graphes KVL universels pour le niveau
         let mut kvl_graphs = HashMap::new();
+        let mut main_graph = Graph::new("base_recipe_logic", "Logique de Recette", "Initialisée par le générateur de projet");
+        main_graph.add_variable("score", kvl_core::Value::Int(0));
+        main_graph.add_variable("door_unlocked", kvl_core::Value::Bool(false));
+        kvl_graphs.insert("base_recipe_logic".to_string(), main_graph);
 
-        // 1. Création de l'Entité Joueur selon la recette
-        let transform = Transform2D::new(200.0, 300.0, 32.0, 32.0);
-        let mut player = Entity::new(1, recipe.player.name.clone(), "player", transform);
-        player.collider = Some(Collider2D::solid(32.0, 32.0));
+        (scene, kvl_graphs)
+    }
 
-        // Mode de déplacement adapté
-        let move_mode = match recipe.player.directions {
-            MovementDirections::HorizontalOnly if recipe.world.gravity_enabled => {
-                MovementMode::Platformer {
-                    gravity: 980.0,
-                    jump_force: 420.0,
-                    is_grounded: false,
-                    max_fall_speed: 650.0,
-                }
-            }
-            MovementDirections::FreeInertia => {
-                MovementMode::SpaceInertia {
-                    angular_speed: 4.0,
-                    thrust: 400.0,
-                    drag: 0.98,
-                }
-            }
-            MovementDirections::Grid => {
-                MovementMode::Grid {
-                    cell_size: 32.0,
-                    cooldown: 0.18,
-                    timer: 0.0,
-                }
-            }
-            _ => MovementMode::TopDown,
-        };
+    /// 1. Générateur Archétype Plateforme 2D (Sauts, Plateformes étagées, Pièces, Danger)
+    fn generate_platformer_world(recipe: &KaractiGameRecipe) -> (String, Vec<Entity>) {
+        let mut entities = Vec::new();
+        let mut next_id = 1;
 
+        // Joueur en haut de la plateforme de départ
+        let p_transform = Transform2D::new(100.0, 480.0, 36.0, 36.0);
+        let mut player = Entity::new(next_id, recipe.player.name.clone(), "player", p_transform);
+        next_id += 1;
+        player.collider = Some(Collider2D::solid(36.0, 36.0));
         player.movement = Some(Movement2D {
-            speed: recipe.player.speed as f32,
+            speed: recipe.player.speed.max(220) as f32,
             is_player_controlled: true,
-            mode: move_mode,
+            mode: MovementMode::Platformer {
+                gravity: 980.0,
+                jump_force: 420.0,
+                is_grounded: false,
+                max_fall_speed: 650.0,
+            },
             vx: 0.0,
             vy: 0.0,
             patrol: None,
         });
+        player.health = Some(Health2D::new(recipe.player.max_health.max(3) as f32));
+        entities.push(player);
 
-        player.health = Some(Health2D::new(recipe.player.max_health as f32));
+        // Sol principal étendu
+        let ground = Entity::new(next_id, "Sol_Principal".to_string(), "platform", Transform2D::new(40.0, 560.0, 1120.0, 40.0));
+        next_id += 1;
+        let mut g = ground;
+        g.collider = Some(Collider2D::solid(1120.0, 40.0));
+        entities.push(g);
 
-        scene.entities.push(player);
+        // Plateformes étagées aériennes
+        let plat_coords = [
+            (240.0, 460.0, 150.0, 24.0, "Plateforme_01"),
+            (460.0, 380.0, 160.0, 24.0, "Plateforme_02"),
+            (700.0, 300.0, 150.0, 24.0, "Plateforme_03"),
+            (920.0, 220.0, 160.0, 24.0, "Plateforme_Sommet"),
+        ];
 
-        // 2. Éléments interactifs demandés dans la recette
-        let mut next_id = 2;
+        for &(px, py, pw, ph, pname) in &plat_coords {
+            let mut plat = Entity::new(next_id, pname.to_string(), "platform", Transform2D::new(px, py, pw, ph));
+            next_id += 1;
+            plat.collider = Some(Collider2D::solid(pw, ph));
+            entities.push(plat);
+        }
 
-        if recipe.world.interactive_elements.contains(&InteractiveElement::Collectible) {
-            let coin_transform = Transform2D::new(350.0, 300.0, 24.0, 24.0);
-            let mut coin = Entity::new(next_id, "Pièce_Or_01".to_string(), "item", coin_transform);
+        // Pièces d'or en surplomb
+        let coins = [(300.0, 410.0), (530.0, 330.0), (760.0, 250.0), (980.0, 170.0)];
+        for (idx, &(cx, cy)) in coins.iter().enumerate() {
+            let mut coin = Entity::new(next_id, format!("Piece_{:02}", idx + 1), "collectible", Transform2D::new(cx, cy, 24.0, 24.0));
             next_id += 1;
             coin.collider = Some(Collider2D::trigger(24.0, 24.0));
-            scene.entities.push(coin);
+            entities.push(coin);
         }
 
-        if recipe.world.interactive_elements.contains(&InteractiveElement::Door) {
-            let door_transform = Transform2D::new(600.0, 300.0, 32.0, 48.0);
-            let mut door = Entity::new(next_id, "Porte_Sortie".to_string(), "door", door_transform);
+        // Zone de piques de lave au sol
+        let mut hazard = Entity::new(next_id, "Piques_Lave".to_string(), "hazard", Transform2D::new(420.0, 540.0, 160.0, 20.0));
+        next_id += 1;
+        hazard.collider = Some(Collider2D::trigger(160.0, 20.0));
+        entities.push(hazard);
+
+        // Portail dimensionnel d'arrivée sur le sommet
+        let mut portal = Entity::new(next_id, "Portail_Fin".to_string(), "portal", Transform2D::new(1000.0, 150.0, 40.0, 70.0));
+        portal.collider = Some(Collider2D::trigger(40.0, 70.0));
+        entities.push(portal);
+
+        ("FRANCHISSEZ LES PLATEFORMES ET ATTEIGNEZ LE PORTAIL DU SOMMET".to_string(), entities)
+    }
+
+    /// 2. Générateur Archétype Donjon Aventure / RPG (Murs, Clé, Coffre, Garde A*, Porte)
+    fn generate_dungeon_world(recipe: &KaractiGameRecipe) -> (String, Vec<Entity>) {
+        let mut entities = Vec::new();
+        let mut next_id = 1;
+
+        // Joueur Aventurier Top-Down
+        let p_transform = Transform2D::new(120.0, 120.0, 36.0, 36.0);
+        let mut player = Entity::new(next_id, recipe.player.name.clone(), "player", p_transform);
+        next_id += 1;
+        player.collider = Some(Collider2D::solid(36.0, 36.0));
+        player.movement = Some(Movement2D {
+            speed: recipe.player.speed.max(240) as f32,
+            is_player_controlled: true,
+            mode: MovementMode::TopDown,
+            vx: 0.0,
+            vy: 0.0,
+            patrol: None,
+        });
+        player.health = Some(Health2D::new(recipe.player.max_health.max(5) as f32));
+        entities.push(player);
+
+        // Murs d'enceinte du Donjon
+        let walls = [
+            (50.0, 50.0, 1100.0, 28.0, "Mur_Nord"),
+            (50.0, 680.0, 1100.0, 28.0, "Mur_Sud"),
+            (50.0, 50.0, 28.0, 650.0, "Mur_Ouest"),
+            (1122.0, 50.0, 28.0, 650.0, "Mur_Est"),
+            // Cloisons intérieures
+            (420.0, 50.0, 28.0, 360.0, "Cloison_Haute"),
+            (780.0, 320.0, 28.0, 380.0, "Cloison_Basse"),
+        ];
+
+        for &(wx, wy, ww, wh, wname) in &walls {
+            let mut w = Entity::new(next_id, wname.to_string(), "wall", Transform2D::new(wx, wy, ww, wh));
             next_id += 1;
-            door.collider = Some(Collider2D::solid(32.0, 48.0));
-            scene.entities.push(door);
+            w.collider = Some(Collider2D::solid(ww, wh));
+            entities.push(w);
         }
 
-        // 3. Boss fight si requis
-        if recipe.gameplay.boss_fight {
-            let boss_transform = Transform2D::new(800.0, 300.0, 48.0, 48.0);
-            let mut boss = Entity::new(next_id, "Boss_Gardien".to_string(), "boss", boss_transform);
-            boss.collider = Some(Collider2D::solid(48.0, 48.0));
-            boss.health = Some(Health2D::new(10.0));
-            scene.entities.push(boss);
+        // Pièces d'or réparties dans les couloirs
+        let coins = [(220.0, 280.0), (280.0, 480.0), (550.0, 180.0), (620.0, 450.0), (950.0, 520.0)];
+        for (idx, &(cx, cy)) in coins.iter().enumerate() {
+            let mut coin = Entity::new(next_id, format!("Piece_Or_{:02}", idx + 1), "collectible", Transform2D::new(cx, cy, 24.0, 24.0));
+            next_id += 1;
+            coin.collider = Some(Collider2D::trigger(24.0, 24.0));
+            entities.push(coin);
         }
 
-        // 4. Graphe KVL de base pour les interactions de niveau
-        let mut main_graph = Graph::new("base_recipe_logic", "Logique de Recette", "Initialisée par le générateur de projet");
-        main_graph.add_variable("score", kvl_core::Value::Int(0));
-        kvl_graphs.insert("base_recipe_logic".to_string(), main_graph);
+        // Clé Dorée
+        let mut key = Entity::new(next_id, "Cle_Doree".to_string(), "item", Transform2D::new(160.0, 520.0, 24.0, 24.0));
+        next_id += 1;
+        key.collider = Some(Collider2D::trigger(24.0, 24.0));
+        entities.push(key);
 
-        (scene, kvl_graphs)
+        // Coffre au Trésor Scellé
+        let mut chest = Entity::new(next_id, "Coffre_Tresor".to_string(), "item", Transform2D::new(580.0, 100.0, 36.0, 36.0));
+        next_id += 1;
+        chest.collider = Some(Collider2D::solid(36.0, 36.0));
+        entities.push(chest);
+
+        // Garde Patrouilleur avec Vision Conique A*
+        let mut guard = Entity::new(next_id, "Garde_Patrouilleur".to_string(), "enemy", Transform2D::new(580.0, 280.0, 36.0, 36.0));
+        next_id += 1;
+        guard.collider = Some(Collider2D::solid(36.0, 36.0));
+        guard.vision = Some(crate::entity::VisionSensing::new(180.0));
+        guard.nav_agent = Some(crate::navigation::NavAgent::chase_player(110.0));
+        entities.push(guard);
+
+        // Porte du Temple
+        let mut door = Entity::new(next_id, "Porte_Donjon".to_string(), "door", Transform2D::new(780.0, 180.0, 28.0, 120.0));
+        door.collider = Some(Collider2D::solid(28.0, 120.0));
+        entities.push(door);
+
+        ("COLLECTEZ LA CLÉ ET 50 OR POUR OUVRIR LA PORTE DU DONJON".to_string(), entities)
+    }
+
+    /// 3. Générateur Archétype Shoot'em Up Spatial (Inertie, Astéroïdes, Escouade ennemie)
+    fn generate_shmup_world(recipe: &KaractiGameRecipe) -> (String, Vec<Entity>) {
+        let mut entities = Vec::new();
+        let mut next_id = 1;
+
+        // Vaisseau Spatial
+        let p_transform = Transform2D::new(600.0, 640.0, 36.0, 36.0);
+        let mut player = Entity::new(next_id, recipe.player.name.clone(), "player", p_transform);
+        next_id += 1;
+        player.collider = Some(Collider2D::solid(36.0, 36.0));
+        player.movement = Some(Movement2D {
+            speed: recipe.player.speed.max(300) as f32,
+            is_player_controlled: true,
+            mode: MovementMode::SpaceInertia {
+                angular_speed: 4.5,
+                thrust: 450.0,
+                drag: 0.985,
+            },
+            vx: 0.0,
+            vy: 0.0,
+            patrol: None,
+        });
+        player.health = Some(Health2D::new(recipe.player.max_health.max(4) as f32));
+        entities.push(player);
+
+        // Astéroïdes flottants solides
+        let asteroids = [
+            (280.0, 420.0, 64.0, 64.0, "Asteroide_Alpha"),
+            (600.0, 340.0, 80.0, 80.0, "Asteroide_Beta"),
+            (920.0, 400.0, 64.0, 64.0, "Asteroide_Gamma"),
+        ];
+
+        for &(ax, ay, aw, ah, aname) in &asteroids {
+            let mut ast = Entity::new(next_id, aname.to_string(), "wall", Transform2D::new(ax, ay, aw, ah));
+            next_id += 1;
+            ast.collider = Some(Collider2D::solid(aw, ah));
+            entities.push(ast);
+        }
+
+        // Escouade de drones ennemis en volée
+        let drones = [(450.0, 160.0), (600.0, 130.0), (750.0, 160.0)];
+        for (idx, &(dx, dy)) in drones.iter().enumerate() {
+            let mut drone = Entity::new(next_id, format!("Drone_Hostile_{:02}", idx + 1), "enemy", Transform2D::new(dx, dy, 32.0, 32.0));
+            next_id += 1;
+            drone.collider = Some(Collider2D::solid(32.0, 32.0));
+            drone.health = Some(Health2D::new(3.0));
+            entities.push(drone);
+        }
+
+        // Orbes d'énergie
+        for idx in 0..4 {
+            let ox = 350.0 + (idx as f32 * 160.0);
+            let mut orbe = Entity::new(next_id, format!("Orbe_Energie_{:02}", idx + 1), "collectible", Transform2D::new(ox, 240.0, 20.0, 20.0));
+            next_id += 1;
+            orbe.collider = Some(Collider2D::trigger(20.0, 20.0));
+            entities.push(orbe);
+        }
+
+        ("SURVIVEZ AUX VAGUES ENNEMIES DANS LE COSMOS ET DÉTRUISEZ LES DRONES".to_string(), entities)
+    }
+
+    /// 4. Générateur Archétype Puzzle Sokoban (Grille tactique, Caisses poussables, Dalles cibles)
+    fn generate_sokoban_world(recipe: &KaractiGameRecipe) -> (String, Vec<Entity>) {
+        let mut entities = Vec::new();
+        let mut next_id = 1;
+
+        // Joueur en déplacement Grille
+        let p_transform = Transform2D::new(360.0, 300.0, 32.0, 32.0);
+        let mut player = Entity::new(next_id, recipe.player.name.clone(), "player", p_transform);
+        next_id += 1;
+        player.collider = Some(Collider2D::solid(32.0, 32.0));
+        player.movement = Some(Movement2D {
+            speed: 150.0,
+            is_player_controlled: true,
+            mode: MovementMode::Grid {
+                cell_size: 32.0,
+                cooldown: 0.18,
+                timer: 0.0,
+            },
+            vx: 0.0,
+            vy: 0.0,
+            patrol: None,
+        });
+        player.health = Some(Health2D::new(1.0));
+        entities.push(player);
+
+        // Murs de la salle de puzzle
+        let walls = [
+            (280.0, 180.0, 640.0, 24.0, "Mur_Puzzle_Nord"),
+            (280.0, 580.0, 640.0, 24.0, "Mur_Puzzle_Sud"),
+            (280.0, 180.0, 24.0, 424.0, "Mur_Puzzle_Ouest"),
+            (896.0, 180.0, 24.0, 424.0, "Mur_Puzzle_Est"),
+        ];
+
+        for &(wx, wy, ww, wh, wname) in &walls {
+            let mut w = Entity::new(next_id, wname.to_string(), "wall", Transform2D::new(wx, wy, ww, wh));
+            next_id += 1;
+            w.collider = Some(Collider2D::solid(ww, wh));
+            entities.push(w);
+        }
+
+        // Blocs / Caisses poussables
+        let mut crate1 = Entity::new(next_id, "Bloc_Poussable_01".to_string(), "crate", Transform2D::new(480.0, 320.0, 32.0, 32.0));
+        next_id += 1;
+        let mut c1 = Collider2D::solid(32.0, 32.0);
+        c1.is_pushable = true;
+        crate1.collider = Some(c1);
+        entities.push(crate1);
+
+        let mut crate2 = Entity::new(next_id, "Bloc_Poussable_02".to_string(), "crate", Transform2D::new(560.0, 400.0, 32.0, 32.0));
+        next_id += 1;
+        let mut c2 = Collider2D::solid(32.0, 32.0);
+        c2.is_pushable = true;
+        crate2.collider = Some(c2);
+        entities.push(crate2);
+
+        // Dalles de pression réceptrices (Triggers)
+        let mut plate1 = Entity::new(next_id, "Dalle_Cible_01".to_string(), "plate", Transform2D::new(720.0, 320.0, 32.0, 32.0));
+        next_id += 1;
+        plate1.collider = Some(Collider2D::trigger(32.0, 32.0));
+        entities.push(plate1);
+
+        let mut plate2 = Entity::new(next_id, "Dalle_Cible_02".to_string(), "plate", Transform2D::new(720.0, 400.0, 32.0, 32.0));
+        next_id += 1;
+        plate2.collider = Some(Collider2D::trigger(32.0, 32.0));
+        entities.push(plate2);
+
+        // Porte secrète qui s'ouvrira
+        let mut door = Entity::new(next_id, "Porte_Secrete".to_string(), "door", Transform2D::new(896.0, 340.0, 24.0, 80.0));
+        door.collider = Some(Collider2D::solid(24.0, 80.0));
+        entities.push(door);
+
+        ("POUSSEZ LES BLOCS SUR LES DALLES DE PRESSION POUR DÉVERROUILLER LA PORTE".to_string(), entities)
+    }
+
+    /// 5. Générateur Archétype Titan Boss Arène (Arène fermée, Boss géant, Piliers destructibles)
+    fn generate_boss_arena_world(recipe: &KaractiGameRecipe) -> (String, Vec<Entity>) {
+        let mut entities = Vec::new();
+        let mut next_id = 1;
+
+        // Joueur Combattant Chasseur
+        let p_transform = Transform2D::new(240.0, 400.0, 40.0, 40.0);
+        let mut player = Entity::new(next_id, recipe.player.name.clone(), "player", p_transform);
+        next_id += 1;
+        player.collider = Some(Collider2D::solid(40.0, 40.0));
+        player.movement = Some(Movement2D {
+            speed: recipe.player.speed.max(260) as f32,
+            is_player_controlled: true,
+            mode: MovementMode::TopDown,
+            vx: 0.0,
+            vy: 0.0,
+            patrol: None,
+        });
+        player.health = Some(Health2D::new(recipe.player.max_health.max(10) as f32));
+        entities.push(player);
+
+        // Murs de l'Arène
+        let walls = [
+            (100.0, 80.0, 1000.0, 30.0, "Arene_Mur_Nord"),
+            (100.0, 690.0, 1000.0, 30.0, "Arene_Mur_Sud"),
+            (100.0, 80.0, 30.0, 640.0, "Arene_Mur_Ouest"),
+            (1070.0, 80.0, 30.0, 640.0, "Arene_Mur_Est"),
+        ];
+
+        for &(wx, wy, ww, wh, wname) in &walls {
+            let mut w = Entity::new(next_id, wname.to_string(), "wall", Transform2D::new(wx, wy, ww, wh));
+            next_id += 1;
+            w.collider = Some(Collider2D::solid(ww, wh));
+            entities.push(w);
+        }
+
+        // Piliers de couverture
+        let mut pillar1 = Entity::new(next_id, "Pilier_Nord".to_string(), "wall", Transform2D::new(480.0, 240.0, 44.0, 88.0));
+        next_id += 1;
+        pillar1.collider = Some(Collider2D::solid(44.0, 88.0));
+        entities.push(pillar1);
+
+        let mut pillar2 = Entity::new(next_id, "Pilier_Sud".to_string(), "wall", Transform2D::new(480.0, 480.0, 44.0, 88.0));
+        next_id += 1;
+        pillar2.collider = Some(Collider2D::solid(44.0, 88.0));
+        entities.push(pillar2);
+
+        // Boss Démon Titan Colossal
+        let mut boss = Entity::new(next_id, "Boss_Colosse_Obsidienne".to_string(), "boss", Transform2D::new(840.0, 360.0, 80.0, 80.0));
+        next_id += 1;
+        boss.collider = Some(Collider2D::solid(80.0, 80.0));
+        boss.health = Some(Health2D::new(100.0));
+        boss.nav_agent = Some(crate::navigation::NavAgent::chase_player(90.0));
+        entities.push(boss);
+
+        // Potions de réanimation
+        let mut pot1 = Entity::new(next_id, "Potion_Soin_01".to_string(), "item", Transform2D::new(320.0, 180.0, 24.0, 24.0));
+        next_id += 1;
+        pot1.collider = Some(Collider2D::trigger(24.0, 24.0));
+        entities.push(pot1);
+
+        let mut pot2 = Entity::new(next_id, "Potion_Soin_02".to_string(), "item", Transform2D::new(320.0, 600.0, 24.0, 24.0));
+        pot2.collider = Some(Collider2D::trigger(24.0, 24.0));
+        entities.push(pot2);
+
+        ("AFFRONTEZ ET VAINQUEZ LE COLOSSE D'OBSIDIENNE DANS L'ARÈNE".to_string(), entities)
     }
 }
 

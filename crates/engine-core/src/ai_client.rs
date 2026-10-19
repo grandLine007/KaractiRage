@@ -146,7 +146,7 @@ impl Default for AiClientConfig {
 }
 
 /// Payload JSON de réponse standard attendu de l'IA
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedGamePayload {
     pub title: String,
     pub description: String,
@@ -165,7 +165,7 @@ pub struct AiGeneratedGamePayload {
 }
 
 /// Structure du terrain et level design généré par l'IA
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedTerrain {
     #[serde(default = "default_theme")]
     pub theme: String, // "dungeon", "cyber", "forest", "lava_cave", "castle"
@@ -175,10 +175,13 @@ pub struct AiGeneratedTerrain {
     pub hazards: Vec<AiGeneratedHazard>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedPlatform {
+    #[serde(default = "default_platform_name")]
     pub name: String,
+    #[serde(alias = "x", default = "default_zero")]
     pub offset_x: f32,
+    #[serde(alias = "y", default = "default_zero")]
     pub offset_y: f32,
     pub width: f32,
     pub height: f32,
@@ -188,21 +191,24 @@ pub struct AiGeneratedPlatform {
     pub color_hex: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedHazard {
+    #[serde(default = "default_hazard_name")]
     pub name: String,
+    #[serde(alias = "x", default = "default_zero")]
     pub offset_x: f32,
+    #[serde(alias = "y", default = "default_zero")]
     pub offset_y: f32,
     pub width: f32,
     pub height: f32,
     #[serde(default = "default_hazard_damage")]
     pub damage: f32,
-    #[serde(default)]
+    #[serde(alias = "kind", default)]
     pub hazard_type: Option<String>, // "spikes", "lava", "poison"
 }
 
 /// Boucle de gameplay complète (Objectif, Condition de Victoire, Défaite)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedGameplayLoop {
     #[serde(default = "default_objective")]
     pub objective: String,
@@ -216,6 +222,8 @@ pub struct AiGeneratedGameplayLoop {
     pub win_fanfare: Option<String>,
 }
 
+fn default_platform_name() -> String { "Plateforme".to_string() }
+fn default_hazard_name() -> String { "Piege_Danger".to_string() }
 fn default_theme() -> String { "dungeon".to_string() }
 fn default_true() -> bool { true }
 fn default_hazard_damage() -> f32 { 35.0 }
@@ -223,13 +231,13 @@ fn default_objective() -> String { "Explorer et triompher de l'épreuve".to_stri
 fn default_win_condition() -> String { "CollectAllKeysThenExit".to_string() }
 fn default_lose_condition() -> String { "PlayerHealthZero".to_string() }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedEntity {
     pub name: String,
     pub kind: String, // "player", "enemy", "boss", "item", "door", "hazard", "npc"
-    #[serde(default = "default_zero")]
+    #[serde(alias = "x", default = "default_zero")]
     pub offset_x: f32,
-    #[serde(default = "default_zero")]
+    #[serde(alias = "y", default = "default_zero")]
     pub offset_y: f32,
     #[serde(default = "default_size")]
     pub width: f32,
@@ -255,7 +263,7 @@ pub struct AiGeneratedEntity {
     pub is_flocking: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedKvlAction {
     pub event: String,
     pub action: String,
@@ -278,7 +286,7 @@ fn default_health() -> f32 { 3.0 }
 /// Spécification de référence universelle KaractiRage intégrée à la compilation
 pub const KARACTI_AI_SPECIFICATION_EMBEDDED: &str = include_str!("../../../KARACTI_AI_SPEC.md");
 
-/// Récupère le prompt système et la spécification de référence RAG pour les LLMs
+/// Récupère le prompt système et la spécification de référence RAG pour les LLMs (Version complète)
 pub fn get_karactirage_system_prompt() -> String {
     // Si un fichier KARACTI_AI_SPEC.md existe dans le système de fichiers, lecture dynamique à chaud
     if let Ok(spec) = std::fs::read_to_string("KARACTI_AI_SPEC.md") {
@@ -288,6 +296,79 @@ pub fn get_karactirage_system_prompt() -> String {
         return format_system_prompt_with_spec(&spec);
     }
     format_system_prompt_with_spec(KARACTI_AI_SPECIFICATION_EMBEDDED)
+}
+
+/// Prompt système haute densité et ultra-rapide optimisé pour les modèles locaux (LM Studio, Ollama)
+pub fn get_karactirage_compact_system_prompt() -> String {
+    r##"You are the Lead Game Architect & Technical Artist for KaractiRage 2D engine.
+CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdown, no ```json codeblocks) conforming strictly to this schema:
+{
+  "title": "Level Title",
+  "description": "Short narrative description",
+  "primary_genre": "Platformer",
+  "terrain": {
+    "platforms": [{"x": -200, "y": -100, "width": 400, "height": 24, "color_hex": "#334155"}],
+    "hazards": [{"x": 0, "y": -150, "width": 60, "height": 20, "kind": "lava", "color_hex": "#EF4444"}]
+  },
+  "gameplay_loop": {
+    "objective": "Mission objective text",
+    "win_condition": "DefeatBoss",
+    "loss_condition": "PlayerDeath"
+  },
+  "entities": [
+    {
+      "name": "Ninja_Hero",
+      "kind": "player",
+      "offset_x": -120.0,
+      "offset_y": 0.0,
+      "width": 32.0,
+      "height": 32.0,
+      "health": 5.0,
+      "color_hex": "#3B82F6",
+      "sprite_archetype": "ninja",
+      "movement": "jump",
+      "has_collider": true,
+      "has_vision": true,
+      "is_flocking": false
+    },
+    {
+      "name": "Boss_Demon",
+      "kind": "boss",
+      "offset_x": 160.0,
+      "offset_y": 0.0,
+      "width": 48.0,
+      "height": 48.0,
+      "health": 10.0,
+      "color_hex": "#DC2626",
+      "sprite_archetype": "boss",
+      "movement": "chase",
+      "has_collider": true,
+      "has_vision": true,
+      "is_flocking": false
+    }
+  ],
+  "kvl_actions": [
+    {
+      "event": "OnEntityDefeated",
+      "action": "WinGame",
+      "target_entity": "Boss_Demon"
+    }
+  ]
+}
+
+Available sprite_archetype values: "ninja", "knight", "drone", "slime", "skull", "boss", "chest", "key", "potion", "portal", "coin", "spikes".
+Available movement values: "patrol", "chase", "jump", "none".
+Available win_condition values: "DefeatBoss", "CollectAllKeysThenExit", "SurviveTimer".
+Available loss_condition values: "PlayerDeath", "TimeOut".
+Output raw JSON only."##.to_string()
+}
+
+/// Sélectionne le prompt système le plus adapté selon le fournisseur (taille de contexte et vitesse locale vs cloud)
+pub fn get_system_prompt_for_provider(provider: AiProvider) -> String {
+    match provider {
+        AiProvider::LmStudio | AiProvider::Ollama => get_karactirage_compact_system_prompt(),
+        _ => get_karactirage_system_prompt(),
+    }
 }
 
 fn format_system_prompt_with_spec(spec: &str) -> String {
@@ -318,7 +399,7 @@ impl AiClient {
         let model = config.custom_model.as_deref().unwrap_or_else(|| config.provider.default_model());
         let api_key = config.custom_api_key.clone().or_else(|| config.provider.get_api_key());
 
-        let system_prompt = get_karactirage_system_prompt();
+        let system_prompt = get_system_prompt_for_provider(config.provider);
 
         let raw_output = if config.provider == AiProvider::Claude {
             Self::call_claude(endpoint, model, api_key.as_deref(), &system_prompt, prompt, config.timeout_seconds)?
@@ -731,6 +812,148 @@ Good luck!
         assert!(prompt.contains("gameplay_loop"));
         assert!(prompt.contains("kvl_actions"));
         assert!(KARACTI_AI_SPECIFICATION_EMBEDDED.len() > 1000);
+    }
+
+    #[test]
+    fn test_system_prompt_provider_selection() {
+        let lm_prompt = get_system_prompt_for_provider(AiProvider::LmStudio);
+        assert!(lm_prompt.contains("Keep internal thinking under 30 words"));
+        assert!(lm_prompt.contains("platforms"));
+        assert!(lm_prompt.contains("ninja"));
+        assert!(lm_prompt.len() < 2500); // Format dense et compact
+
+        let claude_prompt = get_system_prompt_for_provider(AiProvider::Claude);
+        assert!(claude_prompt.contains("OFFICIAL KARACTIRAGE ENGINE SPECIFICATION"));
+    }
+
+    #[test]
+    #[ignore]
+    fn test_live_lm_studio_nemotron_end_to_end() {
+        let config = AiClientConfig {
+            provider: AiProvider::LmStudio,
+            custom_endpoint: Some("http://127.0.0.1:1234/v1/chat/completions".to_string()),
+            custom_model: Some("nvidia/nemotron-3-nano-4b".to_string()),
+            custom_api_key: None,
+            timeout_seconds: 120,
+        };
+
+        let conn = AiClient::test_connection(&config).expect("LM Studio connection");
+        assert!(conn.contains("LM Studio connecté"));
+
+        let payload = AiClient::send_prompt(&config, "Crée un donjon sombre avec un héros ninja, un piège de lave et un boss démon")
+            .expect("Live LM Studio generation");
+        println!("[LM STUDIO TEST] Title: {}", payload.title);
+        println!("[LM STUDIO TEST] Entities count: {}", payload.entities.len());
+        println!("[LM STUDIO TEST] Description: {}", payload.description);
+
+        assert!(!payload.title.is_empty());
+        assert!(!payload.entities.is_empty());
+
+        let patch = crate::ai_patch::AiPatchBuilder::build_from_generated_payload(
+            &payload,
+            "Crée un donjon sombre",
+            (0.0, 0.0),
+            100,
+            &[],
+            None,
+        );
+
+        println!("[LM STUDIO TEST] Sandbox static passed: {}", patch.sandbox_report.static_check_passed);
+        println!("[LM STUDIO TEST] Sandbox static errors: {}", patch.sandbox_report.static_errors_count);
+        println!("[LM STUDIO TEST] Sandbox simulation passed: {}", patch.sandbox_report.simulation_passed);
+
+        assert!(patch.sandbox_report.static_check_passed);
+        assert_eq!(patch.sandbox_report.static_errors_count, 0);
+        assert!(patch.sandbox_report.simulation_passed);
+    }
+}
+
+/// Tests de contrat partagés avec le sidecar Python `agents/` (cf. PLAN_CONCEPTION_CREWAI.md, jalon M0).
+/// Le JSON Schema est émis ici (source de vérité Rust) puis validé côté Python via jsonschema/Pydantic
+/// sur les MÊMES fixtures — toute divergence de schéma casse les deux CIs.
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    /// Contrat versionné partagé (émis par ce test, consommé par `agents/tests/test_contract.py`).
+    const SCHEMA_PATH: &str = "../../agents/contracts/level.schema.json";
+    /// Fixtures JSON partagées entre Rust (désérialisation + sandbox) et Python (jsonschema).
+    const FIXTURES_DIR: &str = "../../agents/fixtures";
+
+    fn generated_schema_value() -> serde_json::Value {
+        let schema = schemars::schema_for!(AiGeneratedGamePayload);
+        serde_json::to_value(&schema).expect("Sérialisation du JSON Schema")
+    }
+
+    /// Vérifie que `agents/contracts/level.schema.json` est identique au schéma émis par les structs Rust.
+    /// Régénération : `UPDATE_CONTRACTS=1 cargo test -p engine-core contract_schema_is_current`
+    #[test]
+    fn contract_schema_is_current() {
+        let generated = generated_schema_value();
+
+        if std::env::var("UPDATE_CONTRACTS").is_ok() {
+            let dir = std::path::Path::new(SCHEMA_PATH).parent().expect("parent");
+            std::fs::create_dir_all(dir).expect("création agents/contracts");
+            std::fs::write(
+                SCHEMA_PATH,
+                serde_json::to_string_pretty(&generated).expect("pretty") + "\n",
+            )
+            .expect("écriture du contrat");
+        }
+
+        let raw = std::fs::read_to_string(SCHEMA_PATH).unwrap_or_else(|e| {
+            panic!(
+                "Contrat absent : {SCHEMA_PATH} ({e}) — régénérez avec UPDATE_CONTRACTS=1 cargo test -p engine-core contract_schema_is_current"
+            )
+        });
+        let on_disk: serde_json::Value = serde_json::from_str(&raw).expect("contrat JSON valide");
+        assert_eq!(
+            on_disk, generated,
+            "Contrat désynchronisé des structs Rust — régénérez avec UPDATE_CONTRACTS=1 cargo test -p engine-core contract_schema_is_current"
+        );
+    }
+
+    /// Les fixtures partagées doivent (1) se désérialiser dans les structs moteur et
+    /// (2) survivre aux 4 portes de validation (sandbox statique + simulation 100 pas, spec §8).
+    #[test]
+    fn contract_fixtures_pass_engine_and_sandbox() {
+        let mut checked = 0usize;
+        let mut paths: Vec<_> = std::fs::read_dir(FIXTURES_DIR)
+            .unwrap_or_else(|e| panic!("Répertoire fixtures absent : {FIXTURES_DIR} ({e})"))
+            .map(|e| e.expect("entry").path())
+            .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+            .collect();
+        paths.sort();
+
+        for path in paths {
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("Lecture {} : {e}", path.display()));
+            let payload: AiGeneratedGamePayload = serde_json::from_str(&content)
+                .unwrap_or_else(|e| panic!("Fixture {} invalide pour le moteur : {e}", path.display()));
+
+            let patch = crate::ai_patch::AiPatchBuilder::build_from_generated_payload(
+                &payload, "contract test", (100.0, 100.0), 100, &[], None,
+            );
+            assert!(
+                patch.sandbox_report.static_check_passed,
+                "Fixture {} : contrôle statique échoué",
+                path.display()
+            );
+            assert_eq!(
+                patch.sandbox_report.static_errors_count, 0,
+                "Fixture {} : erreurs statiques",
+                path.display()
+            );
+            assert!(
+                patch.sandbox_report.simulation_passed,
+                "Fixture {} : simulation 100 pas échouée (spéc §8)",
+                path.display()
+            );
+            checked += 1;
+        }
+
+        assert!(checked >= 2, "Au moins 2 fixtures attendues dans {FIXTURES_DIR}");
+        println!("[contrat] {checked} fixtures validées (moteur + sandbox)");
     }
 }
 

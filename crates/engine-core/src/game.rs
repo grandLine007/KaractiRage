@@ -137,12 +137,14 @@ pub struct GameState {
     pub camera: Camera2D,
     pub world_bounds: (f32, f32, f32, f32),
     pub dialogue: DialogueBox,
+    pub dialogue_cooldown: f32,
     pub quest: Option<QuestTracker>,
     pub inventory: Inventory,
     pub replay: ReplayManager,
     pub sim_tick: u64,
     pub pathfinder: crate::navigation::AStarPathfinder,
     pub ai_rx: Option<std::sync::mpsc::Receiver<(String, Result<crate::ai_client::AiGeneratedGamePayload, String>)>>,
+    pub static_entity_count: usize,
 }
 
 impl GameState {
@@ -487,6 +489,7 @@ impl GameState {
             index: selected_idx,
         });
         self.entities.remove(selected_idx);
+        self.rebuild_static_spatial_grid();
         self.editor.selected = SelectedEntity::None;
         self.audio.play(SoundType::WireCut);
         self.spawn_particles(x, y, 16, 0x00EF4444);
@@ -891,7 +894,7 @@ impl GameState {
             entities.push(Entity::spawn_item_pickup(next_id + 1, 280.0, 320.0, Item::energy_crystal("crystal_01", "Cristal Bleu"), 1));
         }
 
-        Ok(Self {
+        let mut state = Self {
             scene_path: path.to_string(),
             scene_name: scene_data.name,
             scene_objective,
@@ -912,13 +915,50 @@ impl GameState {
             camera,
             world_bounds,
             dialogue: DialogueBox::new(),
+            dialogue_cooldown: 0.0,
             quest,
             inventory,
             replay: ReplayManager::new(),
             sim_tick: 0,
             pathfinder: crate::navigation::AStarPathfinder::default(),
             ai_rx: None,
-        })
+            static_entity_count: 0,
+        };
+        state.rebuild_static_spatial_grid();
+        Ok(state)
+    }
+
+    /// Reconstruit les seaux statiques persistants du partitionnement spatial (murs, obstacles fixes, plateformes)
+    pub fn rebuild_static_spatial_grid(&mut self) {
+        self.spatial_grid.clear_static();
+        self.static_entity_count = self.entities.len();
+        for (idx, ent) in self.entities.iter().enumerate() {
+            if !ent.is_active {
+                continue;
+            }
+            if let Some(ref col) = ent.collider {
+                // Les éléments sans mouvement sont statiques (sauf blocs poussables Sokoban)
+                if ent.movement.is_none() && (col.is_solid || col.is_one_way) && !col.is_pushable {
+                    let kind = if col.is_one_way {
+                        SpatialKind::OneWay
+                    } else if col.is_solid {
+                        SpatialKind::Solid
+                    } else if col.is_trigger {
+                        SpatialKind::Trigger
+                    } else {
+                        SpatialKind::Entity(idx)
+                    };
+                    self.spatial_grid.insert_static(SpatialItem {
+                        id: idx,
+                        kind,
+                        x: ent.transform.x + col.offset_x,
+                        y: ent.transform.y + col.offset_y,
+                        w: col.w,
+                        h: col.h,
+                    });
+                }
+            }
+        }
     }
 
     pub fn reload(&mut self) {
@@ -961,6 +1001,174 @@ impl GameState {
         } else {
             false
         }
+    }
+
+    /// Charge un projet KaractiProject complet dans le moteur de jeu
+    pub fn load_project(&mut self, project: crate::project::KaractiProject) {
+        self.scene_name = project.metadata.title;
+        self.scene_objective = project.scene.objective;
+        self.entities = project.scene.entities;
+        self.kvl_graphs = project.kvl_graphs;
+        self.kvl_context = ExecutionContext::new();
+
+        for (k, v) in project.kvl_variables {
+            self.kvl_context.set_var(k, v);
+        }
+        if self.kvl_context.get_var("score").is_none() {
+            self.kvl_context.set_var("score", Value::Int(0));
+        }
+
+        self.rebuild_static_spatial_grid();
+        self.editor.selected = crate::editor::SelectedEntity::None;
+        self.editor.mode = match project.settings.default_mode.as_str() {
+            "edit" => EditorMode::Edit,
+            _ => EditorMode::Play,
+        };
+
+        if let Some(p_idx) = self.player_index() {
+            let px = self.entities[p_idx].transform.center_x();
+            let py = self.entities[p_idx].transform.center_y();
+            self.camera.set_target(px, py);
+            self.camera.snap_to_target();
+        }
+
+        self.set_status(format!("Projet '{}' instancié ({} entités)", self.scene_name, self.entities.len()));
+    }
+
+    /// Initialise un nouveau projet vierge dans le moteur (Studio prêt à créer)
+    pub fn new_blank_project(&mut self, title: &str, genre: crate::recipe::GameGenre) {
+        let proj = crate::project::KaractiProject::new_empty(title, "Créateur", genre);
+        self.load_project(proj);
+    }
+
+    /// Exporte l'état actuel complet du jeu dans une structure KaractiProject
+    pub fn export_current_project(&self) -> crate::project::KaractiProject {
+        let genre = match self.scene_name.to_lowercase().as_str() {
+            s if s.contains("platformer") => crate::recipe::GameGenre::Platformer,
+            s if s.contains("space") || s.contains("shmup") => crate::recipe::GameGenre::ShootEmUp,
+            s if s.contains("puzzle") || s.contains("sokoban") => crate::recipe::GameGenre::Puzzle,
+            s if s.contains("boss") || s.contains("titan") => crate::recipe::GameGenre::Combat,
+            _ => crate::recipe::GameGenre::Adventure,
+        };
+
+        let metadata = crate::project::ProjectMetadata {
+            id: format!("proj_{:x}", (self.scene_name.len() as u64) ^ 0xCAFEBABE),
+            title: self.scene_name.clone(),
+            author: "Créateur KaractiRage".to_string(),
+            version: "1.0.0".to_string(),
+            created_at: "2026-10-17T00:00:00Z".to_string(),
+            description: "Projet sauvegardé depuis l'Atelier Studio KaractiRage.".to_string(),
+            genre_primary: genre,
+            genres_secondary: Vec::new(),
+        };
+
+        let settings = crate::project::ProjectSettings {
+            target_fps: 60,
+            software_width: 1200,
+            software_height: 800,
+            gravity: 980.0,
+            performance_profile: "LowEnd".to_string(),
+            show_minimap: self.show_minimap,
+            default_mode: if self.editor.mode == EditorMode::Edit { "edit".to_string() } else { "play".to_string() },
+        };
+
+        let scene = crate::scene::SceneData {
+            name: self.scene_name.clone(),
+            description: self.scene_name.clone(),
+            objective: self.scene_objective.clone(),
+            entities: self.entities.clone(),
+            player: None,
+            coins: Vec::new(),
+            doors: Vec::new(),
+            walls: Vec::new(),
+            enemies: Vec::new(),
+        };
+
+        let mut kvl_vars = HashMap::new();
+        if let Some(s) = self.kvl_context.get_var("score") {
+            kvl_vars.insert("score".to_string(), s.clone());
+        }
+
+        crate::project::KaractiProject {
+            schema_version: crate::project::PROJECT_SCHEMA_VERSION,
+            metadata,
+            settings,
+            recipe: None,
+            scene,
+            kvl_graphs: self.kvl_graphs.clone(),
+            kvl_variables: kvl_vars,
+        }
+    }
+
+    /// Exporte le résumé JSON de toutes les entités actives en mémoire
+    pub fn get_entities_summary_json(&self) -> String {
+        #[derive(serde::Serialize)]
+        struct EntitySummary {
+            id: usize,
+            name: String,
+            tag: String,
+            x: f32,
+            y: f32,
+            w: f32,
+            h: f32,
+            health: Option<f32>,
+            max_health: Option<f32>,
+            speed: Option<f32>,
+            movement_mode: Option<String>,
+            is_solid: bool,
+            is_trigger: bool,
+            is_pushable: bool,
+            is_active: bool,
+        }
+
+        let summaries: Vec<EntitySummary> = self.entities.iter().map(|e| {
+            EntitySummary {
+                id: e.id,
+                name: e.name.clone(),
+                tag: e.tag.clone(),
+                x: e.transform.x,
+                y: e.transform.y,
+                w: e.transform.w,
+                h: e.transform.h,
+                health: e.health.as_ref().map(|h| h.current),
+                max_health: e.health.as_ref().map(|h| h.max),
+                speed: e.movement.as_ref().map(|m| m.speed),
+                movement_mode: e.movement.as_ref().map(|m| m.mode.label().to_string()),
+                is_solid: e.collider.as_ref().map_or(false, |c| c.is_solid),
+                is_trigger: e.collider.as_ref().map_or(false, |c| c.is_trigger),
+                is_pushable: e.collider.as_ref().map_or(false, |c| c.is_pushable),
+                is_active: e.is_active,
+            }
+        }).collect();
+
+        serde_json::to_string(&summaries).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Met à jour la position et dimension d'une entité par son ID
+    pub fn update_entity_transform_by_id(&mut self, id: usize, x: f32, y: f32, w: f32, h: f32) -> bool {
+        if let Some(ent) = self.entities.iter_mut().find(|e| e.id == id) {
+            ent.transform.x = x;
+            ent.transform.y = y;
+            ent.transform.w = w;
+            ent.transform.h = h;
+            if let Some(ref mut col) = ent.collider {
+                col.w = w;
+                col.h = h;
+            }
+            self.rebuild_static_spatial_grid();
+            return true;
+        }
+        false
+    }
+
+    /// Supprime définitivement une entité par son ID
+    pub fn delete_entity_by_id(&mut self, id: usize) -> bool {
+        if let Some(pos) = self.entities.iter().position(|e| e.id == id) {
+            self.entities.remove(pos);
+            self.rebuild_static_spatial_grid();
+            return true;
+        }
+        false
     }
 
     pub fn fire_player_projectile(&mut self) -> bool {
@@ -1098,47 +1306,102 @@ impl GameState {
         }
     }
 
-fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
-    match key {
-        KeyCode::KeyA => Some(if shift { 'A' } else { 'a' }),
-        KeyCode::KeyB => Some(if shift { 'B' } else { 'b' }),
-        KeyCode::KeyC => Some(if shift { 'C' } else { 'c' }),
-        KeyCode::KeyD => Some(if shift { 'D' } else { 'd' }),
-        KeyCode::KeyE => Some(if shift { 'E' } else { 'e' }),
-        KeyCode::KeyF => Some(if shift { 'F' } else { 'f' }),
-        KeyCode::KeyG => Some(if shift { 'G' } else { 'g' }),
-        KeyCode::KeyH => Some(if shift { 'H' } else { 'h' }),
-        KeyCode::KeyI => Some(if shift { 'I' } else { 'i' }),
-        KeyCode::KeyJ => Some(if shift { 'J' } else { 'j' }),
-        KeyCode::KeyK => Some(if shift { 'K' } else { 'k' }),
-        KeyCode::KeyL => Some(if shift { 'L' } else { 'l' }),
-        KeyCode::KeyM => Some(if shift { 'M' } else { 'm' }),
-        KeyCode::KeyN => Some(if shift { 'N' } else { 'n' }),
-        KeyCode::KeyO => Some(if shift { 'O' } else { 'o' }),
-        KeyCode::KeyP => Some(if shift { 'P' } else { 'p' }),
-        KeyCode::KeyQ => Some(if shift { 'Q' } else { 'q' }),
-        KeyCode::KeyR => Some(if shift { 'R' } else { 'r' }),
-        KeyCode::KeyS => Some(if shift { 'S' } else { 's' }),
-        KeyCode::KeyT => Some(if shift { 'T' } else { 't' }),
-        KeyCode::KeyU => Some(if shift { 'U' } else { 'u' }),
-        KeyCode::KeyV => Some(if shift { 'V' } else { 'v' }),
-        KeyCode::KeyW => Some(if shift { 'W' } else { 'w' }),
-        KeyCode::KeyX => Some(if shift { 'X' } else { 'x' }),
-        KeyCode::KeyY => Some(if shift { 'Y' } else { 'y' }),
-        KeyCode::KeyZ => Some(if shift { 'Z' } else { 'z' }),
-        KeyCode::Space => Some(' '),
-        KeyCode::Digit0 => Some('0'),
-        KeyCode::Digit1 => Some('1'),
-        KeyCode::Digit2 => Some('2'),
-        KeyCode::Digit3 => Some('3'),
-        KeyCode::Digit4 => Some('4'),
-        KeyCode::Digit5 => Some('5'),
-        KeyCode::Digit6 => Some('6'),
-        KeyCode::Digit7 => Some('7'),
-        KeyCode::Digit8 => Some('8'),
-        KeyCode::Digit9 => Some('9'),
-        KeyCode::Minus => Some('-'),
-        _ => None,
+fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout) -> Option<char> {
+    match layout {
+        crate::editor::KeyboardLayout::FrenchAzerty => match key {
+            KeyCode::KeyA => Some(if shift { 'Q' } else { 'q' }),
+            KeyCode::KeyB => Some(if shift { 'B' } else { 'b' }),
+            KeyCode::KeyC => Some(if shift { 'C' } else { 'c' }),
+            KeyCode::KeyD => Some(if shift { 'D' } else { 'd' }),
+            KeyCode::KeyE => Some(if shift { 'E' } else { 'e' }),
+            KeyCode::KeyF => Some(if shift { 'F' } else { 'f' }),
+            KeyCode::KeyG => Some(if shift { 'G' } else { 'g' }),
+            KeyCode::KeyH => Some(if shift { 'H' } else { 'h' }),
+            KeyCode::KeyI => Some(if shift { 'I' } else { 'i' }),
+            KeyCode::KeyJ => Some(if shift { 'J' } else { 'j' }),
+            KeyCode::KeyK => Some(if shift { 'K' } else { 'k' }),
+            KeyCode::KeyL => Some(if shift { 'L' } else { 'l' }),
+            KeyCode::KeyM => Some(if shift { '?' } else { ',' }),
+            KeyCode::KeyN => Some(if shift { 'N' } else { 'n' }),
+            KeyCode::KeyO => Some(if shift { 'O' } else { 'o' }),
+            KeyCode::KeyP => Some(if shift { 'P' } else { 'p' }),
+            KeyCode::KeyQ => Some(if shift { 'A' } else { 'a' }),
+            KeyCode::KeyR => Some(if shift { 'R' } else { 'r' }),
+            KeyCode::KeyS => Some(if shift { 'S' } else { 's' }),
+            KeyCode::KeyT => Some(if shift { 'T' } else { 't' }),
+            KeyCode::KeyU => Some(if shift { 'U' } else { 'u' }),
+            KeyCode::KeyV => Some(if shift { 'V' } else { 'v' }),
+            KeyCode::KeyW => Some(if shift { 'Z' } else { 'z' }),
+            KeyCode::KeyX => Some(if shift { 'X' } else { 'x' }),
+            KeyCode::KeyY => Some(if shift { 'Y' } else { 'y' }),
+            KeyCode::KeyZ => Some(if shift { 'W' } else { 'w' }),
+            KeyCode::Semicolon => Some(if shift { 'M' } else { 'm' }),
+            KeyCode::Comma => Some(if shift { '?' } else { ',' }),
+            KeyCode::Period => Some(if shift { '.' } else { ';' }),
+            KeyCode::Slash => Some(if shift { '/' } else { ':' }),
+            KeyCode::Quote => Some(if shift { '%' } else { 'ù' }),
+            KeyCode::Backslash => Some(if shift { '*' } else { '!' }),
+            KeyCode::Minus => Some(if shift { '°' } else { ')' }),
+            KeyCode::Equal => Some(if shift { '+' } else { '=' }),
+            KeyCode::Space => Some(' '),
+            KeyCode::Digit1 => Some(if shift { '1' } else { '&' }),
+            KeyCode::Digit2 => Some(if shift { '2' } else { 'é' }),
+            KeyCode::Digit3 => Some(if shift { '3' } else { '"' }),
+            KeyCode::Digit4 => Some(if shift { '4' } else { '\'' }),
+            KeyCode::Digit5 => Some(if shift { '5' } else { '(' }),
+            KeyCode::Digit6 => Some(if shift { '6' } else { '-' }),
+            KeyCode::Digit7 => Some(if shift { '7' } else { 'è' }),
+            KeyCode::Digit8 => Some(if shift { '8' } else { '_' }),
+            KeyCode::Digit9 => Some(if shift { '9' } else { 'ç' }),
+            KeyCode::Digit0 => Some(if shift { '0' } else { 'à' }),
+            _ => None,
+        },
+        crate::editor::KeyboardLayout::UsQwerty => match key {
+            KeyCode::KeyA => Some(if shift { 'A' } else { 'a' }),
+            KeyCode::KeyB => Some(if shift { 'B' } else { 'b' }),
+            KeyCode::KeyC => Some(if shift { 'C' } else { 'c' }),
+            KeyCode::KeyD => Some(if shift { 'D' } else { 'd' }),
+            KeyCode::KeyE => Some(if shift { 'E' } else { 'e' }),
+            KeyCode::KeyF => Some(if shift { 'F' } else { 'f' }),
+            KeyCode::KeyG => Some(if shift { 'G' } else { 'g' }),
+            KeyCode::KeyH => Some(if shift { 'H' } else { 'h' }),
+            KeyCode::KeyI => Some(if shift { 'I' } else { 'i' }),
+            KeyCode::KeyJ => Some(if shift { 'J' } else { 'j' }),
+            KeyCode::KeyK => Some(if shift { 'K' } else { 'k' }),
+            KeyCode::KeyL => Some(if shift { 'L' } else { 'l' }),
+            KeyCode::KeyM => Some(if shift { 'M' } else { 'm' }),
+            KeyCode::KeyN => Some(if shift { 'N' } else { 'n' }),
+            KeyCode::KeyO => Some(if shift { 'O' } else { 'o' }),
+            KeyCode::KeyP => Some(if shift { 'P' } else { 'p' }),
+            KeyCode::KeyQ => Some(if shift { 'Q' } else { 'q' }),
+            KeyCode::KeyR => Some(if shift { 'R' } else { 'r' }),
+            KeyCode::KeyS => Some(if shift { 'S' } else { 's' }),
+            KeyCode::KeyT => Some(if shift { 'T' } else { 't' }),
+            KeyCode::KeyU => Some(if shift { 'U' } else { 'u' }),
+            KeyCode::KeyV => Some(if shift { 'V' } else { 'v' }),
+            KeyCode::KeyW => Some(if shift { 'W' } else { 'w' }),
+            KeyCode::KeyX => Some(if shift { 'X' } else { 'x' }),
+            KeyCode::KeyY => Some(if shift { 'Y' } else { 'y' }),
+            KeyCode::KeyZ => Some(if shift { 'Z' } else { 'z' }),
+            KeyCode::Space => Some(' '),
+            KeyCode::Digit0 => Some(if shift { ')' } else { '0' }),
+            KeyCode::Digit1 => Some(if shift { '!' } else { '1' }),
+            KeyCode::Digit2 => Some(if shift { '@' } else { '2' }),
+            KeyCode::Digit3 => Some(if shift { '#' } else { '3' }),
+            KeyCode::Digit4 => Some(if shift { '$' } else { '4' }),
+            KeyCode::Digit5 => Some(if shift { '%' } else { '5' }),
+            KeyCode::Digit6 => Some(if shift { '^' } else { '6' }),
+            KeyCode::Digit7 => Some(if shift { '&' } else { '7' }),
+            KeyCode::Digit8 => Some(if shift { '*' } else { '8' }),
+            KeyCode::Digit9 => Some(if shift { '(' } else { '9' }),
+            KeyCode::Minus => Some(if shift { '_' } else { '-' }),
+            KeyCode::Equal => Some(if shift { '+' } else { '=' }),
+            KeyCode::Comma => Some(if shift { '<' } else { ',' }),
+            KeyCode::Period => Some(if shift { '>' } else { '.' }),
+            KeyCode::Slash => Some(if shift { '?' } else { '/' }),
+            KeyCode::Quote => Some(if shift { '"' } else { '\'' }),
+            _ => None,
+        },
     }
 }
 
@@ -1235,6 +1498,12 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                 self.audio.play(SoundType::UiClick);
                 return;
             }
+            if input.is_key_just_pressed(KeyCode::KeyI) {
+                self.editor.welcome_tab = 2;
+                self.audio.play(SoundType::UiClick);
+                self.set_status("Intention IA & Modèle LLM ouvert au démarrage.");
+                return;
+            }
             if input.is_key_just_pressed(KeyCode::KeyW) {
                 self.editor.show_welcome_modal = false;
                 self.editor.recipe_wizard.open();
@@ -1250,15 +1519,109 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                 self.set_status("Guide Pédagogique ouvert.");
                 return;
             }
+
+            // Saisie au clavier dans le Hub lorsque l'onglet Intention IA (Tab 2) est sélectionné
+            if self.editor.welcome_tab == 2 {
+                if input.is_key_just_pressed(KeyCode::Backspace) {
+                    self.editor.intent_input_text.pop();
+                }
+                if input.is_key_just_pressed(KeyCode::Enter) {
+                    let prompt = self.editor.intent_input_text.trim().to_string();
+                    if !prompt.is_empty() {
+                        self.editor.show_welcome_modal = false;
+                        self.trigger_ai_intent(&prompt);
+                        return;
+                    }
+                }
+                if !input.received_chars.is_empty() {
+                    for &ch in &input.received_chars {
+                        if self.editor.intent_input_text.chars().count() < 400 {
+                            self.editor.intent_input_text.push(ch);
+                        }
+                    }
+                } else {
+                    let shift = input.is_key_pressed(KeyCode::ShiftLeft) || input.is_key_pressed(KeyCode::ShiftRight);
+                    for &k in &input.just_pressed_keys {
+                        if let Some(ch) = Self::key_to_char(k, shift, self.editor.keyboard_layout) {
+                            if self.editor.intent_input_text.chars().count() < 400 {
+                                self.editor.intent_input_text.push(ch);
+                            }
+                        }
+                    }
+                }
+            }
+
             if input.mouse_just_clicked {
                 let mx = input.mouse_x;
                 let my = input.mouse_y;
 
-                // 1. Changement d'onglet du Hub (0: Nouveau Projet 1.1, 1: Charger Projet 1.2)
+                // 1. Changement d'onglet du Hub (0: Nouveau Projet 1.1, 1: Charger Projet 1.2, 2: Intention IA 1.3)
                 if let Some(tab_idx) = self.editor.clicked_welcome_tab(mx, my) {
                     self.editor.welcome_tab = tab_idx;
                     self.audio.play(SoundType::UiClick);
                     return;
+                }
+
+                // Clic sur le bouton de création IA rapide depuis la bannière de l'onglet 0 ou la barre d'action inférieure
+                if self.editor.is_welcome_hero_ai_clicked(mx, my) || self.editor.is_welcome_bottom_ai_clicked(mx, my) {
+                    self.editor.welcome_tab = 2;
+                    self.audio.play(SoundType::UiClick);
+                    self.set_status("Intention IA & Configuration LLM ouverte (Onglet 1.3).");
+                    return;
+                }
+
+                // Clics spécifiques à l'onglet Intention IA & LLM (Tab 2)
+                if self.editor.welcome_tab == 2 {
+                    if self.editor.is_welcome_ai_test_clicked(mx, my) {
+                        let res = crate::ai_client::AiClient::test_connection(&self.editor.ai_config);
+                        self.editor.ai_test_result = match res {
+                            Ok(msg) => Some((true, msg)),
+                            Err(err) => Some((false, err)),
+                        };
+                        self.audio.play(SoundType::UiClick);
+                        return;
+                    }
+
+                    if let Some(provider) = self.editor.clicked_welcome_ai_provider(mx, my) {
+                        self.editor.ai_config.provider = provider;
+                        self.editor.ai_test_result = None;
+                        self.audio.play(SoundType::UiClick);
+                        self.set_status(format!("Modèle IA sélectionné : {}", provider.label()));
+                        return;
+                    }
+
+                    if self.editor.is_keyboard_layout_clicked(mx, my) {
+                        self.editor.keyboard_layout = match self.editor.keyboard_layout {
+                            crate::editor::KeyboardLayout::FrenchAzerty => crate::editor::KeyboardLayout::UsQwerty,
+                            crate::editor::KeyboardLayout::UsQwerty => crate::editor::KeyboardLayout::FrenchAzerty,
+                        };
+                        self.audio.play(SoundType::UiClick);
+                        self.set_status(format!("Disposition clavier : {}", self.editor.keyboard_layout.label()));
+                        return;
+                    }
+
+                    if self.editor.is_welcome_ai_generate_clicked(mx, my) {
+                        let prompt = self.editor.intent_input_text.trim().to_string();
+                        if !prompt.is_empty() {
+                            self.editor.show_welcome_modal = false;
+                            self.trigger_ai_intent(&prompt);
+                            return;
+                        }
+                    }
+
+                    if let Some(p_idx) = self.editor.clicked_welcome_ai_preset(mx, my) {
+                        let prompt = match p_idx {
+                            0 => "Donjon sombre avec héros ninja, gouffres de lave ardents, clé dorée et boss titan démon",
+                            1 => "Forteresse glacée avec chevalier errant, slimes de givre, dalles de saut et coffre scellé",
+                            2 => "Laboratoire cybernétique avec drones patrouilleurs A*, portails quantiques et cristaux d'énergie",
+                            3 => "Forêt mystique avec golem de pierre, énigme de blocs Sokoban et potions de vie",
+                            _ => "Niveau d'aventure complet avec boucle de gameplay",
+                        };
+                        self.editor.intent_input_text = prompt.to_string();
+                        self.editor.show_welcome_modal = false;
+                        self.trigger_ai_intent(prompt);
+                        return;
+                    }
                 }
 
                 // 2. Clic sur une Scène Récente du Disque (Charger & Jouer OU Ouvrir en Studio)
@@ -1695,11 +2058,19 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                 }
             }
 
-            let shift = input.is_key_pressed(KeyCode::ShiftLeft) || input.is_key_pressed(KeyCode::ShiftRight);
-            for &k in &input.just_pressed_keys {
-                if let Some(ch) = Self::key_to_char(k, shift) {
-                    if self.editor.intent_input_text.len() < 80 {
+            if !input.received_chars.is_empty() {
+                for &ch in &input.received_chars {
+                    if self.editor.intent_input_text.chars().count() < 400 {
                         self.editor.intent_input_text.push(ch);
+                    }
+                }
+            } else {
+                let shift = input.is_key_pressed(KeyCode::ShiftLeft) || input.is_key_pressed(KeyCode::ShiftRight);
+                for &k in &input.just_pressed_keys {
+                    if let Some(ch) = Self::key_to_char(k, shift, self.editor.keyboard_layout) {
+                        if self.editor.intent_input_text.chars().count() < 400 {
+                            self.editor.intent_input_text.push(ch);
+                        }
                     }
                 }
             }
@@ -1726,6 +2097,16 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                     return;
                 }
 
+                if self.editor.is_keyboard_layout_clicked(mx, my) {
+                    self.editor.keyboard_layout = match self.editor.keyboard_layout {
+                        crate::editor::KeyboardLayout::FrenchAzerty => crate::editor::KeyboardLayout::UsQwerty,
+                        crate::editor::KeyboardLayout::UsQwerty => crate::editor::KeyboardLayout::FrenchAzerty,
+                    };
+                    self.audio.play(SoundType::UiClick);
+                    self.set_status(format!("Disposition clavier : {}", self.editor.keyboard_layout.label()));
+                    return;
+                }
+
                 if self.editor.is_intent_close_clicked(mx, my) {
                     self.editor.show_intent_bar = false;
                     self.audio.play(SoundType::UiClick);
@@ -1740,12 +2121,13 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                 }
                 if let Some(p_idx) = self.editor.clicked_intent_preset(mx, my) {
                     let prompt = match p_idx {
-                        0 => "Garde patrouilleur hostile A* avec alarme",
-                        1 => "Coffre au trésor verrouillé par clé de donjon",
-                        2 => "Zone de lave toxique et piège incandescent",
-                        3 => "Portail quantique de téléportation dimensionnelle",
-                        _ => "Mécanique interactive KVL",
+                        0 => "Garde patrouilleur hostile A* avec alerte sonore, vision conique et poursuite",
+                        1 => "Coffre au trésor scellé nécessitant la clé dorée du donjon et conférant 150 points",
+                        2 => "Zone de lave ardente infligeant 35 dégâts au contact avec particules et piège sismique",
+                        3 => "Portail dimensionnel quantique téléportant le joueur avec distorsion arcanique et audio",
+                        _ => "Niveau d'aventure complet avec boucle de gameplay",
                     };
+                    self.editor.intent_input_text = prompt.to_string();
                     self.trigger_ai_intent(prompt);
                     return;
                 }
@@ -2217,6 +2599,7 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
             let dlg_action = self.dialogue.handle_input(input);
             match dlg_action {
                 DialogueAction::ChoiceSelected(choice_idx) => {
+                    self.dialogue_cooldown = 0.5;
                     self.kvl_context.set_var("dialogue_selected_choice", Value::Int(choice_idx as i64));
                     self.kvl_context.set_var("dialogue_active", Value::Bool(false));
                     self.audio.play(SoundType::UiClick);
@@ -2239,6 +2622,7 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                     }
                 }
                 DialogueAction::Closed => {
+                    self.dialogue_cooldown = 0.5;
                     self.kvl_context.set_var("dialogue_active", Value::Bool(false));
                     self.audio.play(SoundType::UiClick);
                     self.status_message = "Discussion terminée.".into();
@@ -2251,6 +2635,11 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                 }
                 _ => {}
             }
+        }
+
+        // Décrémentation du cooldown d'interaction de dialogue
+        if self.dialogue_cooldown > 0.0 {
+            self.dialogue_cooldown = (self.dialogue_cooldown - dt).max(0.0);
         }
 
         // Mise à jour du timer de notification de quête HUD
@@ -2347,7 +2736,11 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
             }
             self.camera.update(dt);
 
-            let in_viewport = input.mouse_x >= 20.0 && input.mouse_x <= 810.0 && input.mouse_y >= 66.0 && input.mouse_y <= 536.0;
+            let in_viewport = if self.editor.embedded_mode {
+                input.mouse_x >= 0.0 && input.mouse_x <= 1200.0 && input.mouse_y >= 0.0 && input.mouse_y <= 800.0
+            } else {
+                input.mouse_x >= 20.0 && input.mouse_x <= 810.0 && input.mouse_y >= 66.0 && input.mouse_y <= 536.0
+            };
 
             // Clic droit rapide : Effacement d'entité sous le curseur dans le viewport (quel que soit l'outil actif)
             if input.mouse_right_just_clicked && in_viewport {
@@ -2802,7 +3195,11 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
 
                 // 5. Sélection universelle d'entité à la souris en coordonnées monde
                 if self.editor.active_tool == StudioTool::Select {
-                    let in_game_viewport = mx >= 20.0 && mx <= 810.0 && my >= 66.0 && my <= 536.0;
+                    let in_game_viewport = if self.editor.embedded_mode {
+                        mx >= 0.0 && mx <= 1200.0 && my >= 0.0 && my <= 800.0
+                    } else {
+                        mx >= 20.0 && mx <= 810.0 && my >= 66.0 && my <= 536.0
+                    };
                     if in_game_viewport {
                         let (world_mx, world_my) = self.camera.screen_to_world(mx, my);
                         let mut found_idx = None;
@@ -2922,17 +3319,19 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                 self.use_hotbar_item(cur_slot);
             }
 
-            // Clic souris sur la barre d'action ou le bouton d'utilisation
+            // Clic souris sur la barre d'action ou sur le terrain (Navigation A* Click-to-Move)
             if input.mouse_just_clicked {
                 let mx = input.mouse_x as i32;
                 let my = input.mouse_y as i32;
-                if self.inventory.is_use_btn_clicked(input.mouse_x, input.mouse_y) {
+                let mut hit_hotbar = self.inventory.is_use_btn_clicked(input.mouse_x, input.mouse_y);
+                if hit_hotbar {
                     let cur_slot = self.inventory.selected_hotbar_index;
                     self.use_hotbar_item(cur_slot);
                 } else {
                     for i in 0..HOTBAR_SLOTS_COUNT {
                         if let Some((hx, hy, hw, hh)) = self.inventory.hotbar_hitboxes[i] {
                             if mx >= hx && mx < hx + hw as i32 && my >= hy && my < hy + hh as i32 {
+                                hit_hotbar = true;
                                 if self.inventory.selected_hotbar_index == i {
                                     self.use_hotbar_item(i);
                                 } else {
@@ -2940,8 +3339,21 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                                     self.kvl_context.set_var("hotbar_selected_slot", Value::Int(i as i64));
                                     self.audio.play(SoundType::UiClick);
                                 }
+                                break;
                             }
                         }
+                    }
+                }
+
+                // Clic-déplacement intelligent (A* Click-to-Move) en mode Jeu
+                if !hit_hotbar && !self.dialogue.is_active && self.editor.mode == crate::editor::EditorMode::Play {
+                    let (wx, wy) = self.camera.screen_to_world(mx as f32, my as f32);
+                    if let Some(p_idx) = self.player_index() {
+                        let mut nav = crate::navigation::NavAgent::go_to(260.0, wx, wy);
+                        nav.reach_distance = 18.0;
+                        nav.avoid_hazards = true;
+                        self.entities[p_idx].nav_agent = Some(nav);
+                        self.status_message = format!("Navigation A* vers ({:.0}, {:.0}) enclenchée.", wx, wy);
                     }
                 }
             }
@@ -2977,6 +3389,15 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         if len > 0.0 {
             move_x /= len;
             move_y /= len;
+
+            // Priorité absolue aux entrées clavier : annulation de toute navigation automatique
+            if let Some(p_idx) = self.player_index() {
+                if let Some(ref mut nav) = self.entities[p_idx].nav_agent {
+                    if matches!(nav.mode, crate::navigation::NavMode::GoTo { .. }) {
+                        nav.mode = crate::navigation::NavMode::Idle;
+                    }
+                }
+            }
         }
 
         // Si une discussion est active, le joueur reste attentif et immobile
@@ -2993,27 +3414,36 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         // ==========================================
         // SYSTEM 1 : PARTITIONNEMENT SPATIAL (ZERO-ALLOCATION)
         // ==========================================
+        if self.entities.len() != self.static_entity_count {
+            self.rebuild_static_spatial_grid();
+        }
         self.spatial_grid.clear();
         for (idx, ent) in self.entities.iter().enumerate() {
             if !ent.is_active {
                 continue;
             }
             if let Some(ref col) = ent.collider {
-                let kind = if col.is_solid {
-                    SpatialKind::Solid
-                } else if col.is_trigger {
-                    SpatialKind::Trigger
-                } else {
-                    SpatialKind::Entity(idx)
-                };
-                self.spatial_grid.insert(SpatialItem {
-                    id: idx,
-                    kind,
-                    x: ent.transform.x + col.offset_x,
-                    y: ent.transform.y + col.offset_y,
-                    w: col.w,
-                    h: col.h,
-                });
+                // Les murs et plateformes fixes sont déjà conservés dans static_buckets
+                let is_static = ent.movement.is_none() && (col.is_solid || col.is_one_way) && !col.is_pushable;
+                if !is_static {
+                    let kind = if col.is_one_way {
+                        SpatialKind::OneWay
+                    } else if col.is_solid {
+                        SpatialKind::Solid
+                    } else if col.is_trigger {
+                        SpatialKind::Trigger
+                    } else {
+                        SpatialKind::Entity(idx)
+                    };
+                    self.spatial_grid.insert(SpatialItem {
+                        id: idx,
+                        kind,
+                        x: ent.transform.x + col.offset_x,
+                        y: ent.transform.y + col.offset_y,
+                        w: col.w,
+                        h: col.h,
+                    });
+                }
             }
         }
 
@@ -3068,9 +3498,17 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                                         cur_x = item.x + item.w;
                                     }
                                 } else if move_x > 0.0 {
-                                    cur_x = item.x - pw;
+                                    let p_prev_cx = px + pw * 0.5;
+                                    let item_cx = item.x + item.w * 0.5;
+                                    if p_prev_cx <= item_cx {
+                                        cur_x = (item.x - pw).min(cur_x);
+                                    }
                                 } else if move_x < 0.0 {
-                                    cur_x = item.x + item.w;
+                                    let p_prev_cx = px + pw * 0.5;
+                                    let item_cx = item.x + item.w * 0.5;
+                                    if p_prev_cx >= item_cx {
+                                        cur_x = (item.x + item.w).max(cur_x);
+                                    }
                                 }
                             }
                         }
@@ -3104,14 +3542,30 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                                         self.entities[item.id].transform.y = target_by;
                                         self.audio.play(SoundType::BlockPush);
                                     } else if move_y > 0.0 {
-                                        cur_y = item.y - ph;
+                                        let p_prev_cy = py + ph * 0.5;
+                                        let item_cy = item.y + item.h * 0.5;
+                                        if p_prev_cy <= item_cy {
+                                            cur_y = (item.y - ph).min(cur_y);
+                                        }
                                     } else if move_y < 0.0 {
-                                        cur_y = item.y + item.h;
+                                        let p_prev_cy = py + ph * 0.5;
+                                        let item_cy = item.y + item.h * 0.5;
+                                        if p_prev_cy >= item_cy {
+                                            cur_y = (item.y + item.h).max(cur_y);
+                                        }
                                     }
                                 } else if move_y > 0.0 {
-                                    cur_y = item.y - ph;
+                                    let p_prev_cy = py + ph * 0.5;
+                                    let item_cy = item.y + item.h * 0.5;
+                                    if p_prev_cy <= item_cy {
+                                        cur_y = (item.y - ph).min(cur_y);
+                                    }
                                 } else if move_y < 0.0 {
-                                    cur_y = item.y + item.h;
+                                    let p_prev_cy = py + ph * 0.5;
+                                    let item_cy = item.y + item.h * 0.5;
+                                    if p_prev_cy >= item_cy {
+                                        cur_y = (item.y + item.h).max(cur_y);
+                                    }
                                 }
                             }
                         }
@@ -3173,17 +3627,31 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
 
                     let mut grounded_this_frame = false;
                     let candidates = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
+                    let drop_through = input.is_key_down(KeyCode::ArrowDown) || input.is_key_down(KeyCode::KeyS);
+
                     for item in candidates {
-                        if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
-                            if cur_vy > 0.0 {
-                                // Contact avec le sol sous les pieds
-                                cur_y = item.y - ph;
-                                cur_vy = 0.0;
-                                grounded_this_frame = true;
-                            } else if cur_vy < 0.0 {
-                                // Heurt de la tête contre un plafond
-                                cur_y = item.y + item.h;
-                                cur_vy = 0.0;
+                        if item.id != p_idx {
+                            if matches!(item.kind, SpatialKind::Solid) {
+                                if cur_vy > 0.0 {
+                                    // Contact avec le sol sous les pieds
+                                    cur_y = item.y - ph;
+                                    cur_vy = 0.0;
+                                    grounded_this_frame = true;
+                                } else if cur_vy < 0.0 {
+                                    // Heurt de la tête contre un plafond
+                                    cur_y = item.y + item.h;
+                                    cur_vy = 0.0;
+                                }
+                            } else if matches!(item.kind, SpatialKind::OneWay) {
+                                // Plateforme traversable par le bas : atterrissage si le joueur tombe et ne force pas la descente
+                                if cur_vy > 0.0 && !drop_through {
+                                    let prev_player_bottom = py + ph;
+                                    if prev_player_bottom <= item.y + (cur_vy * dt).max(8.0) {
+                                        cur_y = item.y - ph;
+                                        cur_vy = 0.0;
+                                        grounded_this_frame = true;
+                                    }
+                                }
                             }
                         }
                     }
@@ -4233,6 +4701,7 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
 
             // Contact hostile direct avec les ennemis patrouilleurs ou sentinelles
             let mut enemy_contact = false;
+            let mut contact_enemy_pos: Option<(f32, f32)> = None;
             for (idx, ent) in self.entities.iter().enumerate() {
                 if idx != p_idx && ent.is_active && ent.tag == "enemy" {
                     let ex = ent.transform.x;
@@ -4241,6 +4710,7 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                     let eh = ent.transform.h;
                     if px < ex + ew && px + pw > ex && py < ey + eh && py + ph > ey {
                         enemy_contact = true;
+                        contact_enemy_pos = Some((ent.transform.center_x(), ent.transform.center_y()));
                         break;
                     }
                 }
@@ -4336,6 +4806,18 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                         self.camera.add_shake(8.0);
                         let source = if hazard_hit { "Piège" } else { "Contact hostile" };
                         self.status_message = format!("AÏE ! Dégâts subis ({}) ! Santé restante : {:.0}/{:.0} PV", source, cur_hp, max_hp);
+
+                        // Impulsion de recul (Knockback) pour séparer les personnages et éliminer tout blocage mutuel
+                        if let Some((ex, ey)) = contact_enemy_pos {
+                            let kx = p_cx - ex;
+                            let ky = p_cy - ey;
+                            let k_dist = (kx * kx + ky * ky).sqrt().max(1.0);
+                            let push_dist = 30.0;
+                            let new_px = (self.entities[p_idx].transform.x + (kx / k_dist) * push_dist).clamp(32.0, 1150.0);
+                            let new_py = (self.entities[p_idx].transform.y + (ky / k_dist) * push_dist).clamp(75.0, 580.0);
+                            self.entities[p_idx].transform.x = new_px;
+                            self.entities[p_idx].transform.y = new_py;
+                        }
                     }
                 }
             }
@@ -4542,8 +5024,8 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                         }
                     }
 
-                    // Interaction PNJ avec DialogueComponent
-                    if !self.dialogue.is_active {
+                    // Interaction PNJ avec DialogueComponent (cooldown protecteur pour éviter toute réouverture immédiate)
+                    if !self.dialogue.is_active && self.dialogue_cooldown <= 0.0 {
                         if let Some(ref dlg_comp) = ent.dialogue {
                             let dx = p_cx - ent.transform.center_x();
                             let dy = p_cy - ent.transform.center_y();
@@ -4557,6 +5039,7 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                                     &dlg_comp.avatar_label,
                                     dlg_comp.avatar_color,
                                 );
+                                self.dialogue_cooldown = 0.5;
                                 self.kvl_context.set_var("dialogue_active", Value::Bool(true));
                                 self.kvl_context.set_var("dialogue_speaker", Value::String(dlg_comp.speaker.clone()));
                                 self.kvl_context.set_var("dialogue_text", Value::String(dlg_comp.text.clone()));
@@ -4831,13 +5314,16 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         canvas.clear(0x00080B14);
 
         let is_edit_mode = self.editor.mode == EditorMode::Edit;
+        let is_embedded = self.editor.embedded_mode;
         let w = canvas.width as i32;
         let h = canvas.height as i32;
 
-        let header_h = 44;
+        let header_h = if is_embedded { 0 } else { 44 };
 
         // Hauteur de la barre inférieure escamotable / Console KVL
-        let bottom_h = if is_edit_mode {
+        let bottom_h = if is_embedded {
+            0
+        } else if is_edit_mode {
             160
         } else if self.editor.show_console_drawer {
             160
@@ -4847,7 +5333,9 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         let bottom_y = h - bottom_h;
 
         // Géométrie réactive du Viewport
-        let (vx, vy, vw, vh) = if is_edit_mode {
+        let (vx, vy, vw, vh) = if is_embedded {
+            (0, 0, w, h)
+        } else if is_edit_mode {
             let insp_w = 380;
             let v_x = 14;
             let v_y = header_h + 8;
@@ -4914,7 +5402,8 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         // ==========================================
         // 1. EN-TÊTE MASTER UNIFIÉ (y = 0..44, Hauteur 44px)
         // ==========================================
-        let header_bg = if is_edit_mode { 0x00130E26 } else { 0x000B0F19 };
+        if !is_embedded {
+            let header_bg = if is_edit_mode { 0x00130E26 } else { 0x000B0F19 };
         canvas.draw_rect(0, 0, w as u32, header_h as u32, header_bg);
         canvas.draw_line(0, header_h - 1, w, header_h - 1, if is_edit_mode { 0x007C3AED } else { 0x001E293B });
 
@@ -5229,6 +5718,7 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                     self.editor.duplicate_btn_hitbox = Some((rx, 8, 46, 28));
                 }
             }
+        }
         }
 
         // ==========================================
@@ -5924,25 +6414,31 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                 }
             }
 
-            // Rendu des chemins A* pour les agents autonomes intelligents
+            // Rendu des chemins A* pour les agents autonomes intelligents et navigation joueur
             if let Some(ref nav) = ent.nav_agent {
-                if nav.has_path() && (self.show_minimap || is_edit_mode || ent.vision.as_ref().map_or(false, |v| v.is_alerted)) {
+                if nav.has_path() && (ent.tag == "player" || self.show_minimap || is_edit_mode || ent.vision.as_ref().map_or(false, |v| v.is_alerted)) {
                     let (ex, ey) = self.camera.world_to_screen(ent.transform.center_x(), ent.transform.center_y());
                     let mut prev_screen = (ex, ey);
 
                     for idx in nav.current_waypoint_idx..nav.waypoints.len() {
                         let (wx, wy) = nav.waypoints[idx];
                         let (sx, sy) = self.camera.world_to_screen(wx, wy);
-                        let line_col = if idx == nav.current_waypoint_idx { 0x00F59E0B } else { 0x0006B6D4 };
+                        let line_col = if ent.tag == "player" {
+                            0x0038BDF8 // Cyan lumineux pour le joueur
+                        } else if idx == nav.current_waypoint_idx {
+                            0x00F59E0B
+                        } else {
+                            0x0006B6D4
+                        };
                         canvas.draw_line(prev_screen.0, prev_screen.1, sx, sy, line_col);
-                        canvas.draw_rect(sx - 2, sy - 2, 4, 4, 0x0038BDF8);
+                        canvas.draw_rect(sx - 2, sy - 2, 4, 4, if ent.tag == "player" { 0x0038BDF8 } else { 0x0038BDF8 });
                         prev_screen = (sx, sy);
                     }
 
                     // Cible finale
                     if let Some(tgt) = nav.target_pos {
                         let (tsx, tsy) = self.camera.world_to_screen(tgt.0, tgt.1);
-                        canvas.draw_rect_outline(tsx - 4, tsy - 4, 8, 8, 0x00EF4444, 1);
+                        canvas.draw_rect_outline(tsx - 4, tsy - 4, 8, 8, if ent.tag == "player" { 0x0038BDF8 } else { 0x00EF4444 }, 1);
                     }
                 }
             }
@@ -5960,6 +6456,44 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                         canvas.draw_text(ex - 14, ey - 16, "!SCATTER!", 0x00EF4444, 1);
                     } else if flock.role == crate::flocking::FlockRole::Leader {
                         canvas.draw_text(ex - 12, ey - 16, "[LEAD]", 0x00F59E0B, 1);
+                    }
+                }
+            }
+
+            // Prompt d'interaction contextuelle flottante pour PNJ (si le joueur est à proximité et dialogue inactif)
+            if let Some(ref dlg) = ent.dialogue {
+                if !self.dialogue.is_active {
+                    if let Some(p_idx) = self.player_index() {
+                        let p = &self.entities[p_idx];
+                        let dx = p.transform.center_x() - ent.transform.center_x();
+                        let dy = p.transform.center_y() - ent.transform.center_y();
+                        if (dx * dx + dy * dy).sqrt() < dlg.interact_radius {
+                            let (nx, ny) = self.camera.world_to_screen(ent.transform.center_x(), ent.transform.y);
+                            let pulse = ((self.elapsed_time * 6.0).sin() * 2.0) as i32;
+                            let prompt_lbl = format!("[E] Parler à {}", dlg.speaker);
+                            let pw = (prompt_lbl.len() as u32 * 8) + 16;
+                            canvas.draw_badge(nx - (pw as i32 / 2), ny - 24 + pulse, pw, 20, 0x000F172A, 0x0038BDF8, &prompt_lbl, 0x00E0F2FE, 1);
+                        }
+                    }
+                }
+            }
+
+            // Prompt d'interaction contextuelle flottante pour entités avec script interactif (Portes, Coffres, etc.)
+            if ent.dialogue.is_none() {
+                if let Some(ref script) = ent.script {
+                    if script.on_interact_event.is_some() {
+                        if let Some(p_idx) = self.player_index() {
+                            let p = &self.entities[p_idx];
+                            let dx = p.transform.center_x() - ent.transform.center_x();
+                            let dy = p.transform.center_y() - ent.transform.center_y();
+                            if (dx * dx + dy * dy).sqrt() < 80.0 {
+                                let (nx, ny) = self.camera.world_to_screen(ent.transform.center_x(), ent.transform.y);
+                                let pulse = ((self.elapsed_time * 6.0).sin() * 2.0) as i32;
+                                let prompt_lbl = if ent.tag == "door" { "[E] Ouvrir Porte" } else { "[E] Interagir" };
+                                let pw = (prompt_lbl.len() as u32 * 8) + 16;
+                                canvas.draw_badge(nx - (pw as i32 / 2), ny - 24 + pulse, pw, 20, 0x000F172A, 0x0010B981, prompt_lbl, 0x00D1FAE5, 1);
+                            }
+                        }
                     }
                 }
             }
@@ -6026,7 +6560,13 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
             let mm_w = 175;
             let mm_h = 110;
             let mm_y = vy + 10;
-            let mm_x = if is_edit_mode {
+            let mm_x = if is_embedded {
+                if self.telemetry.show_overlay {
+                    (w - 16 - 380) - mm_w - 14
+                } else {
+                    w - 16 - mm_w
+                }
+            } else if is_edit_mode {
                 (w - 380 - 14) - mm_w - 14
             } else if self.telemetry.show_overlay {
                 (w - 16 - 380) - mm_w - 14
@@ -6120,7 +6660,7 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         // ========================================================
         // PANNEAU INSPECTEUR KVL UNIVERSEL (EN MODE ÉDITION) : Largeur 380px
         // ========================================================
-        if is_edit_mode {
+        if !is_embedded && is_edit_mode {
             let insp_w = 380;
             let insp_x = w - insp_w - 14;
             let insp_y = vy;
@@ -6367,7 +6907,7 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         }
 
         // Overlay de la palette de spawn d'entités (Touche P ou Bouton [+ SPAWN])
-        if is_edit_mode && self.editor.show_spawn_palette {
+        if !is_embedded && is_edit_mode && self.editor.show_spawn_palette {
             let pal_w = 440;
             let pal_h = 648;
             let pal_x = 160;
@@ -6417,40 +6957,42 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         }
 
         // 4. Bandeau inférieur / Tiroir KVL escamotable
-        canvas.draw_rect(0, bottom_y, w as u32, bottom_h as u32, 0x00090D18);
-        canvas.draw_line(0, bottom_y, w, bottom_y, 0x001F293D);
+        if !is_embedded {
+            canvas.draw_rect(0, bottom_y, w as u32, bottom_h as u32, 0x00090D18);
+            canvas.draw_line(0, bottom_y, w, bottom_y, 0x001F293D);
 
-        // Ligne de statut du moteur
-        canvas.draw_badge(14, bottom_y + 4, 82, 26, 0x00151D33, 0x007C3AED, "⚡ KVL", 0x00F3E8FF, 1);
-        let status_col = if self.status_timer > 0.0 { 0x0038BDF8 } else { 0x0094A3B8 };
-        canvas.draw_text_body(104, bottom_y + 8, &self.status_message, status_col, 13.5);
-        canvas.draw_badge(w - 300, bottom_y + 4, 155, 26, 0x000F172A, 0x00334155, "60 FPS • DÉTERMINISTE", 0x0094A3B8, 1);
+            // Ligne de statut du moteur
+            canvas.draw_badge(14, bottom_y + 4, 82, 26, 0x00151D33, 0x007C3AED, "⚡ KVL", 0x00F3E8FF, 1);
+            let status_col = if self.status_timer > 0.0 { 0x0038BDF8 } else { 0x0094A3B8 };
+            canvas.draw_text_body(104, bottom_y + 8, &self.status_message, status_col, 13.5);
+            canvas.draw_badge(w - 300, bottom_y + 4, 155, 26, 0x000F172A, 0x00334155, "60 FPS • DÉTERMINISTE", 0x0094A3B8, 1);
 
-        // Bouton bascule Console KVL
-        let (drawer_lbl, drawer_col) = if is_edit_mode || self.editor.show_console_drawer {
-            ("▼ CONSOLE (~)", 0x00F87171)
-        } else {
-            ("▲ CONSOLE (~)", 0x0038BDF8)
-        };
-        canvas.draw_badge(w - 135, bottom_y + 4, 122, 26, 0x001E293B, drawer_col, drawer_lbl, drawer_col, 1);
-        self.editor.console_toggle_btn_hitbox = Some((w - 135, bottom_y + 4, 122, 26));
-
-        // Console de traçabilité d'exécution KVL (si dépliée ou mode studio)
-        if is_edit_mode || self.editor.show_console_drawer {
-            let console_y = bottom_y + 34;
-            let console_h = (bottom_h - 40).max(40);
-            canvas.draw_rect(14, console_y, (w - 28) as u32, console_h as u32, 0x00050810);
-            canvas.draw_rect_outline(14, console_y, (w - 28) as u32, console_h as u32, 0x00162032, 1);
-
-            let log_count = self.kvl_context.execution_log.len();
-            let start_idx = log_count.saturating_sub(5);
-            if self.kvl_context.execution_log.is_empty() {
-                canvas.draw_text_mono(24, console_y + 14, "> En attente d'événements KVL (déplacez-vous sur une pièce ou interagissez avec la porte)...", 0x00475569, 12.0);
+            // Bouton bascule Console KVL
+            let (drawer_lbl, drawer_col) = if is_edit_mode || self.editor.show_console_drawer {
+                ("▼ CONSOLE (~)", 0x00F87171)
             } else {
-                for (i, step) in self.kvl_context.execution_log[start_idx..].iter().enumerate() {
-                    let trace_line = format!("> [{}] {} : {}", step.node_id, step.node_name, step.message);
-                    let col = if i % 2 == 0 { 0x00A7F3D0 } else { 0x006EE7B7 };
-                    canvas.draw_text_mono(24, console_y + 14 + (i as i32 * 20), &trace_line, col, 12.0);
+                ("▲ CONSOLE (~)", 0x0038BDF8)
+            };
+            canvas.draw_badge(w - 135, bottom_y + 4, 122, 26, 0x001E293B, drawer_col, drawer_lbl, drawer_col, 1);
+            self.editor.console_toggle_btn_hitbox = Some((w - 135, bottom_y + 4, 122, 26));
+
+            // Console de traçabilité d'exécution KVL (si dépliée ou mode studio)
+            if is_edit_mode || self.editor.show_console_drawer {
+                let console_y = bottom_y + 34;
+                let console_h = (bottom_h - 40).max(40);
+                canvas.draw_rect(14, console_y, (w - 28) as u32, console_h as u32, 0x00050810);
+                canvas.draw_rect_outline(14, console_y, (w - 28) as u32, console_h as u32, 0x00162032, 1);
+
+                let log_count = self.kvl_context.execution_log.len();
+                let start_idx = log_count.saturating_sub(5);
+                if self.kvl_context.execution_log.is_empty() {
+                    canvas.draw_text_mono(24, console_y + 14, "> En attente d'événements KVL (déplacez-vous sur une pièce ou interagissez avec la porte)...", 0x00475569, 12.0);
+                } else {
+                    for (i, step) in self.kvl_context.execution_log[start_idx..].iter().enumerate() {
+                        let trace_line = format!("> [{}] {} : {}", step.node_id, step.node_name, step.message);
+                        let col = if i % 2 == 0 { 0x00A7F3D0 } else { 0x006EE7B7 };
+                        canvas.draw_text_mono(24, console_y + 14 + (i as i32 * 20), &trace_line, col, 12.0);
+                    }
                 }
             }
         }
@@ -6510,12 +7052,12 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
 
         // 5. Hotbar & Suivi de quête HUD en Mode Jeu
         if !is_edit_mode {
-            // Hotbar centrée au bas du Viewport de jeu
-            self.inventory.render_hotbar_at(canvas, vx + (vw / 2), bottom_y - 12);
+            let hotbar_y = if is_embedded { h - 16 } else { bottom_y - 12 };
+            self.inventory.render_hotbar_at(canvas, vx + (vw / 2), hotbar_y);
 
             if let Some(ref q) = self.quest {
                 let q_x = 18;
-                let q_y = vy + 56; // En-dessous du HUD Pill
+                let q_y = if is_embedded { vy + 16 } else { vy + 56 };
                 q.render(canvas, q_x, q_y);
             }
         }
@@ -6526,37 +7068,37 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         }
 
         // Fenêtre Modale de Guide Pédagogique Interactif (Touche H ou Bouton ? AIDE)
-        if self.editor.show_help_modal {
+        if !is_embedded && self.editor.show_help_modal {
             self.render_help_modal(canvas, w, h);
         }
 
         // Mode Guidé d'Intention KVL (Niveau 1 : Questionnaire Assisté)
-        if self.editor.wizard.is_open {
+        if !is_embedded && self.editor.wizard.is_open {
             self.render_guided_wizard(canvas, w, h);
         }
 
         // Fenêtre Modale d'Assistant IA (Phase A : Intent-to-KVL)
-        if self.editor.show_intent_bar {
+        if !is_embedded && self.editor.show_intent_bar {
             self.render_intent_modal(canvas, w, h);
         }
 
         // Panneau flottant de Revue de Patch IA (Phase C : Boucle de Confiance)
-        if self.editor.pending_ai_patch.is_some() {
+        if !is_embedded && self.editor.pending_ai_patch.is_some() {
             self.render_ai_patch_review_bar(canvas, w, h);
         }
 
         // Fenêtre Modale d'Accueil et Onboarding (3 Voies Débutant)
-        if self.editor.show_welcome_modal {
+        if !is_embedded && self.editor.show_welcome_modal {
             self.render_welcome_modal(canvas, w, h);
         }
 
         // Fenêtre Modale d'Exportation Standalone (Option 3 : Packageur Web & Desktop 1 Clic)
-        if self.editor.show_export_modal {
+        if !is_embedded && self.editor.show_export_modal {
             self.render_export_modal(canvas, w, h);
         }
 
         // Fenêtre Modale de Recette de Jeu en 6 Étapes (Desktop Native Game Recipe Wizard)
-        if self.editor.recipe_wizard.is_open {
+        if !is_embedded && self.editor.recipe_wizard.is_open {
             self.render_game_recipe_wizard(canvas, w, h);
         }
 
@@ -6745,6 +7287,12 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         self.editor.welcome_tab_hitboxes.clear();
         self.editor.welcome_scene_hitboxes.clear();
         self.editor.welcome_archetype_hitboxes.clear();
+        self.editor.welcome_ai_provider_hitboxes.clear();
+        self.editor.welcome_ai_preset_hitboxes.clear();
+        self.editor.welcome_hero_ai_btn_hitbox = None;
+        self.editor.welcome_ai_test_btn_hitbox = None;
+        self.editor.welcome_ai_generate_btn_hitbox = None;
+        self.editor.welcome_bottom_ai_btn_hitbox = None;
         self.editor.welcome_play_btn_hitbox = None;
         self.editor.welcome_studio_btn_hitbox = None;
         self.editor.welcome_guide_btn_hitbox = None;
@@ -6768,13 +7316,14 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         canvas.draw_badge(close_x, my + 12, close_w as u32, 30, 0x001E293B, 0x0064748B, "[✕ FERMER (ÉCHAP)]", 0x00CBD5E1, 1);
         self.editor.welcome_close_btn_hitbox = Some((close_x, my + 12, close_w as u32, 30));
 
-        // Sélecteur d'Onglets Segmented Control (Pill)
+        // Sélecteur d'Onglets Segmented Control (Pill) — 3 Sections : 1.1, 1.2, 1.3
         let tab_y = my + 64;
         let tab_h = 32;
 
         let tabs = [
-            (0, "⚡ 1.1 NOUVEAU PROJET / ASSISTANT GUIDÉ (6 ÉTAPES)", 390),
-            (1, "● 1.2 CHARGER UN PROJET / SCÈNES SUR DISQUE", 370),
+            (0, "⚡ 1.1 NOUVEAU PROJET / 6 ÉTAPES", 260),
+            (1, "● 1.2 PROJETS SUR DISQUE", 260),
+            (2, "🤖 1.3 INTENTION IA & CONFIG LLM [I]", 340),
         ];
 
         let mut tx_offset = mx + 24;
@@ -6802,13 +7351,18 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
             canvas.draw_corner_brackets(mx + 24, ban_y, (mw - 48) as u32, ban_h as u32, 14, 0x00C084FC);
 
             canvas.draw_badge(mx + 38, ban_y + 14, 46, 28, 0x002E1065, 0x00C084FC, "1.1", 0x00F3E8FF, 2);
-            canvas.draw_text(mx + 94, ban_y + 14, "ASSISTANT DE CRÉATION DE JEU EN 6 ÉTAPES (RÉSOLVEUR R1-R6)", 0x00F8FAFC, 2);
-            canvas.draw_text_body(mx + 94, ban_y + 36, "Configurez genres multiples, univers 2D, aptitudes du joueur, physique et gameplay.", 0x00CBD5E1, 12.0);
+            canvas.draw_text(mx + 94, ban_y + 14, "ASSISTANT DE CRÉATION GUIDÉ (6 ÉTAPES)", 0x00F8FAFC, 2);
+            canvas.draw_text_body(mx + 94, ban_y + 36, "Configurez genres, héros, physique et gameplay 2D.", 0x00CBD5E1, 12.0);
 
-            let wiz_btn_w = 280;
-            let wiz_btn_x = mx + mw - 24 - wiz_btn_w - 14;
-            canvas.draw_badge(wiz_btn_x, ban_y + 22, wiz_btn_w as u32, 36, 0x003B0764, 0x00A855F7, "▶ OUVRIR L'ASSISTANT COMPLET [W]", 0x00F3E8FF, 1);
+            let wiz_btn_w = 200;
+            let wiz_btn_x = mx + mw - 24 - wiz_btn_w - 12;
+            canvas.draw_badge(wiz_btn_x, ban_y + 22, wiz_btn_w as u32, 36, 0x003B0764, 0x00A855F7, "▶ ASSISTANT [W]", 0x00F3E8FF, 1);
             self.editor.welcome_recipe_btn_hitbox = Some((wiz_btn_x, ban_y + 22, wiz_btn_w as u32, 36));
+
+            let ai_hero_w = 190;
+            let ai_hero_x = wiz_btn_x - ai_hero_w - 12;
+            canvas.draw_badge(ai_hero_x, ban_y + 22, ai_hero_w as u32, 36, 0x002E1065, 0x0038BDF8, "🤖 INTENTION IA [I]", 0x00F0F9FF, 1);
+            self.editor.welcome_hero_ai_btn_hitbox = Some((ai_hero_x, ban_y + 22, ai_hero_w as u32, 36));
 
             // Section Démarrage Rapide : 5 Archétypes
             let sec_y = my + 204;
@@ -6878,7 +7432,7 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         // ==========================================
         // VUE ONGLET 1 : CHARGER UN PROJET SUR DISQUE (1.2)
         // ==========================================
-        else {
+        else if self.editor.welcome_tab == 1 {
             let sec_y = my + 106;
             canvas.draw_text(mx + 26, sec_y, "PROJETS RÉCENTS ET SCÈNES D'EXEMPLE SUR DISQUE (SECTION 1.2) :", 0x00F8FAFC, 2);
             canvas.draw_text_body(mx + 26, sec_y + 20, "Sélectionnez un projet pour le lancer immédiatement en Mode Jeu ou l'éditer dans l'Atelier Studio :", 0x0094A3B8, 12.0);
@@ -6924,6 +7478,157 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
                 self.editor.welcome_scene_hitboxes.push((idx, true, studio_btn_x, ry + 18, studio_btn_w as u32, 34));
             }
         }
+        // ==============================================================
+        // VUE ONGLET 2 : INTENTION IA & CONFIGURATION DU MODÈLE LLM (1.3)
+        // ==============================================================
+        else {
+            let sec_y = my + 104;
+            canvas.draw_text(mx + 26, sec_y, "🤖 INTENTION IA & CONFIGURATION DU MODÈLE LLM (SECTION 1.3) :", 0x0038BDF8, 2);
+            canvas.draw_text_body(
+                mx + 26,
+                sec_y + 20,
+                "Connectez un modèle local (LM Studio sur http://127.0.0.1:1234, Ollama) ou Cloud, et pilotez la création de jeu par intention.",
+                0x0094A3B8,
+                12.0,
+            );
+
+            // Sélecteur de Fournisseur / Provider LLM (6 pills)
+            let prov_y = sec_y + 42;
+            let providers = crate::ai_client::AiProvider::ALL;
+            let prov_gap = 8;
+            let prov_w = (mw - 48 - (providers.len() as i32 - 1) * prov_gap) / providers.len() as i32;
+            let prov_h = 30;
+
+            for (idx, &prov) in providers.iter().enumerate() {
+                let px = mx + 24 + idx as i32 * (prov_w + prov_gap);
+                let is_selected = self.editor.ai_config.provider == prov;
+                let is_hov = is_selected || (self.editor.mouse_x >= px as f32 && self.editor.mouse_x <= (px + prov_w) as f32 && self.editor.mouse_y >= prov_y as f32 && self.editor.mouse_y <= (prov_y + prov_h) as f32);
+
+                let (bg, bd, fg) = if is_selected {
+                    (0x003B0764, 0x00C084FC, 0x00FAF5FF)
+                } else if is_hov {
+                    (0x001E293B, 0x0038BDF8, 0x00F0F9FF)
+                } else {
+                    (0x000F172A, 0x00334155, 0x0064748B)
+                };
+
+                canvas.draw_badge(px, prov_y, prov_w as u32, prov_h as u32, bg, bd, prov.short_label(), fg, 1);
+                self.editor.welcome_ai_provider_hitboxes.push((prov, px, prov_y, prov_w as u32, prov_h as u32));
+            }
+
+            // Ligne de Statut & Test de Connexion LLM
+            let stat_y = prov_y + 38;
+            let stat_h = 34;
+            canvas.draw_rect(mx + 24, stat_y, (mw - 48) as u32, stat_h as u32, 0x000F172A);
+            canvas.draw_rect_outline(mx + 24, stat_y, (mw - 48) as u32, stat_h as u32, 0x001E293B, 1);
+
+            let active_prov = self.editor.ai_config.provider;
+            let default_desc = match active_prov {
+                crate::ai_client::AiProvider::LmStudio => "🏢 LM Studio Local • http://127.0.0.1:1234 • nvidia/nemotron-3-nano-4b",
+                crate::ai_client::AiProvider::Ollama => "🦙 Ollama Local • http://127.0.0.1:11434 • qwen2.5-coder / llama3",
+                crate::ai_client::AiProvider::Claude => "🤖 Claude (Anthropic) • claude-3-5-sonnet • Clé requise : ANTHROPIC_API_KEY",
+                crate::ai_client::AiProvider::Gemini => "🔮 Google Gemini • gemini-1.5-flash • Clé requise : GEMINI_API_KEY",
+                crate::ai_client::AiProvider::DeepSeek => "⚡ DeepSeek • deepseek-chat • Clé requise : DEEPSEEK_API_KEY",
+                crate::ai_client::AiProvider::OpenAI => "🟢 OpenAI • gpt-4o-mini • Clé requise : OPENAI_API_KEY",
+                crate::ai_client::AiProvider::OfflineLocal => "⚡ Moteur Local Intégré • 100% Autonome, Déterministe et Hors-ligne",
+            };
+
+            let (disp_msg, disp_col) = if let Some((ok, ref msg)) = self.editor.ai_test_result {
+                (msg.as_str(), if ok { 0x0010B981 } else { 0x00EF4444 })
+            } else {
+                (default_desc, 0x0094A3B8)
+            };
+
+            canvas.draw_text_body(mx + 36, stat_y + 10, disp_msg, disp_col, 12.0);
+
+            let test_w = 185;
+            let test_x = mx + mw - 24 - test_w - 6;
+            canvas.draw_badge(test_x, stat_y + 4, test_w as u32, 26, 0x001E293B, 0x0038BDF8, "🔌 TESTER LA CONNEXION", 0x0038BDF8, 1);
+            self.editor.welcome_ai_test_btn_hitbox = Some((test_x, stat_y + 4, test_w as u32, 26));
+
+            // Champ de saisie d'intention libre (Jusqu'à 400 caractères)
+            let input_title_y = stat_y + 44;
+            canvas.draw_text(mx + 26, input_title_y, "VOTRE INTENTION EN LANGAGE NATUREL :", 0x00F8FAFC, 1);
+
+            // Compteur de caractères
+            let char_count = self.editor.intent_input_text.chars().count();
+            let count_txt = format!("{}/400 car.", char_count);
+            let count_col = if char_count >= 380 { 0x00EF4444 } else if char_count > 0 { 0x0038BDF8 } else { 0x0064748B };
+
+            // Badge de bascule Clavier AZERTY / QWERTY
+            let kbd_txt = format!("[CLAVIER : {} (CLIC)]", self.editor.keyboard_layout.label());
+            let kbd_w = 180;
+            let kbd_x = mx + mw - 24 - kbd_w;
+            canvas.draw_badge(kbd_x, input_title_y - 4, kbd_w as u32, 22, 0x001E293B, 0x00A855F7, &kbd_txt, 0x00F3E8FF, 1);
+            self.editor.keyboard_layout_hitbox = Some((kbd_x, input_title_y - 4, kbd_w as u32, 22));
+
+            canvas.draw_text(kbd_x - 96, input_title_y, &count_txt, count_col, 1);
+
+            let box_y = input_title_y + 20;
+            let btn_gen_w = 220;
+            let box_w = (mw - 48) - btn_gen_w - 12;
+            let box_h = 38;
+
+            canvas.draw_rect(mx + 24, box_y, box_w as u32, box_h as u32, 0x000F172A);
+            canvas.draw_rect_outline(mx + 24, box_y, box_w as u32, box_h as u32, 0x0038BDF8, 2);
+
+            if self.editor.ai_generation_in_progress {
+                let blink = (self.elapsed_time * 5.0).sin() > 0.0;
+                let col = if blink { 0x00F59E0B } else { 0x00D97706 };
+                canvas.draw_text(mx + 36, box_y + 12, &self.editor.ai_status_text, col, 1);
+            } else if self.editor.intent_input_text.is_empty() {
+                canvas.draw_text(mx + 36, box_y + 12, "Décrivez votre univers (ex: 'donjon de lave avec pièges et boss dragon')...", 0x0064748B, 1);
+            } else {
+                let full_text = &self.editor.intent_input_text;
+                let c_count = full_text.chars().count();
+                let display_slice: String = if c_count > 60 {
+                    format!("...{}", full_text.chars().skip(c_count - 60).collect::<String>())
+                } else {
+                    full_text.clone()
+                };
+                let cursor = if (self.elapsed_time * 3.0).fract() > 0.5 { "_" } else { " " };
+                let display_txt = format!("> {}{}", display_slice, cursor);
+                canvas.draw_text(mx + 36, box_y + 12, &display_txt, 0x00F3E8FF, 1);
+            }
+
+            let gen_btn_x = mx + 24 + box_w + 12;
+            let gen_txt = if self.editor.ai_generation_in_progress { "GÉNÉRATION..." } else { "⚡ GÉNÉRER MON JEU [ENTRÉE]" };
+            let gen_bg = if self.editor.ai_generation_in_progress { 0x0078350F } else { 0x003B0764 };
+            canvas.draw_badge(gen_btn_x, box_y, btn_gen_w as u32, box_h as u32, gen_bg, 0x00A855F7, gen_txt, 0x00F3E8FF, 1);
+            self.editor.welcome_ai_generate_btn_hitbox = Some((gen_btn_x, box_y, btn_gen_w as u32, box_h as u32));
+
+            // Grille de 4 Presets de Mondes Prédéfinis en Français
+            let pres_title_y = box_y + box_h + 16;
+            canvas.draw_text(mx + 26, pres_title_y, "OU SÉLECTIONNEZ UN ARCHÉTYPE DE MONDE PRÉDÉFINI EN 1 CLIC :", 0x00CBD5E1, 1);
+
+            let presets = [
+                ("🏰 Donjon de Lave & Boss Titan", "Héros ninja, gouffres de lave ardents, clé dorée et combat contre le boss titan démon."),
+                ("❄️ Forteresse Glacée & Énigmes", "Chevalier errant, slimes de givre, dalles de saut cinétiques et coffre scellé."),
+                ("⚡ Laboratoire Cyber & Drones A*", "Drones patrouilleurs A* en réseau, portails quantiques et cristaux d'énergie réactifs."),
+                ("🌲 Forêt Mystique & Sokoban", "Golem de pierre, énigme de blocs Sokoban, portes runiques et potions de vitalité."),
+            ];
+
+            let card_y_base = pres_title_y + 16;
+            let card_h = 46;
+            let card_gap = 50;
+
+            for (idx, &(title, desc)) in presets.iter().enumerate() {
+                let cy = card_y_base + (idx as i32 * card_gap);
+                let cw = mw - 48;
+
+                canvas.draw_rect(mx + 24, cy, cw as u32, card_h as u32, 0x000F172A);
+                canvas.draw_rect_outline(mx + 24, cy, cw as u32, card_h as u32, 0x001E293B, 1);
+
+                canvas.draw_text(mx + 36, cy + 8, title, 0x0038BDF8, 1);
+                canvas.draw_text_body(mx + 36, cy + 26, desc, 0x0094A3B8, 11.5);
+
+                let pbtn_w = 110;
+                let pbtn_x = mx + cw - pbtn_w - 6;
+                canvas.draw_badge(pbtn_x, cy + 8, pbtn_w as u32, 30, 0x002E1065, 0x00A855F7, "⚡ GÉNÉRER", 0x00F3E8FF, 1);
+
+                self.editor.welcome_ai_preset_hitboxes.push((idx, mx + 24, cy, cw as u32, card_h as u32));
+            }
+        }
 
         // ==========================================
         // BARRE D'ACTIONS INFÉRIEURE DU HUB
@@ -6932,28 +7637,39 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         let btn_h = 36;
 
         // Bouton 1 : Play Immédiat
-        let b1_w = 210;
+        let b1_w = 165;
         let b1_x = mx + 24;
-        canvas.draw_badge(b1_x, bottom_btn_y, b1_w as u32, btn_h as u32, 0x00065F46, 0x0010B981, "▶ CONTINUER LA DÉMO", 0x00ECFDF5, 1);
+        canvas.draw_badge(b1_x, bottom_btn_y, b1_w as u32, btn_h as u32, 0x00065F46, 0x0010B981, "▶ CONTINUER DÉMO", 0x00ECFDF5, 1);
         self.editor.welcome_play_btn_hitbox = Some((b1_x, bottom_btn_y, b1_w as u32, btn_h as u32));
 
         // Bouton 2 : Studio Mode
-        let b2_w = 210;
-        let b2_x = b1_x + b1_w + 14;
+        let b2_w = 155;
+        let b2_x = b1_x + b1_w + 12;
         canvas.draw_badge(b2_x, bottom_btn_y, b2_w as u32, btn_h as u32, 0x004C1D95, 0x00A855F7, "★ ATELIER STUDIO", 0x00F3E8FF, 1);
         self.editor.welcome_studio_btn_hitbox = Some((b2_x, bottom_btn_y, b2_w as u32, btn_h as u32));
 
-        // Bouton 3 : Guide Pédagogique
-        let b3_w = 210;
-        let b3_x = b2_x + b2_w + 14;
-        canvas.draw_badge(b3_x, bottom_btn_y, b3_w as u32, btn_h as u32, 0x00075985, 0x0038BDF8, "● GUIDE PÉDAGOGIQUE [H]", 0x00F0F9FF, 1);
-        self.editor.welcome_guide_btn_hitbox = Some((b3_x, bottom_btn_y, b3_w as u32, btn_h as u32));
+        // Bouton 3 : Intention IA & Config LLM
+        let b3_w = 185;
+        let b3_x = b2_x + b2_w + 12;
+        let (ia_bg, ia_bd, ia_fg) = if self.editor.welcome_tab == 2 {
+            (0x00581C87, 0x00C084FC, 0x00FAF5FF)
+        } else {
+            (0x002E1065, 0x00A855F7, 0x00F3E8FF)
+        };
+        canvas.draw_badge(b3_x, bottom_btn_y, b3_w as u32, btn_h as u32, ia_bg, ia_bd, "🤖 INTENTION IA [I]", ia_fg, 1);
+        self.editor.welcome_bottom_ai_btn_hitbox = Some((b3_x, bottom_btn_y, b3_w as u32, btn_h as u32));
 
-        // Bouton 4 : Fermer / Échap
-        let b4_w = (mx + mw - 24) - (b3_x + b3_w + 14);
-        let b4_x = b3_x + b3_w + 14;
-        canvas.draw_badge(b4_x, bottom_btn_y, b4_w as u32, btn_h as u32, 0x001E293B, 0x0064748B, "✕ FERMER [ÉCHAP]", 0x00CBD5E1, 1);
-        self.editor.welcome_close_btn_hitbox = Some((b4_x, bottom_btn_y, b4_w as u32, btn_h as u32));
+        // Bouton 4 : Guide Pédagogique
+        let b4_w = 185;
+        let b4_x = b3_x + b3_w + 12;
+        canvas.draw_badge(b4_x, bottom_btn_y, b4_w as u32, btn_h as u32, 0x00075985, 0x0038BDF8, "● GUIDE PÉDAGOGIQUE [H]", 0x00F0F9FF, 1);
+        self.editor.welcome_guide_btn_hitbox = Some((b4_x, bottom_btn_y, b4_w as u32, btn_h as u32));
+
+        // Bouton 5 : Fermer / Échap
+        let b5_w = (mx + mw - 24) - (b4_x + b4_w + 12);
+        let b5_x = b4_x + b4_w + 12;
+        canvas.draw_badge(b5_x, bottom_btn_y, b5_w as u32, btn_h as u32, 0x001E293B, 0x0064748B, "✕ FERMER [ÉCHAP]", 0x00CBD5E1, 1);
+        self.editor.welcome_close_btn_hitbox = Some((b5_x, bottom_btn_y, b5_w as u32, btn_h as u32));
     }
 
     /// Déclenche l'analyse d'intention en langage naturel et génère un patch d'assistance IA avec validation Sandbox
@@ -7233,6 +7949,20 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
         // Section 1 : Champ de saisie d'intention libre
         canvas.draw_text(mx + 20, my + 124, "INTENTION EN LANGAGE NATUREL :", 0x0038BDF8, 1);
 
+        // Compteur de caractères dynamique (jusqu'à 400 car.)
+        let char_count = self.editor.intent_input_text.chars().count();
+        let count_txt = format!("{}/400 car.", char_count);
+        let count_col = if char_count >= 380 { 0x00EF4444 } else if char_count > 0 { 0x0038BDF8 } else { 0x0064748B };
+
+        // Badge cliquable d'adaptation disposition Clavier (AZERTY Français / QWERTY)
+        let kbd_txt = format!("[CLAVIER : {} (CLIC)]", self.editor.keyboard_layout.label());
+        let kbd_w = 180;
+        let kbd_x = mx + mw - 200 - kbd_w;
+        canvas.draw_badge(kbd_x, my + 118, kbd_w as u32, 20, 0x001E293B, 0x00A855F7, &kbd_txt, 0x00F3E8FF, 1);
+        self.editor.keyboard_layout_hitbox = Some((kbd_x, my + 118, kbd_w as u32, 20));
+
+        canvas.draw_text(kbd_x - 96, my + 124, &count_txt, count_col, 1);
+
         let input_box_w = mw - 220;
         let input_box_h = 36;
         let input_box_x = mx + 20;
@@ -7246,10 +7976,17 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
             let col = if blink { 0x00F59E0B } else { 0x00D97706 };
             canvas.draw_text(input_box_x + 12, input_box_y + 11, &self.editor.ai_status_text, col, 1);
         } else if self.editor.intent_input_text.is_empty() {
-            canvas.draw_text(input_box_x + 12, input_box_y + 11, "Tapez ici (ex: 'robot ninja avec shurikens', 'drones en essaim')...", 0x0064748B, 1);
+            canvas.draw_text(input_box_x + 12, input_box_y + 11, "Tapez votre intention en français (ex: 'robot ninja avec shurikens')...", 0x0064748B, 1);
         } else {
+            let full_text = &self.editor.intent_input_text;
+            let c_count = full_text.chars().count();
+            let display_slice: String = if c_count > 58 {
+                format!("...{}", full_text.chars().skip(c_count - 58).collect::<String>())
+            } else {
+                full_text.clone()
+            };
             let cursor = if (self.elapsed_time * 3.0).fract() > 0.5 { "_" } else { " " };
-            let display_txt = format!("> {}{}", self.editor.intent_input_text, cursor);
+            let display_txt = format!("> {}{}", display_slice, cursor);
             canvas.draw_text(input_box_x + 12, input_box_y + 11, &display_txt, 0x00F3E8FF, 1);
         }
 
@@ -7266,8 +8003,8 @@ fn key_to_char(key: KeyCode, shift: bool) -> Option<char> {
 
         let presets = [
             ("🛡️ Garde Patrouilleur A* & Alerte", "Ajoute un garde hostile avec vision conique, alerte sonore et poursuite A* vers le joueur."),
-            ("📦 Coffre au Trésor & Clé de Donjon", "Génère un coffre scellé nécessitant la clé 'key_dungeon' conférant 150 points et une potion."),
-            ("⚠️ Zone de Lave & Piège Sismique", "Place une zone de lave infligeant 35 dégâts au contact avec étincelles continues."),
+            ("📦 Coffre au Trésor & Clé de Donjon", "Génère un coffre scellé nécessitant la clé dorée et conférant 150 points de score."),
+            ("⚠️ Zone de Lave & Piège Sismique", "Place une zone de lave ardente infligeant 35 dégâts au contact avec étincelles continues."),
             ("🌀 Portail Dimensionnel Quantique", "Crée un portail téléportant le joueur avec distorsion arcanique et audio spatial."),
         ];
 
@@ -8982,6 +9719,63 @@ mod tests {
     }
 
     #[test]
+    fn test_player_moves_through_chamber_to_door_and_opens_it() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        let p_idx = state.player_index().unwrap();
+        let init_x = state.entities[p_idx].transform.x;
+        let init_y = state.entities[p_idx].transform.y;
+        assert_eq!(init_x as i32, 189);
+        assert_eq!(init_y as i32, 106);
+
+        // 1. Déplacement vers le bas pour contourner le mur supérieur (x=350, y=80..250)
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyS);
+        for _ in 0..45 {
+            state.update(0.016, &input);
+        }
+        input.on_key_up(KeyCode::KeyS);
+
+        // 2. Déplacement vers la droite à travers la salle
+        input.on_key_down(KeyCode::KeyD);
+        for _ in 0..120 {
+            state.update(0.016, &input);
+        }
+        input.on_key_up(KeyCode::KeyD);
+
+        let p_pos_x = state.entities[p_idx].transform.x;
+        assert!(p_pos_x > 500.0, "Le joueur a bien avancé vers la droite");
+
+        // 3. Navigation A* directe vers la porte (830, 310)
+        let mut nav = crate::navigation::NavAgent::go_to(260.0, 830.0, 310.0);
+        nav.reach_distance = 18.0;
+        nav.avoid_hazards = true;
+        state.entities[p_idx].nav_agent = Some(nav);
+
+        let empty_input = InputState::new();
+        for _ in 0..150 {
+            state.update(0.016, &empty_input);
+        }
+
+        let final_p = &state.entities[p_idx];
+        let door_idx = state.entities.iter().position(|e| e.tag == "door").unwrap();
+        let door_x = state.entities[door_idx].transform.x;
+        let door_y = state.entities[door_idx].transform.y;
+        let dist_to_door = ((final_p.transform.x - door_x).powi(2) + (final_p.transform.y - door_y).powi(2)).sqrt();
+        assert!(dist_to_door < 80.0, "Le joueur est arrivé devant la porte (dist: {:.1})", dist_to_door);
+
+        // 4. Interaction pour ouvrir la porte
+        state.kvl_context.set_var("score", Value::Int(50));
+        let mut interact_input = InputState::new();
+        interact_input.on_key_down(KeyCode::KeyE);
+        state.update(0.016, &interact_input);
+
+        assert!(!state.entities[door_idx].collider.as_ref().unwrap().is_solid, "La porte s'est ouverte");
+        assert!(state.status_message.contains("déverrouillée et ouverte"));
+    }
+
+    #[test]
     fn test_audio_mute_toggle_and_gameplay_sound_triggers() {
         let mut state = GameState::load_from_scene(get_test_scene_path())
             .expect("Chargement de la scène de test");
@@ -9400,6 +10194,62 @@ mod tests {
 
         let p_jumping = &state.entities[p_idx];
         assert!(p_jumping.movement.as_ref().unwrap().vy < 0.0, "Le saut doit donner une impulsion vers le haut (vy < 0)");
+    }
+
+    #[test]
+    fn test_platformer_one_way_platform_support() {
+        let mut state = GameState::load_from_scene("assets/scenes/platformer_01.scene.json")
+            .expect("Chargement du niveau plateforme");
+
+        let p_idx = state.player_index().expect("Joueur présent");
+
+        // 1. Ajouter une plateforme semi-solide One-Way en Y = 300.0
+        let plat_id = state.next_entity_id();
+        let mut plat = crate::entity::Entity::new(
+            plat_id,
+            "Plateforme_OneWay",
+            "platform",
+            crate::entity::Transform2D::new(60.0, 300.0, 200.0, 16.0),
+        );
+        plat.collider = Some(crate::entity::Collider2D::one_way(200.0, 16.0));
+        state.entities.push(plat);
+        state.rebuild_static_spatial_grid();
+
+        // 2. Positionner le joueur au-dessus en chute libre
+        state.entities[p_idx].transform.x = 100.0;
+        state.entities[p_idx].transform.y = 200.0;
+        if let Some(ref mut mov) = state.entities[p_idx].movement {
+            mov.vy = 100.0;
+        }
+
+        let input = InputState::new();
+        for _ in 0..30 {
+            state.update(0.016, &input);
+        }
+
+        // Le joueur doit avoir atterri sur le dessus de la plateforme (Y = 300 - hauteur_joueur)
+        let player_h = state.entities[p_idx].transform.h;
+        assert_eq!(
+            state.entities[p_idx].transform.y,
+            300.0 - player_h,
+            "Le joueur doit atterrir sur la plateforme semi-solide"
+        );
+
+        if let MovementMode::Platformer { is_grounded, .. } = state.entities[p_idx].movement.as_ref().unwrap().mode {
+            assert!(is_grounded, "Le joueur doit être grounded sur la plateforme OneWay");
+        }
+
+        // 3. Traversée descendante volontaire avec Flèche Bas
+        let mut drop_input = InputState::new();
+        drop_input.on_key_down(KeyCode::ArrowDown);
+        state.update(0.016, &drop_input);
+        state.update(0.016, &drop_input);
+
+        // Le joueur doit avoir traversé la plateforme vers le bas
+        assert!(
+            state.entities[p_idx].transform.y > 300.0 - player_h,
+            "L'appui sur Bas doit permettre de descendre à travers la plateforme"
+        );
     }
 
     #[test]
@@ -11176,7 +12026,7 @@ mod tests {
         state.editor.welcome_tab = 0;
         state.render(&mut canvas);
 
-        assert_eq!(state.editor.welcome_tab_hitboxes.len(), 2, "Doit avoir les 2 onglets 1.1 et 1.2");
+        assert_eq!(state.editor.welcome_tab_hitboxes.len(), 3, "Doit avoir les 3 onglets 1.1, 1.2 et 1.3");
         assert_eq!(state.editor.welcome_archetype_hitboxes.len(), 5, "Doit afficher les 5 archétypes");
 
         // Sauvegarder un snapshot de l'onglet 1.1
@@ -11550,6 +12400,156 @@ mod tests {
         // Vérification de la physique du joueur (Plateforme avec gravité)
         let player = state.player_entity().unwrap();
         assert!(matches!(player.movement.as_ref().unwrap().mode, MovementMode::Platformer { .. }));
+    }
+
+    #[test]
+    fn test_welcome_ai_tab_configuration_and_azerty_keyboard() {
+        let mut state = GameState::load_from_scene(get_test_scene_path()).unwrap();
+        let mut canvas = Canvas::new(1200, 800);
+
+        // 1. Ouvrir le Hub de Projets & Accueil
+        state.editor.show_welcome_modal = true;
+        state.editor.welcome_tab = 0;
+        state.render(&mut canvas);
+        save_test_ppm(&canvas, "/tmp/desktop_hub_tab0.ppm");
+
+        assert_eq!(state.editor.welcome_tab_hitboxes.len(), 3, "Doit exposer 3 onglets (1.1, 1.2, 1.3)");
+        assert!(state.editor.welcome_hero_ai_btn_hitbox.is_some(), "Le bouton héro IA doit être présent dans l'onglet 1.1");
+        assert!(state.editor.welcome_bottom_ai_btn_hitbox.is_some(), "Le bouton IA inférieur doit être présent");
+
+        // 2. Basculer vers l'onglet 1.3 Intention IA via touche I
+        let mut input_i = InputState::new();
+        input_i.on_key_down(KeyCode::KeyI);
+        state.update(0.016, &input_i);
+        assert_eq!(state.editor.welcome_tab, 2, "L'onglet 1.3 Intention IA doit être sélectionné");
+
+        // 3. Rendu de l'onglet 1.3
+        state.render(&mut canvas);
+        save_test_ppm(&canvas, "/tmp/desktop_hub_tab2_ai.ppm");
+
+        assert_eq!(state.editor.welcome_ai_provider_hitboxes.len(), 7, "Doit exposer les 7 providers LLM (Ollama, LM Studio, Claude, Gemini, DeepSeek, OpenAI, Offline)");
+        assert_eq!(state.editor.welcome_ai_preset_hitboxes.len(), 4, "Doit exposer 4 presets de mondes");
+        assert!(state.editor.welcome_ai_test_btn_hitbox.is_some(), "Le bouton de test LLM doit être cliquable");
+        assert!(state.editor.welcome_ai_generate_btn_hitbox.is_some(), "Le bouton de génération doit être présent");
+        assert!(state.editor.keyboard_layout_hitbox.is_some(), "Le badge de disposition clavier doit être cliquable");
+
+        // 4. Test du clic sur le bouton de test de connexion LLM
+        let (tx, ty, tw, th) = state.editor.welcome_ai_test_btn_hitbox.unwrap();
+        let mut input_test = InputState::new();
+        input_test.on_mouse_move((tx + (tw / 2) as i32) as f32, (ty + (th / 2) as i32) as f32);
+        input_test.on_mouse_down();
+        state.update(0.016, &input_test);
+        assert!(state.editor.ai_test_result.is_some(), "Le test LLM doit avoir produit un résultat");
+
+        // 5. Test de saisie fluide avec caractères accentués français (AZERTY)
+        state.editor.intent_input_text.clear();
+        let mut input_chars = InputState::new();
+        input_chars.on_char('d');
+        input_chars.on_char('o');
+        input_chars.on_char('n');
+        input_chars.on_char('j');
+        input_chars.on_char('o');
+        input_chars.on_char('n');
+        input_chars.on_char(' ');
+        input_chars.on_char('p');
+        input_chars.on_char('i');
+        input_chars.on_char('è');
+        input_chars.on_char('g');
+        input_chars.on_char('é');
+        state.update(0.016, &input_chars);
+        assert_eq!(state.editor.intent_input_text, "donjon piègé");
+
+        // 6. Test de bascule de disposition de clavier (AZERTY <-> QWERTY)
+        let (kx, ky, kw, kh) = state.editor.keyboard_layout_hitbox.unwrap();
+        let mut input_kbd = InputState::new();
+        input_kbd.on_mouse_move((kx + (kw / 2) as i32) as f32, (ky + (kh / 2) as i32) as f32);
+        input_kbd.on_mouse_down();
+        state.update(0.016, &input_kbd);
+        assert_eq!(state.editor.keyboard_layout, crate::editor::KeyboardLayout::UsQwerty);
+
+        // 7. Test de la limite stricte de 400 caractères
+        state.editor.intent_input_text.clear();
+        let mut input_overflow = InputState::new();
+        for _ in 0..450 {
+            input_overflow.on_char('a');
+        }
+        state.update(0.016, &input_overflow);
+        assert_eq!(state.editor.intent_input_text.chars().count(), 400, "Le prompt ne doit pas dépasser 400 caractères");
+
+        // 8. Rendu et capture de la boîte de dialogue Assistant IA dans l'Atelier Studio
+        state.editor.show_welcome_modal = false;
+        state.editor.mode = EditorMode::Edit;
+        state.editor.show_intent_bar = true;
+        state.editor.intent_input_text = "Créer un boss démon cracheur de lave avec pièges et énigme Sokoban".to_string();
+        state.render(&mut canvas);
+        save_test_ppm(&canvas, "/tmp/desktop_studio_ai_modal.ppm");
+        assert!(state.editor.keyboard_layout_hitbox.is_some());
+        assert_eq!(state.editor.intent_preset_hitboxes.len(), 4);
+    }
+
+    #[test]
+    fn test_blank_project_initialization_starts_in_edit_mode() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement initial");
+
+        state.new_blank_project("Mon Studio Vierge", crate::recipe::GameGenre::Platformer);
+
+        assert_eq!(state.scene_name, "Mon Studio Vierge");
+        assert_eq!(state.editor.mode, EditorMode::Edit, "Un projet vierge doit démarrer en mode Studio Edit");
+        assert!(state.entities.len() >= 2, "Doit contenir le joueur et le sol de référence");
+        assert!(state.entities.iter().any(|e| e.tag == "player"));
+        assert!(state.entities.iter().any(|e| e.tag == "platform"));
+    }
+
+    #[test]
+    fn test_export_current_project_and_reload_roundtrip() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement initial");
+
+        let exported = state.export_current_project();
+        assert_eq!(exported.metadata.title, state.scene_name);
+        assert_eq!(exported.scene.entities.len(), state.entities.len());
+
+        let json = exported.to_json().expect("Sérialisation JSON du projet");
+        let loaded_proj = crate::project::KaractiProject::from_json(&json).expect("Désérialisation JSON");
+
+        state.load_project(loaded_proj);
+        assert_eq!(state.entities.len(), exported.scene.entities.len());
+    }
+
+    #[test]
+    fn test_get_entities_summary_json_contains_all_fields() {
+        let state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement initial");
+
+        let json_summary = state.get_entities_summary_json();
+        assert!(json_summary.contains("\"id\":"));
+        assert!(json_summary.contains("\"name\":"));
+        assert!(json_summary.contains("\"tag\":"));
+        assert!(json_summary.contains("\"x\":"));
+        assert!(json_summary.contains("\"y\":"));
+        assert!(json_summary.contains("\"is_solid\":"));
+    }
+
+    #[test]
+    fn test_update_and_delete_entity_by_id() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement initial");
+
+        let initial_count = state.entities.len();
+        let target_id = state.entities[0].id;
+
+        // Mise à jour
+        let ok = state.update_entity_transform_by_id(target_id, 450.0, 320.0, 60.0, 60.0);
+        assert!(ok);
+        assert_eq!(state.entities[0].transform.x, 450.0);
+        assert_eq!(state.entities[0].transform.w, 60.0);
+
+        // Suppression
+        let del_ok = state.delete_entity_by_id(target_id);
+        assert!(del_ok);
+        assert_eq!(state.entities.len(), initial_count - 1);
+        assert!(!state.entities.iter().any(|e| e.id == target_id));
     }
 }
 

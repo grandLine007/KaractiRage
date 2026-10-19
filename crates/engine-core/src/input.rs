@@ -5,6 +5,7 @@ use winit::keyboard::KeyCode;
 pub struct InputState {
     pub pressed_keys: HashSet<KeyCode>,
     pub just_pressed_keys: HashSet<KeyCode>,
+    pub received_chars: Vec<char>,
     pub mouse_x: f32,
     pub mouse_y: f32,
     pub mouse_pressed: bool,
@@ -16,6 +17,10 @@ pub struct InputState {
 impl InputState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn on_char(&mut self, ch: char) {
+        self.received_chars.push(ch);
     }
 
     pub fn on_key_down(&mut self, key: KeyCode) {
@@ -54,6 +59,7 @@ impl InputState {
 
     pub fn clear_transient(&mut self) {
         self.just_pressed_keys.clear();
+        self.received_chars.clear();
         self.mouse_just_clicked = false;
         self.mouse_just_released = false;
         self.mouse_right_just_clicked = false;

@@ -134,6 +134,11 @@ impl DialogueBox {
             return DialogueAction::None;
         }
 
+        if input.is_key_just_pressed(winit::keyboard::KeyCode::Escape) {
+            self.close();
+            return DialogueAction::Closed;
+        }
+
         let is_typing = self.is_typing();
 
         let mx = input.mouse_x as i32;

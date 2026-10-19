@@ -241,6 +241,7 @@ pub struct PaletteItemHitbox {
 
 pub struct EditorState {
     pub mode: EditorMode,
+    pub embedded_mode: bool,
     pub selected: SelectedEntity,
     pub active_tool: StudioTool,
     pub brush_tile: BrushTile,
@@ -332,6 +333,29 @@ pub struct EditorState {
     pub export_close_btn_hitbox: Option<(i32, i32, u32, u32)>,
     pub recipe_wizard: GameRecipeWizardState,
     pub recipe_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub keyboard_layout: KeyboardLayout,
+    pub keyboard_layout_hitbox: Option<(i32, i32, u32, u32)>,
+    pub welcome_hero_ai_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub welcome_ai_test_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub welcome_ai_generate_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    pub welcome_ai_provider_hitboxes: Vec<(crate::ai_client::AiProvider, i32, i32, u32, u32)>,
+    pub welcome_ai_preset_hitboxes: Vec<(usize, i32, i32, u32, u32)>,
+    pub welcome_bottom_ai_btn_hitbox: Option<(i32, i32, u32, u32)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum KeyboardLayout {
+    FrenchAzerty,
+    UsQwerty,
+}
+
+impl KeyboardLayout {
+    pub fn label(&self) -> &'static str {
+        match self {
+            KeyboardLayout::FrenchAzerty => "AZERTY (FR)",
+            KeyboardLayout::UsQwerty => "QWERTY (US)",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -791,6 +815,7 @@ impl EditorState {
     pub fn new() -> Self {
         Self {
             mode: EditorMode::Play,
+            embedded_mode: false,
             selected: SelectedEntity::None,
             active_tool: StudioTool::Select,
             brush_tile: BrushTile::Wall,
@@ -881,7 +906,73 @@ impl EditorState {
             export_close_btn_hitbox: None,
             recipe_wizard: GameRecipeWizardState::new(),
             recipe_btn_hitbox: None,
+            keyboard_layout: KeyboardLayout::FrenchAzerty,
+            keyboard_layout_hitbox: None,
+            welcome_hero_ai_btn_hitbox: None,
+            welcome_ai_test_btn_hitbox: None,
+            welcome_ai_generate_btn_hitbox: None,
+            welcome_ai_provider_hitboxes: Vec::new(),
+            welcome_ai_preset_hitboxes: Vec::new(),
+            welcome_bottom_ai_btn_hitbox: None,
         }
+    }
+
+    pub fn is_welcome_bottom_ai_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((x, y, w, h)) = self.welcome_bottom_ai_btn_hitbox {
+            mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_keyboard_layout_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((x, y, w, h)) = self.keyboard_layout_hitbox {
+            mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_welcome_hero_ai_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((x, y, w, h)) = self.welcome_hero_ai_btn_hitbox {
+            mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_welcome_ai_test_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((x, y, w, h)) = self.welcome_ai_test_btn_hitbox {
+            mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn is_welcome_ai_generate_clicked(&self, mx: f32, my: f32) -> bool {
+        if let Some((x, y, w, h)) = self.welcome_ai_generate_btn_hitbox {
+            mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32
+        } else {
+            false
+        }
+    }
+
+    pub fn clicked_welcome_ai_provider(&self, mx: f32, my: f32) -> Option<crate::ai_client::AiProvider> {
+        for &(provider, x, y, w, h) in &self.welcome_ai_provider_hitboxes {
+            if mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32 {
+                return Some(provider);
+            }
+        }
+        None
+    }
+
+    pub fn clicked_welcome_ai_preset(&self, mx: f32, my: f32) -> Option<usize> {
+        for &(idx, x, y, w, h) in &self.welcome_ai_preset_hitboxes {
+            if mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32 {
+                return Some(idx);
+            }
+        }
+        None
     }
 
     pub fn is_ai_test_clicked(&self, mx: f32, my: f32) -> bool {

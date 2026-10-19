@@ -1,3 +1,71 @@
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
+/// Glyphe pré-rastérisé mis en cache pour éliminer toute allocation heap dans le hot path de rendu
+#[derive(Clone)]
+pub struct CachedGlyph {
+    pub metrics: fontdue::Metrics,
+    pub bitmap: Arc<[u8]>,
+}
+
+/// Cache global de glyphes indexé par (pointeur_police, caractère, taille_quantifiée_x10)
+pub static GLYPH_CACHE: RwLock<Option<HashMap<(usize, char, u16), CachedGlyph>>> = RwLock::new(None);
+
+/// Accède à un glyphe depuis le cache sans aucune allocation heap en régime de croisière
+#[inline]
+pub fn with_cached_glyph<R>(
+    font: &fontdue::Font,
+    c: char,
+    size: f32,
+    f: impl FnOnce(&fontdue::Metrics, &[u8]) -> R,
+) -> R {
+    let font_ptr = font as *const fontdue::Font as usize;
+    let size_key = (size * 10.0).round() as u16;
+    let key = (font_ptr, c, size_key);
+
+    // 1. Fast Path : Accès immédiat en lecture sans clonage d'Arc ni allocation
+    if let Ok(guard) = GLYPH_CACHE.read() {
+        if let Some(ref cache) = *guard {
+            if let Some(cached) = cache.get(&key) {
+                return f(&cached.metrics, &cached.bitmap);
+            }
+        }
+    }
+
+    // 2. Slow Path : Rastérisation unique et mise en cache
+    let (metrics, bitmap) = font.rasterize(c, size);
+    let bitmap_arc: Arc<[u8]> = Arc::from(bitmap.into_boxed_slice());
+    let cached = CachedGlyph {
+        metrics,
+        bitmap: bitmap_arc.clone(),
+    };
+
+    if let Ok(mut guard) = GLYPH_CACHE.write() {
+        let cache = guard.get_or_insert_with(|| HashMap::with_capacity(512));
+        cache.insert(key, cached);
+    }
+
+    f(&metrics, &bitmap_arc)
+}
+
+/// Préchauffe le cache de glyphes pour les polices et tailles clés de l'interface
+pub fn warmup_glyph_cache() {
+    let title = get_title_font();
+    let body = get_body_font();
+    let mono = get_mono_font();
+    let fonts = [title, body, mono];
+    let sizes = [10.0, 11.0, 12.0, 13.0, 14.0, 16.0, 17.0, 20.0];
+    let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;!?+-*/=()[]{}<>'\"_#%~@$éèêëàâîïôùûçÉÈÀÇ°«»€ ";
+
+    for &font in &fonts {
+        for &size in &sizes {
+            for c in chars.chars() {
+                with_cached_glyph(font, c, size, |_, _| {});
+            }
+        }
+    }
+}
+
 pub struct Canvas {
     pub width: usize,
     pub height: usize,
@@ -161,13 +229,25 @@ impl Canvas {
             return;
         }
 
+        // Arithmétique à virgule fixe 16.16 : élimine toute division entière dans les boucles de pixels
+        let step_x_fp = ((matrix_w as u64) << 16) / (dest_w as u64);
+        let step_y_fp = ((matrix_h as u64) << 16) / (dest_h as u64);
+
+        let initial_src_x_fp = (x_start as i32 - dest_x).max(0) as u64 * step_x_fp;
+        let mut src_y_fp = (y_start as i32 - dest_y).max(0) as u64 * step_y_fp;
+        let max_src_x = (matrix_w as usize).saturating_sub(1);
+        let max_src_y = (matrix_h as usize).saturating_sub(1);
+
         for py in y_start..y_end {
             let row_offset = py * self.width;
-            let src_y = (((py as i32 - dest_y) as u64 * matrix_h as u64) / dest_h as u64) as usize;
+            let src_y = ((src_y_fp >> 16) as usize).min(max_src_y);
+            src_y_fp += step_y_fp;
             let src_row = src_y * matrix_w as usize;
 
+            let mut src_x_fp = initial_src_x_fp;
             for px in x_start..x_end {
-                let src_x = (((px as i32 - dest_x) as u64 * matrix_w as u64) / dest_w as u64) as usize;
+                let src_x = ((src_x_fp >> 16) as usize).min(max_src_x);
+                src_x_fp += step_x_fp;
                 let idx = src_row + src_x;
                 if idx < matrix.len() {
                     let color = matrix[idx];
@@ -285,23 +365,26 @@ impl Canvas {
                 continue;
             }
 
-            let (metrics, bitmap) = font.rasterize(c, size);
-            let gx = cur_x + metrics.xmin;
-            let baseline_y = cur_y + ascent;
-            let gy = baseline_y - (metrics.height as i32 + metrics.ymin);
+            let mut advance_w = 0;
+            with_cached_glyph(font, c, size, |metrics, bitmap| {
+                let gx = cur_x + metrics.xmin;
+                let baseline_y = cur_y + ascent;
+                let gy = baseline_y - (metrics.height as i32 + metrics.ymin);
 
-            for row in 0..metrics.height {
-                for col in 0..metrics.width {
-                    let mut alpha = bitmap[row * metrics.width + col];
-                    if alpha > 0 {
-                        if alpha >= 180 {
-                            alpha = 255;
+                for row in 0..metrics.height {
+                    for col in 0..metrics.width {
+                        let mut alpha = bitmap[row * metrics.width + col];
+                        if alpha > 0 {
+                            if alpha >= 180 {
+                                alpha = 255;
+                            }
+                            self.blend_pixel(gx + col as i32, gy + row as i32, color, alpha);
                         }
-                        self.blend_pixel(gx + col as i32, gy + row as i32, color, alpha);
                     }
                 }
-            }
-            cur_x += metrics.advance_width.ceil() as i32;
+                advance_w = metrics.advance_width.ceil() as i32;
+            });
+            cur_x += advance_w;
             max_w = max_w.max(cur_x - start_x);
         }
         (max_w, (cur_y - start_y) + line_height)
@@ -678,5 +761,43 @@ mod tests {
         // Vérifie qu'au moins un pixel a été allumé
         let has_lit_pixels = canvas.buffer.iter().any(|&p| p == 0x00FFFFFF);
         assert!(has_lit_pixels, "Le texte accentué doit produire des pixels allumés");
+    }
+
+    #[test]
+    fn test_glyph_cache_retrieval_and_warmup() {
+        let font = get_title_font();
+        // Vérifie que le warmup s'exécute sans erreur
+        warmup_glyph_cache();
+
+        // Récupère deux fois le même caractère et vérifie la cohérence
+        let mut metrics_first = None;
+        with_cached_glyph(font, 'A', 14.0, |m, _| {
+            metrics_first = Some(*m);
+        });
+
+        let mut metrics_second = None;
+        with_cached_glyph(font, 'A', 14.0, |m, _| {
+            metrics_second = Some(*m);
+        });
+
+        assert_eq!(metrics_first, metrics_second);
+        assert!(metrics_first.unwrap().width > 0);
+    }
+
+    #[test]
+    fn test_draw_pixel_matrix_fixed_point_scaling() {
+        let mut canvas = Canvas::new(32, 32);
+        // Sprite 2x2 en damier
+        let sprite = [
+            0x00FF0000, 0x0000FF00,
+            0x000000FF, 0x00FFFFFF,
+        ];
+        // Rendu mis à l'échelle 4x (8x8)
+        canvas.draw_pixel_matrix(4, 4, 8, 8, &sprite, 2, 2);
+
+        // Le pixel en haut à gauche du sprite doit être rouge
+        assert_eq!(canvas.buffer[4 * 32 + 4], 0x00FF0000);
+        // Le pixel en bas à droite du sprite (4+7, 4+7) doit être blanc
+        assert_eq!(canvas.buffer[11 * 32 + 11], 0x00FFFFFF);
     }
 }

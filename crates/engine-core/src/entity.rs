@@ -437,6 +437,8 @@ pub struct Collider2D {
     pub is_trigger: bool,
     #[serde(default)]
     pub is_pushable: bool,
+    #[serde(default)]
+    pub is_one_way: bool,
     pub layer: u32,
 }
 
@@ -450,6 +452,7 @@ impl Collider2D {
             is_solid: true,
             is_trigger: false,
             is_pushable: false,
+            is_one_way: false,
             layer: 1,
         }
     }
@@ -463,7 +466,23 @@ impl Collider2D {
             is_solid: false,
             is_trigger: true,
             is_pushable: false,
+            is_one_way: false,
             layer: 2,
+        }
+    }
+
+    /// Plateforme semi-solide traversable par le bas (One-Way)
+    pub fn one_way(w: f32, h: f32) -> Self {
+        Self {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            w,
+            h,
+            is_solid: false,
+            is_trigger: false,
+            is_pushable: false,
+            is_one_way: true,
+            layer: 1,
         }
     }
 
@@ -477,6 +496,7 @@ impl Collider2D {
             is_solid: true,
             is_trigger: false,
             is_pushable: true,
+            is_one_way: false,
             layer: 1,
         }
     }

@@ -1,0 +1,84 @@
+{
+  "title": "Donjon Oublié du Chevalier",
+  "description": "Niveau complet avec plateformes en pierre, gouffre de piques, chevalier et coffre au trésor.",
+  "primary_genre": "Platformer",
+  "terrain": {
+    "theme": "dungeon",
+    "platforms": [
+      {
+        "name": "Sol_Donjon",
+        "offset_x": -200.0,
+        "offset_y": 120.0,
+        "width": 500.0,
+        "height": 30.0,
+        "is_solid": true,
+        "color_hex": "#1E293B"
+      },
+      {
+        "name": "Corniche_Haute",
+        "offset_x": 100.0,
+        "offset_y": 30.0,
+        "width": 120.0,
+        "height": 20.0,
+        "is_solid": true,
+        "color_hex": "#334155"
+      }
+    ],
+    "hazards": [
+      {
+        "name": "Fosse_Piques",
+        "offset_x": 20.0,
+        "offset_y": 100.0,
+        "width": 60.0,
+        "height": 20.0,
+        "damage": 40.0,
+        "hazard_type": "spikes"
+      }
+    ]
+  },
+  "gameplay_loop": {
+    "objective": "Ouvrir le coffre doré pour libérer le donjon",
+    "win_condition": "OpenChest",
+    "lose_condition": "PlayerHealthZero",
+    "target_item_name": "Coffre_Or",
+    "win_fanfare": "victory_bell"
+  },
+  "entities": [
+    {
+      "name": "Chevalier_Noble",
+      "kind": "player",
+      "offset_x": 0.0,
+      "offset_y": 80.0,
+      "width": 32.0,
+      "height": 32.0,
+      "health": 6.0,
+      "color_hex": "#3B82F6",
+      "sprite_archetype": "knight",
+      "movement": "none",
+      "has_collider": true,
+      "has_vision": false,
+      "is_flocking": false
+    },
+    {
+      "name": "Coffre_Or",
+      "kind": "item",
+      "offset_x": 140.0,
+      "offset_y": 0.0,
+      "width": 24.0,
+      "height": 24.0,
+      "health": 0.0,
+      "color_hex": "#F59E0B",
+      "sprite_archetype": "chest",
+      "movement": "none",
+      "has_collider": true,
+      "has_vision": false,
+      "is_flocking": false
+    }
+  ],
+  "kvl_actions": [
+    {
+      "event": "OnPlayerInteract",
+      "action": "PlaySound:coin"
+    }
+  ]
+}

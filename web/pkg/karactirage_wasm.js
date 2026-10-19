@@ -25,6 +25,30 @@ export class OutputDevice {
 if (Symbol.dispose) OutputDevice.prototype[Symbol.dispose] = OutputDevice.prototype.free;
 
 /**
+ * Valide définitivement le patch IA actif (retire les halos violets)
+ * @returns {number}
+ */
+export function wasm_accept_ai_patch() {
+    const ret = wasm.wasm_accept_ai_patch();
+    return ret;
+}
+
+/**
+ * Applique un payload IA (format KARACTI_AI_SPEC.md) directement dans la scène active
+ * @param {string} payload_json
+ * @param {string} prompt
+ * @returns {number}
+ */
+export function wasm_apply_ai_payload(payload_json, prompt) {
+    const ptr0 = passStringToWasm0(payload_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(prompt, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.wasm_apply_ai_payload(ptr0, len0, ptr1, len1);
+    return ret;
+}
+
+/**
  * Instancie une recette de jeu et charge la scène minimale jouable dans le moteur
  * @param {string} recipe_json
  * @returns {number}
@@ -34,6 +58,33 @@ export function wasm_apply_recipe(recipe_json) {
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wasm_apply_recipe(ptr0, len0);
     return ret;
+}
+
+/**
+ * Fait défiler la tuile active du pinceau et retourne son libellé en français
+ * @returns {string}
+ */
+export function wasm_cycle_brush_tile() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.wasm_cycle_brush_tile();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Supprime une entité par son ID
+ * @param {number} id
+ * @returns {boolean}
+ */
+export function wasm_delete_entity(id) {
+    const ret = wasm.wasm_delete_entity(id);
+    return ret !== 0;
 }
 
 /**
@@ -60,6 +111,23 @@ export function wasm_export_game_package(title, author) {
 }
 
 /**
+ * Exporte l'état complet du jeu actuel en format JSON KaractiProject (.karacti)
+ * @returns {string}
+ */
+export function wasm_export_project_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.wasm_export_project_json();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Exporte le jeu courant en fichier HTML5 standalone complet autonome
  * @param {string} title
  * @param {string} author
@@ -80,6 +148,32 @@ export function wasm_export_standalone_html(title, author) {
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
+}
+
+/**
+ * Retourne le nom de la tuile active du pinceau
+ * @returns {string}
+ */
+export function wasm_get_active_brush_tile() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.wasm_get_active_brush_tile();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Récupère l'outil actif de l'atelier (0 = Select, 1 = Brush, 2 = Eraser)
+ * @returns {number}
+ */
+export function wasm_get_active_tool() {
+    const ret = wasm.wasm_get_active_tool();
+    return ret >>> 0;
 }
 
 /**
@@ -110,6 +204,23 @@ export function wasm_get_cpu_us() {
 }
 
 /**
+ * Exporte la liste résumée de toutes les entités actives en mémoire au format JSON
+ * @returns {string}
+ */
+export function wasm_get_entities_summary_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.wasm_get_entities_summary_json();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Récupère le FPS mesuré par le module de télémétrie
  * @returns {number}
  */
@@ -125,6 +236,24 @@ export function wasm_get_fps() {
 export function wasm_get_framebuffer_ptr() {
     const ret = wasm.wasm_get_framebuffer_ptr();
     return ret >>> 0;
+}
+
+/**
+ * Récupère la coordonnée X actuelle du joueur
+ * @returns {number}
+ */
+export function wasm_get_player_pos_x() {
+    const ret = wasm.wasm_get_player_pos_x();
+    return ret;
+}
+
+/**
+ * Récupère la coordonnée Y actuelle du joueur
+ * @returns {number}
+ */
+export function wasm_get_player_pos_y() {
+    const ret = wasm.wasm_get_player_pos_y();
+    return ret;
 }
 
 /**
@@ -163,6 +292,15 @@ export function wasm_get_status_message() {
 }
 
 /**
+ * Indique si un patch IA est en attente de révision dans le moteur (1 = oui, 0 = non)
+ * @returns {number}
+ */
+export function wasm_has_pending_ai_patch() {
+    const ret = wasm.wasm_has_pending_ai_patch();
+    return ret;
+}
+
+/**
  * Importe et instancie un package universel (.karacti.json) dans le moteur
  * @param {string} package_json
  * @returns {number}
@@ -180,6 +318,53 @@ export function wasm_import_game_package(package_json) {
  */
 export function wasm_init_engine() {
     const ret = wasm.wasm_init_engine();
+    return ret;
+}
+
+/**
+ * Déclenche une interaction (Touche E)
+ * @returns {boolean}
+ */
+export function wasm_interact() {
+    const ret = wasm.wasm_interact();
+    return ret !== 0;
+}
+
+/**
+ * Charge un projet KaractiProject complet depuis son format JSON (.karacti)
+ * @param {string} project_json
+ * @returns {number}
+ */
+export function wasm_load_project_json(project_json) {
+    const ptr0 = passStringToWasm0(project_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.wasm_load_project_json(ptr0, len0);
+    return ret;
+}
+
+/**
+ * Ordonne au joueur de naviguer vers une position cible avec évitement d'obstacles A*
+ * @param {number} target_x
+ * @param {number} target_y
+ * @returns {boolean}
+ */
+export function wasm_move_player_to(target_x, target_y) {
+    const ret = wasm.wasm_move_player_to(target_x, target_y);
+    return ret !== 0;
+}
+
+/**
+ * Initialise un nouveau projet vierge dans le moteur (Studio direct)
+ * @param {string} title
+ * @param {string} genre_str
+ * @returns {number}
+ */
+export function wasm_new_blank_project(title, genre_str) {
+    const ptr0 = passStringToWasm0(title, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(genre_str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.wasm_new_blank_project(ptr0, len0, ptr1, len1);
     return ret;
 }
 
@@ -225,12 +410,53 @@ export function wasm_on_mouse_up(button) {
 }
 
 /**
+ * Rejette le patch IA et applique un rollback instantané vers l'état antérieur
+ * @returns {number}
+ */
+export function wasm_reject_ai_patch() {
+    const ret = wasm.wasm_reject_ai_patch();
+    return ret;
+}
+
+/**
  * Avance la simulation physique d'un pas dt et génère le rendu dans le buffer RGBA
  * @param {number} dt
  * @returns {number}
  */
 export function wasm_render_frame(dt) {
     const ret = wasm.wasm_render_frame(dt);
+    return ret >>> 0;
+}
+
+/**
+ * Commute l'outil actif de l'atelier Studio (0 = Select/V, 1 = Brush/B, 2 = Eraser/X)
+ * @param {number} tool
+ * @returns {number}
+ */
+export function wasm_set_active_tool(tool) {
+    const ret = wasm.wasm_set_active_tool(tool);
+    return ret >>> 0;
+}
+
+/**
+ * Active ou désactive le mode embarqué (désactive les barres chromées softbuffer pour laisser React gérer le HUD/Studio)
+ * @param {boolean} enabled
+ */
+export function wasm_set_embedded_mode(enabled) {
+    wasm.wasm_set_embedded_mode(enabled);
+}
+
+/**
+ * Instancie une entité selon un préfabriqué (coin, potion, key, chest, door, platform, wall, spikes, boss, crate, plate)
+ * @param {string} preset
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+export function wasm_spawn_entity_preset(preset, x, y) {
+    const ptr0 = passStringToWasm0(preset, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.wasm_spawn_entity_preset(ptr0, len0, x, y);
     return ret >>> 0;
 }
 
@@ -259,6 +485,20 @@ export function wasm_toggle_radar() {
 export function wasm_toggle_spatial_grid() {
     const ret = wasm.wasm_toggle_spatial_grid();
     return ret >>> 0;
+}
+
+/**
+ * Met à jour les coordonnées et dimensions d'une entité par son ID
+ * @param {number} id
+ * @param {number} x
+ * @param {number} y
+ * @param {number} w
+ * @param {number} h
+ * @returns {boolean}
+ */
+export function wasm_update_entity_transform(id, x, y, w, h) {
+    const ret = wasm.wasm_update_entity_transform(id, x, y, w, h);
+    return ret !== 0;
 }
 
 /**
@@ -382,7 +622,7 @@ function __wbg_get_imports() {
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 138, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 166, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__hf89d7653fac0de47);
             return ret;
         },

@@ -26,3 +26,4 @@ tracing-subscriber = { workspace = true }
 tinyaudio = "2.0.0"
 wasm-bindgen = "0.2"
 fontdue = "0.9.4"
+schemars = "1"
