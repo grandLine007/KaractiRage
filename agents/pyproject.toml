@@ -14,7 +14,9 @@ dependencies = [
 crew = [
     "crewai>=0.100",
     # Couche LLM de CrewAI : requise pour construire un Agent (llm="openai/...")
-    "litellm>=1.56",
+    # Plafonné : litellm >=1.103 importe CacheableResult depuis mcp 2.x, alors que
+    # crewai (1.15.28) impose mcp~=1.28.1 → ImportError au runtime sans ce plafond.
+    "litellm>=1.56,<1.103",
 ]
 
 [dependency-groups]

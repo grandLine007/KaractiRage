@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from karacti_crew.models import GamePayload
 from karacti_crew.provider import LlmConfig
 
 AGENTS_DIR = Path(__file__).resolve().parents[3]
@@ -53,10 +52,11 @@ def build_design_crew(llm: LlmConfig):
         ),
         expected_output=(
             "Un objet JSON brut du niveau (title, description, terrain, gameplay_loop, "
-            "entities, kvl_actions), sans balisage markdown."
+            "entities, kvl_actions), sans balisage markdown. La validation est faite "
+            "côté hôte contre le contrat : pas de sortie structurée forcée (LM Studio "
+            "refuse tool_choice objet — cf. tests live M0)."
         ),
         agent=designer,
-        output_pydantic=GamePayload,
     )
 
     return Crew(

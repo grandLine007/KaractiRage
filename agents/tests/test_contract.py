@@ -124,3 +124,16 @@ def test_alias_inputs_are_accepted() -> None:
     payload = GamePayload.from_fixture(data)
     assert payload.terrain.platforms[0].offset_x == -50.0
     assert payload.entities[0].offset_y == 2.0
+
+
+def test_flow_resolves_contract_inside_agents_dir() -> None:
+    """Régression : la CLI doit trouver le contrat committé sans --schema.
+
+    (Un ``parents[]`` hors-by-one dans flow.py pointait sur <repo>/contracts/
+    au lieu de <repo>/agents/contracts/ et faisait échouer ``--brief``.)
+    """
+    from karacti_crew import flow
+
+    assert flow.AGENTS_DIR == AGENTS_DIR
+    assert flow.DEFAULT_SCHEMA == SCHEMA_PATH
+    assert flow.load_schema(flow.DEFAULT_SCHEMA)["$schema"].endswith("/draft/2020-12/schema")

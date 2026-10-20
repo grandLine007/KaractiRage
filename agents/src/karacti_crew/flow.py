@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -21,7 +22,7 @@ import jsonschema
 from karacti_crew.models import GamePayload
 from karacti_crew.provider import LlmConfig, load_llm_config
 
-AGENTS_DIR = Path(__file__).resolve().parents[3]
+AGENTS_DIR = Path(__file__).resolve().parents[2]  # agents/src/karacti_crew/flow.py → agents/
 DEFAULT_SCHEMA = AGENTS_DIR / "contracts" / "level.schema.json"
 
 
@@ -39,6 +40,35 @@ def validate_payload(data: dict, schema: dict) -> GamePayload:
     """Porte 1 (schéma) + porte miroir Pydantic. Lève sur échec."""
     jsonschema.validate(instance=data, schema=schema)
     return GamePayload.model_validate(data)
+
+
+def extract_json_object(text: str) -> dict:
+    """Extrait l'objet JSON d'une réponse LLM en texte libre.
+
+    Les petits modèles enveloppent parfois leur JSON dans un bloc ```json```
+    ou l'entourent de texte. La sortie structurée forcée (tool_choice objet)
+    est indisponible sur LM Studio : on parse nous-mêmes, la validation
+    restant faite par ``validate_payload`` (aucune porte contournée).
+    """
+    raw = text.strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL)
+    candidates = [fenced.group(1)] if fenced else []
+    start, end = raw.find("{"), raw.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(raw[start : end + 1])
+    for cand in candidates:
+        try:
+            return json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+    raise ValueError(
+        "Aucun objet JSON exploitable dans la réponse du LLM. "
+        f"Début de réponse : {raw[:200]!r}"
+    )
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -69,8 +99,13 @@ def cmd_generate(args: argparse.Namespace) -> int:
     result = crew.kickoff(inputs={"brief": args.brief})
     elapsed = time.time() - started
 
-    data = result.pydantic.model_dump() if getattr(result, "pydantic", None) else json.loads(str(result))
-    payload = validate_payload(data, schema)  # Porte 1+miroir avant tout écriture
+    raw = result.pydantic.model_dump() if getattr(result, "pydantic", None) else str(result)
+    try:
+        data = raw if isinstance(raw, dict) else extract_json_object(raw)
+        payload = validate_payload(data, schema)  # Porte 1+miroir avant tout écriture
+    except (ValueError, json.JSONDecodeError, jsonschema.ValidationError) as exc:
+        print(f"ÉCHEC — payload refusé par les portes : {exc}")
+        return 1
 
     out_dir = Path(args.out)
     run_id = time.strftime("%Y%m%d-%H%M%S")

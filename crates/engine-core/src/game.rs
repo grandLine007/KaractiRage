@@ -145,6 +145,16 @@ pub struct GameState {
     pub pathfinder: crate::navigation::AStarPathfinder,
     pub ai_rx: Option<std::sync::mpsc::Receiver<(String, Result<crate::ai_client::AiGeneratedGamePayload, String>)>>,
     pub static_entity_count: usize,
+    /// Nombre de pas KVL franchis lors de la dernière frame (renseigné par `update`).
+    pub last_kvl_steps: usize,
+    /// Ordre de rendu Z-trié réutilisé à chaque frame (zéro allocation).
+    pub render_order: Vec<usize>,
+    /// Événements de collision de projectiles réutilisés à chaque frame.
+    pub hit_events: Vec<(usize, usize, bool)>,
+    /// Cooldown anti-empilement des voix `BlockPush` (évite le bruit continu).
+    pub block_push_cooldown: f32,
+    /// Tampon réutilisé pour les candidats de collision (sans plafond artificiel).
+    pub collision_candidates: Vec<SpatialItem>,
 }
 
 impl GameState {
@@ -152,6 +162,15 @@ impl GameState {
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status_message = msg.into();
         self.status_timer = 4.0;
+    }
+
+    /// Joue le son de poussée de bloc avec un cooldown (évite l'empilement des
+    /// voix à chaque frame pendant une poussée continue).
+    fn play_block_push(&mut self) {
+        if self.block_push_cooldown <= 0.0 {
+            self.audio.play(SoundType::BlockPush);
+            self.block_push_cooldown = 0.15;
+        }
     }
 
     /// Annule la dernière action d'édition dans le Studio (Ctrl+Z)
@@ -923,6 +942,11 @@ impl GameState {
             pathfinder: crate::navigation::AStarPathfinder::default(),
             ai_rx: None,
             static_entity_count: 0,
+            last_kvl_steps: 0,
+            render_order: Vec::new(),
+            hit_events: Vec::new(),
+            block_push_cooldown: 0.0,
+            collision_candidates: Vec::new(),
         };
         state.rebuild_static_spatial_grid();
         Ok(state)
@@ -1408,6 +1432,9 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
     pub fn update(&mut self, dt: f32, input: &InputState) {
         self.elapsed_time += dt;
         self.sim_tick += 1;
+        if self.block_push_cooldown > 0.0 {
+            self.block_push_cooldown -= dt;
+        }
 
         // Disponibilité universelle des coordonnées souris pour le survol (hover) et les infobulles
         self.editor.mouse_x = input.mouse_x;
@@ -1465,27 +1492,39 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         }
 
         // Gestion de la Review Bar de patch IA (Phase C : Boucle de Confiance)
-        if let Some(ref patch) = self.editor.pending_ai_patch.clone() {
-            if input.is_key_just_pressed(KeyCode::Enter)
-                || (input.mouse_just_clicked && self.editor.is_ai_patch_accept_clicked(input.mouse_x, input.mouse_y))
-            {
+        // (zéro allocation : on teste la présence du patch et on capture les
+        //  données nécessaires avant d'éventuels emprunts mutables)
+        if self.editor.pending_ai_patch.is_some() {
+            let accept = input.is_key_just_pressed(KeyCode::Enter)
+                || (input.mouse_just_clicked
+                    && self.editor.is_ai_patch_accept_clicked(input.mouse_x, input.mouse_y));
+            let modify = input.is_key_just_pressed(KeyCode::Space)
+                || (input.mouse_just_clicked
+                    && self.editor.is_ai_patch_modify_clicked(input.mouse_x, input.mouse_y));
+            let reject = input.is_key_just_pressed(KeyCode::Escape)
+                || (input.mouse_just_clicked
+                    && self.editor.is_ai_patch_reject_clicked(input.mouse_x, input.mouse_y));
+
+            if accept {
                 self.accept_ai_patch();
                 return;
             }
-            if input.is_key_just_pressed(KeyCode::Space)
-                || (input.mouse_just_clicked && self.editor.is_ai_patch_modify_clicked(input.mouse_x, input.mouse_y))
-            {
+            if modify {
+                let first_id = self
+                    .editor
+                    .pending_ai_patch
+                    .as_ref()
+                    .and_then(|p| p.created_entities.first())
+                    .map(|e| e.id);
                 self.editor.mode = EditorMode::Edit;
-                if let Some(first_ent) = patch.created_entities.first() {
-                    self.editor.selected = SelectedEntity::Entity(first_ent.id);
+                if let Some(id) = first_id {
+                    self.editor.selected = SelectedEntity::Entity(id);
                 }
                 self.set_status("Mode Studio activé : Ajustez les composants ou les nœuds KVL avant de valider.");
                 self.audio.play(SoundType::UiClick);
                 return;
             }
-            if input.is_key_just_pressed(KeyCode::Escape)
-                || (input.mouse_just_clicked && self.editor.is_ai_patch_reject_clicked(input.mouse_x, input.mouse_y))
-            {
+            if reject {
                 self.reject_ai_patch();
                 return;
             }
@@ -2206,8 +2245,6 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             self.replay.record_tick(snapshot, p_pos);
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let frame_start = std::time::Instant::now();
         let mut kvl_steps_this_frame = 0;
 
         let is_ctrl_or_cmd = input.is_key_down(KeyCode::ControlLeft)
@@ -3469,15 +3506,14 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                         cur_x += move_x * speed * dt;
                         cur_x = cur_x.clamp(30.0, 1160.0 - pw);
 
-                        let mut cand_buf = [SpatialItem { id: 0, kind: SpatialKind::Solid, x: 0.0, y: 0.0, w: 0.0, h: 0.0 }; 16];
-                        let cand_count = {
+                        self.collision_candidates.clear();
+                        {
                             let raw = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
-                            let len = raw.len().min(16);
-                            cand_buf[..len].copy_from_slice(&raw[..len]);
-                            len
-                        };
+                            self.collision_candidates.extend_from_slice(raw);
+                        }
 
-                        for item in &cand_buf[..cand_count] {
+                        for i in 0..self.collision_candidates.len() {
+                            let item = self.collision_candidates[i];
                             if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
                                 let is_pushable = self.entities.get(item.id).and_then(|e| e.collider.as_ref()).map_or(false, |c| c.is_pushable);
                                 if is_pushable {
@@ -3491,7 +3527,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                                     let blocked = behind.iter().any(|obs| obs.id != item.id && obs.id != p_idx && matches!(obs.kind, SpatialKind::Solid));
                                     if !blocked && target_bx >= 30.0 && target_bx + bw <= 1160.0 {
                                         self.entities[item.id].transform.x = target_bx;
-                                        self.audio.play(SoundType::BlockPush);
+                                        self.play_block_push();
                                     } else if move_x > 0.0 {
                                         cur_x = item.x - pw;
                                     } else if move_x < 0.0 {
@@ -3518,15 +3554,14 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                         cur_y += move_y * speed * dt;
                         cur_y = cur_y.clamp(75.0, 595.0 - ph);
 
-                        let mut cand_buf = [SpatialItem { id: 0, kind: SpatialKind::Solid, x: 0.0, y: 0.0, w: 0.0, h: 0.0 }; 16];
-                        let cand_count = {
+                        self.collision_candidates.clear();
+                        {
                             let raw = self.spatial_grid.query_aabb(cur_x, cur_y, pw, ph);
-                            let len = raw.len().min(16);
-                            cand_buf[..len].copy_from_slice(&raw[..len]);
-                            len
-                        };
+                            self.collision_candidates.extend_from_slice(raw);
+                        }
 
-                        for item in &cand_buf[..cand_count] {
+                        for i in 0..self.collision_candidates.len() {
+                            let item = self.collision_candidates[i];
                             if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
                                 let is_pushable = self.entities.get(item.id).and_then(|e| e.collider.as_ref()).map_or(false, |c| c.is_pushable);
                                 if is_pushable {
@@ -3540,7 +3575,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                                     let blocked = behind.iter().any(|obs| obs.id != item.id && obs.id != p_idx && matches!(obs.kind, SpatialKind::Solid));
                                     if !blocked && target_by >= 75.0 && target_by + bh <= 595.0 {
                                         self.entities[item.id].transform.y = target_by;
-                                        self.audio.play(SoundType::BlockPush);
+                                        self.play_block_push();
                                     } else if move_y > 0.0 {
                                         let p_prev_cy = py + ph * 0.5;
                                         let item_cy = item.y + item.h * 0.5;
@@ -3763,16 +3798,15 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                         let target_x = (cur_x + step_x).clamp(30.0, 1160.0 - pw);
                         let target_y = (cur_y + step_y).clamp(75.0, 595.0 - ph);
 
-                        let mut cand_buf = [SpatialItem { id: 0, kind: SpatialKind::Solid, x: 0.0, y: 0.0, w: 0.0, h: 0.0 }; 16];
-                        let cand_count = {
+                        self.collision_candidates.clear();
+                        {
                             let raw = self.spatial_grid.query_aabb(target_x, target_y, pw, ph);
-                            let len = raw.len().min(16);
-                            cand_buf[..len].copy_from_slice(&raw[..len]);
-                            len
-                        };
+                            self.collision_candidates.extend_from_slice(raw);
+                        }
 
                         let mut can_step = true;
-                        for item in &cand_buf[..cand_count] {
+                        for i in 0..self.collision_candidates.len() {
+                            let item = self.collision_candidates[i];
                             if item.id != p_idx && matches!(item.kind, SpatialKind::Solid) {
                                 let is_pushable = self.entities.get(item.id).and_then(|e| e.collider.as_ref()).map_or(false, |c| c.is_pushable);
                                 if is_pushable {
@@ -3787,7 +3821,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                                     if !blocked && b_target_x >= 30.0 && b_target_x + bw <= 1160.0 && b_target_y >= 75.0 && b_target_y + bh <= 595.0 {
                                         self.entities[item.id].transform.x = b_target_x;
                                         self.entities[item.id].transform.y = b_target_y;
-                                        self.audio.play(SoundType::BlockPush);
+                                        self.play_block_push();
                                     } else {
                                         can_step = false;
                                     }
@@ -3818,7 +3852,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         // ==========================================
         // SYSTEM 2.5 : SIMULATION DES PROJECTILES BALISTIQUES (ZERO-ALLOCATION)
         // ==========================================
-        let mut hit_events = Vec::new();
+        self.hit_events.clear();
         for (idx, ent) in self.entities.iter_mut().enumerate() {
             if !ent.is_active {
                 continue;
@@ -3846,13 +3880,14 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                         continue;
                     }
                     ent.is_active = false;
-                    hit_events.push((idx, item.id, true));
+                    self.hit_events.push((idx, item.id, true));
                     break;
                 }
             }
         }
 
-        for (bullet_idx, target_idx, _) in hit_events {
+        for i in 0..self.hit_events.len() {
+            let (bullet_idx, target_idx, _) = self.hit_events[i];
             if target_idx < self.entities.len() {
                 let target_tag = self.entities[target_idx].tag.clone();
                 let proj_dmg = if bullet_idx < self.entities.len() {
@@ -5299,13 +5334,16 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         }
         self.camera.update(dt);
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let frame_duration_us = frame_start.elapsed().as_micros() as u64;
-        #[cfg(target_arch = "wasm32")]
-        let frame_duration_us = 420; // Empreinte moyenne 420 µs pour le profilage en Wasm
-        self.telemetry.record_frame(frame_duration_us, kvl_steps_this_frame);
+        // Le temps complet de frame (update + render + transport) est mesuré côté
+        // `NativeEngine::render_frame` puis injecté via `finish_frame_telemetry`.
+        self.last_kvl_steps = kvl_steps_this_frame;
+    }
 
-        if let Some(msg) = self.adaptation.evaluate_adaptation(frame_duration_us) {
+    /// Enregistre la télémétrie d'une frame complète et déclenche l'adaptation
+    /// de qualité sur la base du temps CPU total (pas du seul temps d'update).
+    pub fn finish_frame_telemetry(&mut self, total_us: u64) {
+        self.telemetry.record_frame(total_us, self.last_kvl_steps);
+        if let Some(msg) = self.adaptation.evaluate_adaptation(total_us) {
             self.status_message = msg.into();
         }
     }
@@ -5944,12 +5982,15 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         // ==========================================
         // SYSTEM 7 : RENDU GÉNÉRIQUE Z-SORTED DES ENTITÉS
         // ==========================================
-        let mut render_order: Vec<usize> = (0..self.entities.len())
-            .filter(|&i| self.entities[i].is_active || is_edit_mode)
-            .filter(|&i| self.entities[i].renderable.is_some())
-            .collect();
-
-        render_order.sort_by_key(|&i| self.entities[i].renderable.as_ref().map_or(0, |r| r.z_index));
+        self.render_order.clear();
+        self.render_order.extend(
+            (0..self.entities.len())
+                .filter(|&i| self.entities[i].is_active || is_edit_mode)
+                .filter(|&i| self.entities[i].renderable.is_some()),
+        );
+        self.render_order.sort_unstable_by_key(|&i| {
+            self.entities[i].renderable.as_ref().map_or(0, |r| r.z_index)
+        });
 
         // Rendu immersif des zones d'avertissement au sol (Telegraphing vectoriel)
         for ent in &self.entities {
@@ -6002,7 +6043,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             }
         }
 
-        for idx in render_order {
+        for &idx in &self.render_order {
             let ent = &self.entities[idx];
             if !self.camera.is_visible(ent.transform.x, ent.transform.y, ent.transform.w, ent.transform.h) {
                 continue;
@@ -7103,8 +7144,8 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         }
 
         // Rendu de l'infobulle contextuelle active (au premier plan absolu avec cornières Dark Atelier)
-        if let Some((title, shortcut, desc, tx, ty)) = self.editor.active_tooltip.clone() {
-            canvas.draw_tooltip(tx, ty, &title, &shortcut, &desc);
+        if let Some((title, shortcut, desc, tx, ty)) = self.editor.active_tooltip.as_ref() {
+            canvas.draw_tooltip(*tx, *ty, title, shortcut, desc);
         }
     }
 
@@ -9660,6 +9701,45 @@ mod tests {
         assert!(
             p.transform.x <= wall_x,
             "Le joueur ne doit pas franchir le mur solide (AABB sliding)"
+        );
+    }
+
+    #[test]
+    fn test_collision_resolves_more_than_16_candidates() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement de la scène de test");
+
+        let p_idx = state.player_index().unwrap();
+        let player_x = 300.0;
+        let player_y = 300.0;
+        state.entities[p_idx].transform.x = player_x;
+        state.entities[p_idx].transform.y = player_y;
+
+        // Grappe dense de 20 murs solides empilés au même endroit, juste à droite
+        // du joueur : la requête spatiale doit renvoyer > 16 candidats.
+        let wall_left = player_x + 40.0;
+        for k in 0..20 {
+            let wall = Entity::new(
+                1000 + k,
+                format!("dense_wall_{k}"),
+                "wall",
+                Transform2D::new(wall_left, player_y - 10.0, 32.0, 32.0),
+            )
+            .with_collider(Collider2D::solid(32.0, 32.0));
+            state.entities.push(wall);
+        }
+        state.rebuild_static_spatial_grid();
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyD);
+        for _ in 0..20 {
+            state.update(0.016, &input);
+        }
+
+        let p = &state.entities[p_idx];
+        assert!(
+            p.transform.x < wall_left,
+            "Le joueur ne doit pas traverser une grappe dense de murs (> 16 candidats de collision)"
         );
     }
 

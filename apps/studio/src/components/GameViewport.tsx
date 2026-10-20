@@ -1,14 +1,21 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Play, Pause, Crosshair, Grid3X3 } from 'lucide-react';
-// @ts-ignore
-import init, * as wasmBindings from '../wasm/karactirage_wasm.js';
-// @ts-ignore
-import wasmUrl from '../wasm/karactirage_wasm_bg.wasm?url';
-import { setWasmBindings } from '../services/engineBridge';
+import { invoke } from '@tauri-apps/api/core';
 
 interface GameViewportProps {
   onTelemetryUpdate?: (metrics: { fps: number; cpuUs: number; score: number; status: string }) => void;
   onSelectedEntityChange?: (entityName: string | null) => void;
+}
+
+interface EngineTelemetry {
+  fps: number;
+  cpu_us: number;
+  score: number;
+  status: string;
+  update_us: number;
+  render_us: number;
+  encode_us: number;
+  total_us: number;
 }
 
 // Table de correspondance des touches du navigateur vers les codes d'entrée WebKey KaractiRage
@@ -63,61 +70,36 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate })
   const [showRadar, setShowRadar] = useState(true);
   const [showGrid, setShowGrid] = useState(false);
 
-  const wasmModuleRef = useRef<any>(null);
-  const wasmExportsRef = useRef<any>(null);
   const animFrameIdRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(performance.now());
+  const canvasWidthRef = useRef<number>(1200);
+  const canvasHeightRef = useRef<number>(800);
+  // Position souris en attente d'envoi (coalescé : 1 IPC par frame)
+  const pendingMouseRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Initialisation du module WebAssembly
+  // Initialisation du viewport (le moteur natif est déjà démarré côté backend Tauri)
   useEffect(() => {
     let active = true;
 
     async function loadEngine() {
       try {
-        const wasm = await init({ module_or_path: wasmUrl });
-
+        const w = await invoke<number>('engine_canvas_width');
+        const h = await invoke<number>('engine_canvas_height');
         if (!active) return;
-
-        wasmModuleRef.current = wasm;
-        wasmExportsRef.current = wasmBindings;
-        setWasmBindings(wasmBindings);
-
-        // Exposition pour l'automatisation, console navigateur et tests
-        if (typeof window !== 'undefined') {
-          (window as any).karactiEngine = {
-            wasm: wasmBindings,
-            movePlayerTo: (x: number, y: number) => (wasmBindings as any).wasm_move_player_to ? (wasmBindings as any).wasm_move_player_to(x, y) : false,
-            getPlayerPos: () => ({
-              x: (wasmBindings as any).wasm_get_player_pos_x ? (wasmBindings as any).wasm_get_player_pos_x() : 0,
-              y: (wasmBindings as any).wasm_get_player_pos_y ? (wasmBindings as any).wasm_get_player_pos_y() : 0,
-            }),
-            interact: () => (wasmBindings as any).wasm_interact ? (wasmBindings as any).wasm_interact() : false,
-            getScore: () => (wasmBindings as any).wasm_get_score ? (wasmBindings as any).wasm_get_score() : 0,
-            getStatus: () => (wasmBindings as any).wasm_get_status_message ? (wasmBindings as any).wasm_get_status_message() : '',
-          };
-        }
-
-        // Démarrage du moteur
-        const initCode = wasmBindings.wasm_init_engine();
-        if (initCode !== 0) {
-          throw new Error(`Échec wasm_init_engine: code ${initCode}`);
-        }
-
-        if (typeof (wasmBindings as any).wasm_set_embedded_mode === 'function') {
-          (wasmBindings as any).wasm_set_embedded_mode(true);
-        }
+        canvasWidthRef.current = w || 1200;
+        canvasHeightRef.current = h || 800;
 
         const canvas = canvasRef.current;
         if (canvas) {
-          canvas.width = wasmBindings.wasm_get_canvas_width() || 1200;
-          canvas.height = wasmBindings.wasm_get_canvas_height() || 800;
+          canvas.width = canvasWidthRef.current;
+          canvas.height = canvasHeightRef.current;
         }
 
         setIsLoaded(true);
       } catch (err: any) {
-        console.error("Erreur de chargement Wasm KaractiRage:", err);
+        console.error("Erreur d'initialisation du viewport KaractiRage:", err);
         if (active) {
-          setLoadError(err?.message || "Impossible de charger karactirage_wasm_bg.wasm");
+          setLoadError(err?.message || "Impossible de joindre le moteur natif Tauri");
         }
       }
     }
@@ -132,7 +114,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate })
     };
   }, []);
 
-  // Boucle de rendu 60 FPS
+  // Boucle de rendu 60 FPS (pixel-streaming depuis le moteur natif)
   useEffect(() => {
     if (!isLoaded || isPaused) return;
 
@@ -141,40 +123,43 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate })
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
-    const wasmBindings = wasmExportsRef.current;
-    const wasm = wasmModuleRef.current;
-    if (!wasmBindings || !wasm) return;
-
-    const width = 1200;
-    const height = 800;
+    const width = canvasWidthRef.current;
+    const height = canvasHeightRef.current;
     canvas.width = width;
     canvas.height = height;
 
     let frameCounter = 0;
 
-    function renderLoop(now: number) {
+    async function renderLoop(now: number) {
       const dt = Math.min((now - lastTimeRef.current) / 1000.0, 0.05);
       lastTimeRef.current = now;
 
-      // 1. Avance la simulation et génère le rendu logiciel
-      wasmBindings.wasm_render_frame(dt);
+      // Coalescence souris : envoie la dernière position connue (1 IPC max par frame)
+      const pendingMouse = pendingMouseRef.current;
+      if (pendingMouse) {
+        pendingMouseRef.current = null;
+        void invoke('engine_on_mouse_move', { x: pendingMouse.x, y: pendingMouse.y });
+      }
 
-      // 2. Transfert haute vitesse du buffer mémoire vers le Canvas HTML5 (stride exact 1200x800)
-      const ptr = wasmBindings.wasm_get_framebuffer_ptr();
-      if (ptr !== 0 && ctx) {
-        const pixels = new Uint8ClampedArray(wasm.memory.buffer, ptr, width * height * 4);
+      // 1. Avance la simulation native et récupère le framebuffer RGBA
+      const buffer = await invoke<ArrayBuffer>('engine_frame', { dt });
+
+      // 2. Transfert du framebuffer vers le Canvas HTML5
+      if (ctx) {
+        const pixels = new Uint8ClampedArray(buffer);
         const imageData = new ImageData(pixels, width, height);
         ctx.putImageData(imageData, 0, 0);
       }
 
-      // 3. Télémétrie périodique (toutes les 10 frames pour limiter les re-renders React)
+      // 3. Télémétrie groupée (1 seul IPC toutes les 10 frames au lieu de 4)
       frameCounter++;
       if (frameCounter % 10 === 0 && onTelemetryUpdate) {
+        const t = await invoke<EngineTelemetry>('engine_telemetry');
         onTelemetryUpdate({
-          fps: wasmBindings.wasm_get_fps(),
-          cpuUs: wasmBindings.wasm_get_cpu_us(),
-          score: wasmBindings.wasm_get_score(),
-          status: wasmBindings.wasm_get_status_message(),
+          fps: t.fps,
+          cpuUs: t.total_us,
+          score: t.score,
+          status: t.status,
         });
       }
 
@@ -199,8 +184,8 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate })
       }
 
       const keyVal = KEY_MAP[e.code];
-      if (keyVal !== undefined && wasmExportsRef.current) {
-        wasmExportsRef.current.wasm_on_key_down(keyVal);
+      if (keyVal !== undefined) {
+        void invoke('engine_on_key_down', { key: keyVal });
         if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
           e.preventDefault();
         }
@@ -212,8 +197,8 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate })
         return;
       }
       const keyVal = KEY_MAP[e.code];
-      if (keyVal !== undefined && wasmExportsRef.current) {
-        wasmExportsRef.current.wasm_on_key_up(keyVal);
+      if (keyVal !== undefined) {
+        void invoke('engine_on_key_up', { key: keyVal });
       }
     }
 
@@ -226,52 +211,47 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate })
     };
   }, []);
 
-  // Gestion des coordonnées souris
+  // Gestion des coordonnées souris (coalescée : stocke la position, envoyée par la boucle de rendu)
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
-    if (!canvas || !wasmExportsRef.current) return;
+    if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
-
-    wasmExportsRef.current.wasm_on_mouse_move(x, y);
+    pendingMouseRef.current = {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
   }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
-    if (!canvas || !wasmExportsRef.current) return;
+    if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
-    wasmExportsRef.current.wasm_on_mouse_move(x, y);
+    void invoke('engine_on_mouse_move', { x, y });
     const button = e.button === 2 ? 2 : 0;
-    wasmExportsRef.current.wasm_on_mouse_down(button);
+    void invoke('engine_on_mouse_down', { button });
   }, []);
 
   const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!wasmExportsRef.current) return;
     const button = e.button === 2 ? 2 : 0;
-    wasmExportsRef.current.wasm_on_mouse_up(button);
+    void invoke('engine_on_mouse_up', { button });
   }, []);
 
   // Actions de la barre d'outils du viewport
   const togglePause = () => setIsPaused(prev => !prev);
   const toggleRadarAction = () => {
-    if (wasmExportsRef.current) {
-      wasmExportsRef.current.wasm_toggle_radar();
-      setShowRadar(prev => !prev);
-    }
+    void invoke('engine_toggle_radar');
+    setShowRadar(prev => !prev);
   };
   const toggleGridAction = () => {
-    if (wasmExportsRef.current) {
-      wasmExportsRef.current.wasm_toggle_spatial_grid();
-      setShowGrid(prev => !prev);
-    }
+    void invoke('engine_toggle_spatial_grid');
+    setShowGrid(prev => !prev);
   };
 
   return (

@@ -116,12 +116,17 @@ export const RecipeWizardModal: React.FC<RecipeWizardModalProps> = ({
   // Validation dynamique à chaque modification de paramètre
   useEffect(() => {
     if (!isOpen) return;
-    try {
-      const rep = validateRecipe(JSON.stringify(currentRecipe));
-      setValidationReport(rep);
-    } catch (e) {
-      // Ignorer si le moteur n'est pas prêt
-    }
+    let active = true;
+    void validateRecipe(JSON.stringify(currentRecipe))
+      .then(rep => {
+        if (active) setValidationReport(rep);
+      })
+      .catch(() => {
+        // Ignorer si le moteur n'est pas prêt
+      });
+    return () => {
+      active = false;
+    };
   }, [
     isOpen, primaryGenre, secondaryGenres, dimension, camera, directions,
     abilities, combat, gravity, interactiveElements, gameplay, performance
@@ -142,9 +147,9 @@ export const RecipeWizardModal: React.FC<RecipeWizardModalProps> = ({
     );
   };
 
-  const handleCreateProject = () => {
+  const handleCreateProject = async () => {
     const jsonStr = JSON.stringify(currentRecipe);
-    const res = applyRecipe(jsonStr);
+    const res = await applyRecipe(jsonStr);
     if (res === 0) {
       onProjectCreated(title);
       onClose();

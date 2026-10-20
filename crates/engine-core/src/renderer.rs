@@ -1,6 +1,15 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+/// Division entière exacte par 255 pour `v` dans [0, 65025].
+///
+/// Identité : `v / 255 == (v + 1 + (v >> 8)) >> 8` pour tout `v <= 65025`.
+/// Évite 3 divisions matérielles par pixel de glyphe dans le blending alpha.
+#[inline]
+fn div255(v: u32) -> u32 {
+    (v + 1 + (v >> 8)) >> 8
+}
+
 /// Glyphe pré-rastérisé mis en cache pour éliminer toute allocation heap dans le hot path de rendu
 #[derive(Clone)]
 pub struct CachedGlyph {
@@ -146,11 +155,49 @@ impl Canvas {
     }
 
     pub fn draw_circle(&mut self, cx: i32, cy: i32, radius: i32, color: u32) {
-        let r2 = radius * radius;
-        for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx * dx + dy * dy <= r2 {
-                    self.set_pixel(cx + dx, cy + dy, color);
+        if radius < 0 {
+            return;
+        }
+        let r = radius;
+        let r2 = (r as i64) * (r as i64);
+
+        // Zone de dessin effective (clip rect ∩ bornes du canvas)
+        let (eff_min_x, eff_min_y, eff_max_x, eff_max_y) = if let Some((ccx, ccy, ccw, cch)) =
+            self.clip_rect
+        {
+            (
+                ccx.max(0),
+                ccy.max(0),
+                ((ccx + ccw as i32).max(0)).min(self.width as i32),
+                ((ccy + cch as i32).max(0)).min(self.height as i32),
+            )
+        } else {
+            (0, 0, self.width as i32, self.height as i32)
+        };
+
+        // Remplissage par tranches horizontales (une écriture contiguë par ligne),
+        // pixel-identique à l'ancienne boucle dx/dy (dx² + dy² <= r²).
+        for dy in -r..=r {
+            let y = cy + dy;
+            if y < eff_min_y || y >= eff_max_y {
+                continue;
+            }
+            let dy2 = (dy as i64) * (dy as i64);
+            let mut half = ((r2 - dy2) as f64).sqrt().floor() as i32;
+            // Correction d'arrondi exacte (2 itérations max en pratique)
+            while (half as i64 + 1) * (half as i64 + 1) + dy2 <= r2 {
+                half += 1;
+            }
+            while (half as i64) * (half as i64) + dy2 > r2 {
+                half -= 1;
+            }
+
+            let x0 = (cx - half).max(eff_min_x);
+            let x1 = (cx + half + 1).min(eff_max_x);
+            if x0 < x1 {
+                let row = y as usize * self.width;
+                for x in x0..x1 {
+                    self.buffer[row + x as usize] = color;
                 }
             }
         }
@@ -286,9 +333,9 @@ impl Canvas {
                 let fg_g = (color >> 8) & 0xFF;
                 let fg_b = color & 0xFF;
 
-                let out_r = (fg_r * a + bg_r * inv_a) / 255;
-                let out_g = (fg_g * a + bg_g * inv_a) / 255;
-                let out_b = (fg_b * a + bg_b * inv_a) / 255;
+                let out_r = div255(fg_r * a + bg_r * inv_a);
+                let out_g = div255(fg_g * a + bg_g * inv_a);
+                let out_b = div255(fg_b * a + bg_b * inv_a);
 
                 self.buffer[idx] = (out_r << 16) | (out_g << 8) | out_b;
             }
@@ -799,5 +846,35 @@ mod tests {
         assert_eq!(canvas.buffer[4 * 32 + 4], 0x00FF0000);
         // Le pixel en bas à droite du sprite (4+7, 4+7) doit être blanc
         assert_eq!(canvas.buffer[11 * 32 + 11], 0x00FFFFFF);
+    }
+
+    #[test]
+    fn test_div255_exact_for_blend_range() {
+        // Le numérateur du blending alpha est borné à [0, 255*255] = [0, 65025].
+        for v in 0..=65025u32 {
+            assert_eq!(div255(v), v / 255, "div255({v})");
+        }
+    }
+
+    #[test]
+    fn test_draw_circle_matches_bruteforce() {
+        let cx = 20i32;
+        let cy = 20i32;
+        let radius = 9i32;
+        let color = 0x00FF00FFu32;
+
+        let mut reference = Canvas::new(40, 40);
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius {
+                    reference.set_pixel(cx + dx, cy + dy, color);
+                }
+            }
+        }
+
+        let mut canvas = Canvas::new(40, 40);
+        canvas.draw_circle(cx, cy, radius, color);
+
+        assert_eq!(canvas.buffer, reference.buffer);
     }
 }

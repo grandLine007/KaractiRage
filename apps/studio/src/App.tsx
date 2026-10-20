@@ -52,14 +52,14 @@ export function App() {
   const handleToggleTab = useCallback(() => {
     setCurrentMode(prev => {
       const next = prev === 'play' ? 'edit' : 'play';
-      toggleEditorMode();
+      void toggleEditorMode();
       return next;
     });
   }, []);
 
   // Validation ou Rollback du Patch IA
   const handleAcceptAi = useCallback(() => {
-    acceptAiPatch();
+    void acceptAiPatch();
     setPendingAiPatch(null);
     setMetrics(prev => ({
       ...prev,
@@ -68,7 +68,7 @@ export function App() {
   }, []);
 
   const handleRejectAi = useCallback(() => {
-    rejectAiPatch();
+    void rejectAiPatch();
     setPendingAiPatch(null);
     setMetrics(prev => ({
       ...prev,
@@ -112,16 +112,17 @@ export function App() {
       // 3. Raccourcis Outils Atelier Viewport (V, B, X, T)
       if (currentMode === 'edit') {
         if (e.key === 'v' || e.key === 'V') {
-          setActiveTool('select');
+          void setActiveTool('select');
         } else if (e.key === 'b' || e.key === 'B') {
-          setActiveTool('brush');
+          void setActiveTool('brush');
         } else if (e.key === 'x' || e.key === 'X') {
-          setActiveTool('eraser');
+          void setActiveTool('eraser');
         } else if (e.key === 't' || e.key === 'T') {
-          const tile = cycleBrushTile();
-          if (tile) {
-            setMetrics(prev => ({ ...prev, status: `Tuile du pinceau : ${tile} (T)` }));
-          }
+          void cycleBrushTile().then(tile => {
+            if (tile) {
+              setMetrics(prev => ({ ...prev, status: `Tuile du pinceau : ${tile} (T)` }));
+            }
+          });
         }
       }
     }
@@ -159,8 +160,8 @@ export function App() {
   };
 
   // Instanciation d'un des 5 Archétypes de Recette
-  const handleLaunchArchetype = (archetypeId: string) => {
-    const success = applyArchetype(archetypeId);
+  const handleLaunchArchetype = async (archetypeId: string) => {
+    const success = await applyArchetype(archetypeId);
     setIsHubOpen(false);
     setCurrentMode('play');
     setMetrics(prev => ({
@@ -171,11 +172,11 @@ export function App() {
     }));
   };
 
-  // Application du Payload généré par l'IA dans la scène Wasm
-  const handleApplyGeneratedLevel = (payloadJson: string) => {
+  // Application du Payload généré par l'IA dans la scène native
+  const handleApplyGeneratedLevel = async (payloadJson: string) => {
     try {
       const parsed = JSON.parse(payloadJson);
-      const code = applyAiPayload(payloadJson, parsed.title || "Intention IA");
+      const code = await applyAiPayload(payloadJson, parsed.title || "Intention IA");
       if (code === 0) {
         setPendingAiPatch(parsed.title || "Patch IA");
         setIsAiModalOpen(false);
@@ -194,7 +195,7 @@ export function App() {
 
   // Export Standalone HTML5 Universel (Commandement 9)
   const handleExportStandalone = () => {
-    downloadStandaloneGame("MonJeuKaractiRage", "Créateur KaractiRage");
+    void downloadStandaloneGame("MonJeuKaractiRage", "Créateur KaractiRage");
     setMetrics(prev => ({
       ...prev,
       status: "📦 Fichier HTML5 Standalone téléchargé avec succès ! Jouable sans serveur ni compte."

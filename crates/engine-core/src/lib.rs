@@ -17,6 +17,6 @@ pub mod spatial;
 pub mod telemetry;
 pub mod exporter;
 pub mod recipe;
-pub mod wasm_api;
 pub mod ai_client;
 pub mod project;
+pub mod native_api;
