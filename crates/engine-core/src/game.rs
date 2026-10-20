@@ -11691,6 +11691,31 @@ mod tests {
     }
 
     #[test]
+    fn test_predefined_scenes_contain_svg_decor() {
+        for path in [
+            "assets/scenes/level_01.scene.json",
+            "assets/scenes/platformer_01.scene.json",
+            "assets/scenes/puzzle_01.scene.json",
+            "assets/scenes/boss_01.scene.json",
+        ] {
+            let mut state = GameState::load_from_scene(path).unwrap();
+            let svg_count = state
+                .entities
+                .iter()
+                .filter(|e| {
+                    matches!(
+                        e.renderable.as_ref().map(|r| &r.shape),
+                        Some(ShapeKind::SvgRef { .. })
+                    )
+                })
+                .count();
+            assert!(svg_count > 0, "{path} doit contenir du décor SVG");
+            let mut canvas = Canvas::new(1200, 800);
+            state.render(&mut canvas);
+        }
+    }
+
+    #[test]
     fn test_kvl_animation_request_changes_clip() {
         let mut state =
             GameState::load_from_scene("assets/scenes/svg_demo_01.scene.json").unwrap();

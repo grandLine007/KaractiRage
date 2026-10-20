@@ -34,7 +34,7 @@ fn best_of<F: FnMut() -> f64>(samples: usize, mut f: F) -> f64 {
 
 fn main() {
     println!("==========================================================");
-    println!("  KARACTIRAGE — Benchmark moteur (scène level_01, 39 entités)");
+    println!("  KARACTIRAGE — Benchmark moteur (scène level_01)");
     println!("==========================================================\n");
 
     let mut engine = NativeEngine::init().expect("échec d'initialisation du moteur");
