@@ -15,6 +15,7 @@ pub mod replay;
 pub mod scene;
 pub mod spatial;
 pub mod telemetry;
+pub mod vector;
 pub mod exporter;
 pub mod recipe;
 pub mod ai_client;

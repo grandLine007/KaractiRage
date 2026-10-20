@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Transform2D {
@@ -94,6 +95,9 @@ pub enum ShapeKind {
     Circle { radius: f32 },
     Text { label: String, scale: u32 },
     PixelMatrix { width: u32, height: u32, pixels: Vec<u32> },
+    /// Sprite vectoriel SVG : référence à un asset rastérisé à l'import
+    /// (le bitmap résolu vit dans `Entity::vector_sprite`).
+    SvgRef { asset: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1139,6 +1143,23 @@ impl BossComponent {
 }
 
 /// Modèle d'Entité Universel du moteur KaractiRage
+/// Sprite vectoriel SVG résolu au chargement : bitmap prémultiplié partagé
+/// (`Arc`) + état d'animation (le rig et les clips sont ajoutés à l'étape
+/// suivante). Le bitmap est partagé entre entités pour éviter toute duplication.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorSprite {
+    pub asset: String,
+    pub image: Arc<crate::vector::RasterImage>,
+    /// Rig squelettique partagé (si l'asset possède des groupes nommés).
+    pub rig: Option<Arc<crate::vector::RigAsset>>,
+    /// Nom du clip d'animation courant (ex: "idle", "walk").
+    pub clip: String,
+    /// Avancement dans le clip (secondes).
+    pub time: f32,
+    pub speed: f32,
+    pub playing: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
     pub id: usize,
@@ -1163,6 +1184,9 @@ pub struct Entity {
     pub nav_agent: Option<crate::navigation::NavAgent>,
     #[serde(default)]
     pub flock: Option<crate::flocking::FlockMember>,
+    /// Sprite vectoriel SVG résolu à l'import (jamais sérialisé : reconstruit au chargement).
+    #[serde(skip)]
+    pub vector_sprite: Option<VectorSprite>,
     pub is_active: bool,
 }
 
@@ -1186,6 +1210,7 @@ impl Entity {
             boss: None,
             nav_agent: None,
             flock: None,
+            vector_sprite: None,
             is_active: true,
         }
     }

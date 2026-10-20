@@ -306,6 +306,184 @@ impl Canvas {
         }
     }
 
+    /// Affiche une image RGBA **prémultipliée** (`0xAARRGGBB`) redimensionnée
+    /// (nearest-neighbor) avec alpha blending sur le fond existant.
+    ///
+    /// Le pixel `0` est transparent. Le chemin opaque (`alpha == 255`) écrit
+    /// directement, sans multiplication. Aucune allocation dans le hot path.
+    pub fn draw_pixel_matrix_alpha(
+        &mut self,
+        dest_x: i32,
+        dest_y: i32,
+        dest_w: u32,
+        dest_h: u32,
+        matrix: &[u32],
+        matrix_w: u32,
+        matrix_h: u32,
+    ) {
+        if matrix_w == 0 || matrix_h == 0 || dest_w == 0 || dest_h == 0 {
+            return;
+        }
+
+        let (clip_min_x, clip_min_y, clip_max_x, clip_max_y) = if let Some((cx, cy, cw, ch)) = self.clip_rect {
+            (
+                cx.max(0) as usize,
+                cy.max(0) as usize,
+                ((cx + cw as i32).max(0) as usize).min(self.width),
+                ((cy + ch as i32).max(0) as usize).min(self.height),
+            )
+        } else {
+            (0, 0, self.width, self.height)
+        };
+
+        let x_start = (dest_x.max(0) as usize).max(clip_min_x);
+        let y_start = (dest_y.max(0) as usize).max(clip_min_y);
+        let x_end = (((dest_x + dest_w as i32).max(0) as usize).min(self.width)).min(clip_max_x);
+        let y_end = (((dest_y + dest_h as i32).max(0) as usize).min(self.height)).min(clip_max_y);
+
+        if x_start >= x_end || y_start >= y_end {
+            return;
+        }
+
+        // Arithmétique à virgule fixe 16.16 : aucune division entière dans les boucles.
+        let step_x_fp = ((matrix_w as u64) << 16) / (dest_w as u64);
+        let step_y_fp = ((matrix_h as u64) << 16) / (dest_h as u64);
+
+        let initial_src_x_fp = (x_start as i32 - dest_x).max(0) as u64 * step_x_fp;
+        let mut src_y_fp = (y_start as i32 - dest_y).max(0) as u64 * step_y_fp;
+        let max_src_x = (matrix_w as usize).saturating_sub(1);
+        let max_src_y = (matrix_h as usize).saturating_sub(1);
+
+        for py in y_start..y_end {
+            let row_offset = py * self.width;
+            let src_y = ((src_y_fp >> 16) as usize).min(max_src_y);
+            src_y_fp += step_y_fp;
+            let src_row = src_y * matrix_w as usize;
+
+            let mut src_x_fp = initial_src_x_fp;
+            for px in x_start..x_end {
+                let src_x = ((src_x_fp >> 16) as usize).min(max_src_x);
+                src_x_fp += step_x_fp;
+                let idx = src_row + src_x;
+                if idx < matrix.len() {
+                    let c = matrix[idx];
+                    if c != 0 {
+                        let a = (c >> 24) & 0xFF;
+                        if a != 0 {
+                            let di = row_offset + px;
+                            if a == 255 {
+                                // Opaque : écriture directe (r,g,b déjà = couleur réelle).
+                                self.buffer[di] = c & 0x00FF_FFFF;
+                            } else {
+                                // Blend prémultiplié : out = src + dst * (255 - a) / 255
+                                let dst = self.buffer[di];
+                                let inv = 255 - a;
+                                let out_r = ((c >> 16) & 0xFF) + div255(((dst >> 16) & 0xFF) * inv);
+                                let out_g = ((c >> 8) & 0xFF) + div255(((dst >> 8) & 0xFF) * inv);
+                                let out_b = (c & 0xFF) + div255((dst & 0xFF) * inv);
+                                self.buffer[di] = (out_r << 16) | (out_g << 8) | out_b;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Affiche une image RGBA prémultipliée (`0xAARRGGBB`) avec rotation + échelle
+    /// autour d'un pivot, échantillonnage nearest-neighbor et alpha blending.
+    ///
+    /// `pivot_x/pivot_y` : pivot en coordonnées du bitmap source. `angle` en
+    /// radians, `scale_x/scale_y` échelles, `dx/dy` position écran du pivot.
+    /// Aucune allocation dans le hot path.
+    pub fn draw_sprite_affine(
+        &mut self,
+        matrix: &[u32],
+        mw: u32,
+        mh: u32,
+        pivot_x: f32,
+        pivot_y: f32,
+        angle: f32,
+        scale_x: f32,
+        scale_y: f32,
+        dx: f32,
+        dy: f32,
+    ) {
+        if mw == 0 || mh == 0 {
+            return;
+        }
+        let cos = angle.cos();
+        let sin = angle.sin();
+        // Inverse : src = S^-1 * R^-1 * (screen - d) + pivot
+        let m00 = cos / scale_x;
+        let m01 = sin / scale_x;
+        let m10 = -sin / scale_y;
+        let m11 = cos / scale_y;
+
+        // Boîte englobante écran du quadrilatère transformé
+        let corners = [
+            (0.0f32, 0.0f32),
+            (mw as f32, 0.0),
+            (0.0, mh as f32),
+            (mw as f32, mh as f32),
+        ];
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+        for (cx, cy) in corners {
+            let rx = cx - pivot_x;
+            let ry = cy - pivot_y;
+            let sx = rx * scale_x;
+            let sy = ry * scale_y;
+            let tx = cos * sx - sin * sy + dx;
+            let ty = sin * sx + cos * sy + dy;
+            min_x = min_x.min(tx);
+            min_y = min_y.min(ty);
+            max_x = max_x.max(tx);
+            max_y = max_y.max(ty);
+        }
+
+        let cx0 = (min_x.floor() as i32).max(0);
+        let cx1 = (max_x.ceil() as i32).min(self.width as i32);
+        let cy0 = (min_y.floor() as i32).max(0);
+        let cy1 = (max_y.ceil() as i32).min(self.height as i32);
+
+        let mw_i = mw as i32;
+        let mh_i = mh as i32;
+        let stride = mw as usize;
+
+        for v in cy0..cy1 {
+            for u in cx0..cx1 {
+                let ex = u as f32 - dx;
+                let ey = v as f32 - dy;
+                let sxf = m00 * ex + m01 * ey + pivot_x;
+                let syf = m10 * ex + m11 * ey + pivot_y;
+                let si = sxf as i32;
+                let sj = syf as i32;
+                if si >= 0 && si < mw_i && sj >= 0 && sj < mh_i {
+                    let c = matrix[sj as usize * stride + si as usize];
+                    if c != 0 {
+                        let a = (c >> 24) & 0xFF;
+                        if a != 0 {
+                            let di = (v as usize) * self.width + (u as usize);
+                            if a == 255 {
+                                self.buffer[di] = c & 0x00FF_FFFF;
+                            } else {
+                                let dst = self.buffer[di];
+                                let inv = 255 - a;
+                                let out_r = ((c >> 16) & 0xFF) + div255(((dst >> 16) & 0xFF) * inv);
+                                let out_g = ((c >> 8) & 0xFF) + div255(((dst >> 8) & 0xFF) * inv);
+                                let out_b = (c & 0xFF) + div255((dst & 0xFF) * inv);
+                                self.buffer[di] = (out_r << 16) | (out_g << 8) | out_b;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Mélange de couleur alpha (alpha blending) pour l'anti-aliasing de police
     pub fn blend_pixel(&mut self, x: i32, y: i32, color: u32, alpha: u8) {
         if alpha == 0 {
@@ -846,6 +1024,60 @@ mod tests {
         assert_eq!(canvas.buffer[4 * 32 + 4], 0x00FF0000);
         // Le pixel en bas à droite du sprite (4+7, 4+7) doit être blanc
         assert_eq!(canvas.buffer[11 * 32 + 11], 0x00FFFFFF);
+    }
+
+    #[test]
+    fn test_draw_pixel_matrix_alpha_opaque_and_semi() {
+        let mut canvas = Canvas::new(2, 1);
+        canvas.buffer.fill(0x00FFFFFF); // fond blanc
+        // Opaque rouge prémultiplié (a=255) puis semi-transparent rouge (a=128)
+        let sprite = [0xFFFF0000u32, 0x80800000u32];
+        canvas.draw_pixel_matrix_alpha(0, 0, 2, 1, &sprite, 2, 1);
+        assert_eq!(canvas.buffer[0], 0x00FF0000, "opaque: rouge pur");
+        assert_eq!(canvas.buffer[1], 0x00FF7F7F, "semi: rouge sur blanc");
+    }
+
+    #[test]
+    fn test_draw_pixel_matrix_alpha_transparent_noop() {
+        let mut canvas = Canvas::new(1, 1);
+        canvas.buffer[0] = 0x00123456;
+        canvas.draw_pixel_matrix_alpha(0, 0, 1, 1, &[0u32], 1, 1);
+        assert_eq!(canvas.buffer[0], 0x00123456, "pixel 0 ne doit pas écrire");
+    }
+
+    #[test]
+    fn test_draw_pixel_matrix_alpha_out_of_bounds() {
+        let mut canvas = Canvas::new(4, 4);
+        // Sprite 2x2 opaque rouge dessiné partiellement hors écran (dest à (3,3))
+        let sprite = [0xFFFF0000u32; 4];
+        canvas.draw_pixel_matrix_alpha(3, 3, 4, 4, &sprite, 2, 2);
+        // Seul le pixel (3,3) est visible et écrit
+        assert_eq!(canvas.buffer[3 * 4 + 3], 0x00FF0000);
+        // Le reste reste transparent
+        assert_eq!(canvas.buffer[0], 0);
+    }
+
+    #[test]
+    fn test_draw_sprite_affine_identity_matches_matrix_alpha() {
+        let sprite = [0xFFFF0000u32, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF]; // 2x2 opaque
+        let mut a = Canvas::new(8, 8);
+        let mut b = Canvas::new(8, 8);
+        a.draw_pixel_matrix_alpha(2, 2, 4, 4, &sprite, 2, 2);
+        // Affine identité : pivot (0,0), angle 0, échelle 2, pivot à (2,2)
+        b.draw_sprite_affine(&sprite, 2, 2, 0.0, 0.0, 0.0, 2.0, 2.0, 2.0, 2.0);
+        assert_eq!(a.buffer, b.buffer, "identité affine ≡ blit matriciel");
+    }
+
+    #[test]
+    fn test_draw_sprite_affine_rotation_produces_pixels() {
+        let sprite = [0xFFFF0000u32, 0xFF0000FFu32]; // 2x1 horizontal
+        let mut c = Canvas::new(16, 16);
+        c.draw_sprite_affine(
+            &sprite, 2, 1, 1.0, 0.5,
+            std::f32::consts::FRAC_PI_2, 1.0, 1.0, 8.0, 8.0,
+        );
+        let written = c.buffer.iter().filter(|&&p| p != 0).count();
+        assert!(written > 0, "la rotation doit produire des pixels");
     }
 
     #[test]

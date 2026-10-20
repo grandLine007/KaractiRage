@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <g id="leg_l">
+    <rect x="22" y="48" width="8" height="14" rx="2" fill="#1e3a5f"/>
+  </g>
+  <g id="leg_r">
+    <rect x="34" y="48" width="8" height="14" rx="2" fill="#1e3a5f"/>
+  </g>
+  <g id="torso">
+    <rect x="18" y="28" width="28" height="22" rx="4" fill="#0ea5e9"/>
+    <rect x="24" y="34" width="16" height="6" rx="2" fill="#0b7bb8"/>
+  </g>
+  <g id="arm_l">
+    <rect x="12" y="30" width="6" height="18" rx="3" fill="#38bdf8"/>
+  </g>
+  <g id="arm_r">
+    <rect x="46" y="30" width="6" height="18" rx="3" fill="#38bdf8"/>
+  </g>
+  <g id="head">
+    <rect x="24" y="12" width="16" height="16" rx="4" fill="#e2e8f0"/>
+    <rect x="28" y="17" width="4" height="4" fill="#0f172a"/>
+    <rect x="34" y="17" width="4" height="4" fill="#0f172a"/>
+  </g>
+</svg>

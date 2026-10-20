@@ -1,0 +1,37 @@
+{
+  "name": "Démo SVG (Décor & Personnage animé)",
+  "description": "Intégration SVG : décor statique + personnage riggé animé (usvg/resvg).",
+  "objective": "Observez le héros vectoriel animé (idle) et le décor SVG.",
+  "entities": [
+    {
+      "id": 1,
+      "name": "Héros Vectoriel",
+      "tag": "player",
+      "transform": { "x": 320.0, "y": 200.0, "w": 64.0, "h": 64.0, "rotation": 0.0 },
+      "renderable": { "shape": { "SvgRef": { "asset": "hero" } }, "color": 3718648, "outline_color": null, "outline_width": 0, "z_index": 10, "visible": true },
+      "collider": null,
+      "movement": { "vx": 0.0, "vy": 0.0, "speed": 240.0, "is_player_controlled": true, "patrol": null, "mode": "TopDown" },
+      "vision": null, "script": null, "emitter": null, "projectile": null,
+      "health": { "current": 3.0, "max": 3.0, "invulnerability_timer": 0.0, "is_dead": false },
+      "dialogue": null, "item_pickup": null, "boss": null, "nav_agent": null, "flock": null, "is_active": true
+    },
+    {
+      "id": 2,
+      "name": "Torche",
+      "tag": "decor",
+      "transform": { "x": 200.0, "y": 260.0, "w": 32.0, "h": 64.0, "rotation": 0.0 },
+      "renderable": { "shape": { "SvgRef": { "asset": "decor_torch" } }, "color": 16737792, "outline_color": null, "outline_width": 0, "z_index": 3, "visible": true },
+      "collider": null, "movement": null, "vision": null, "script": null, "emitter": null, "projectile": null,
+      "health": null, "dialogue": null, "item_pickup": null, "boss": null, "nav_agent": null, "flock": null, "is_active": true
+    },
+    {
+      "id": 3,
+      "name": "Caisse",
+      "tag": "decor",
+      "transform": { "x": 420.0, "y": 300.0, "w": 32.0, "h": 32.0, "rotation": 0.0 },
+      "renderable": { "shape": { "SvgRef": { "asset": "decor_crate" } }, "color": 16737792, "outline_color": null, "outline_width": 0, "z_index": 3, "visible": true },
+      "collider": null, "movement": null, "vision": null, "script": null, "emitter": null, "projectile": null,
+      "health": null, "dialogue": null, "item_pickup": null, "boss": null, "nav_agent": null, "flock": null, "is_active": true
+    }
+  ]
+}

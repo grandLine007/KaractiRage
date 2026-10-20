@@ -169,6 +169,40 @@ mod tests {
     }
 
     #[test]
+    fn test_play_animation_2d_actions() {
+        let mut graph = Graph::new("test_anim", "Test Animation 2D", "");
+        let evt = Node::new("evt", "Event", Category::Interactions, "", NodeKind::Event { event_type: "OnIdle".into() })
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let act = Node::new("act_anim", "Play walk", Category::Movement, "", NodeKind::Action { action_type: "PlayAnimation2D:walk".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+        graph.add_node(evt);
+        graph.add_node(act);
+        graph.connect_pins("evt", "out_trigger", "act_anim", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        Interpreter::trigger_event(&graph, &mut ctx, "OnIdle").unwrap();
+        assert_eq!(ctx.get_var("anim_request"), Some(&Value::String("walk".into())));
+        assert_eq!(ctx.get_var("anim_request_entity"), Some(&Value::String(String::new())));
+    }
+
+    #[test]
+    fn test_play_animation_2d_on_specific_tag() {
+        let mut graph = Graph::new("test_anim_on", "Test Animation 2D On", "");
+        let evt = Node::new("evt", "Event", Category::Interactions, "", NodeKind::Event { event_type: "OnAlert".into() })
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+        let act = Node::new("act_anim", "Sentinelle attack", Category::Movement, "", NodeKind::Action { action_type: "PlayAnimation2DOn:sentinel:attack".into() })
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+        graph.add_node(evt);
+        graph.add_node(act);
+        graph.connect_pins("evt", "out_trigger", "act_anim", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        Interpreter::trigger_event(&graph, &mut ctx, "OnAlert").unwrap();
+        assert_eq!(ctx.get_var("anim_request"), Some(&Value::String("attack".into())));
+        assert_eq!(ctx.get_var("anim_request_entity"), Some(&Value::String("sentinel".into())));
+    }
+
+    #[test]
     fn test_counter_gate_and_variable_conditions() {
         let mut graph = Graph::new("test_counter", "Test Counter & Var", "");
         let evt = Node::new("evt", "Key Collect", Category::Interactions, "", NodeKind::Event { event_type: "OnKeyFound".into() })

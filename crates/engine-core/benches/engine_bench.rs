@@ -105,6 +105,48 @@ fn main() {
     println!("  draw_text_mono (45 ch.) : {:>10.1} µs / op", text_us);
     println!();
 
+    // --- Micro-benchmarks SVG (import + blit alpha + rig) ---------------------
+    let svg_src = r##"<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="16" y="16" width="96" height="96" rx="8" fill="#0ea5e9"/>
+  <circle cx="64" cy="64" r="32" fill="#f59e0b"/>
+</svg>"##;
+
+    let raster_us = best_of(5, || {
+        time_us(20, || {
+            black_box(
+                karactirage_engine::vector::rasterize_svg(svg_src, Some((128, 128))).unwrap(),
+            );
+        })
+    });
+
+    // Blit alpha : sprite 64x64 opaque
+    let sprite: Vec<u32> = (0..64 * 64).map(|i| 0xFFFF0000u32 | (i % 251) as u32).collect();
+    let blit_us = best_of(5, || {
+        time_us(200, || {
+            canvas.draw_pixel_matrix_alpha(0, 0, 64, 64, &sprite, 64, 64);
+        })
+    });
+
+    // Rig : 6 parties 24x24 en rotation légère
+    let part: Vec<u32> = (0..24 * 24).map(|i| 0xFF123456u32 | (i % 7) as u32).collect();
+    let rig_us = best_of(5, || {
+        time_us(100, || {
+            for k in 0..6 {
+                let ang = (k as f32) * 0.1;
+                canvas.draw_sprite_affine(
+                    &part, 24, 24, 12.0, 12.0, ang, 1.0, 1.0,
+                    100.0 + k as f32 * 30.0, 100.0,
+                );
+            }
+        })
+    });
+
+    println!("--- Intégration SVG ---");
+    println!("  rasterize_svg (128²)          : {:>10.1} µs / import", raster_us);
+    println!("  draw_pixel_matrix_alpha (64²) : {:>10.1} µs / sprite", blit_us);
+    println!("  draw_sprite_affine ×6 (rig)   : {:>10.1} µs / frame", rig_us);
+    println!();
+
     // --- Budget 60 FPS -------------------------------------------------------
     let budget = 16_666.0;
     let margin = budget - full_frame_us;

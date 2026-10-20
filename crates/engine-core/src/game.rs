@@ -3,7 +3,7 @@ use crate::audio::{AudioEngine, SoundType};
 use crate::camera::Camera2D;
 use crate::dialogue::{DialogueAction, DialogueBox, QuestTracker};
 use crate::editor::{EditorMode, EditorState, GameRecipeWizardState, SelectedEntity, StudioCommand, StudioTool, WizardCategory};
-use crate::entity::{BossAttackType, BossPhase, Entity, MovementMode, Renderable2D, ShapeKind, TelegraphShape, TelegraphZone};
+use crate::entity::{BossAttackType, BossPhase, Entity, MovementMode, Renderable2D, ShapeKind, TelegraphShape, TelegraphZone, VectorSprite};
 use crate::input::InputState;
 use crate::inventory::{Inventory, Item, ItemUseResult, HOTBAR_SLOTS_COUNT};
 use crate::renderer::Canvas;
@@ -24,7 +24,51 @@ pub const AVAILABLE_SCENES: &[(&str, &str)] = &[
     ("assets/scenes/space_01.scene.json", "Shoot'em Up (Inertie/Tirs)"),
     ("assets/scenes/puzzle_01.scene.json", "Puzzle Sokoban (Blocs/Dalles)"),
     ("assets/scenes/boss_01.scene.json", "Boss Fight (Telegraphie/KVL)"),
+    ("assets/scenes/svg_demo_01.scene.json", "Démo SVG (Décor & Personnage animé)"),
 ];
+
+/// Compose un rig vectoriel SVG à l'écran : chaque membre est blitté avec son
+/// keyframe interpolé (rotation autour du pivot + translation + échelle). Aucune
+/// allocation : tout est lu depuis les bitmaps partagés mis en cache à l'import.
+fn render_svg_rig(
+    canvas: &mut Canvas,
+    rig: &crate::vector::RigAsset,
+    clip_name: &str,
+    time: f32,
+    rx: i32,
+    ry: i32,
+    dest_w: u32,
+    dest_h: u32,
+) {
+    let clip = rig.clip(clip_name);
+    let svg_w = rig.width.max(1) as f32;
+    let svg_h = rig.height.max(1) as f32;
+    let scale_x = dest_w as f32 / svg_w;
+    let scale_y = dest_h as f32 / svg_h;
+    for (i, part) in rig.parts.iter().enumerate() {
+        let k = match clip {
+            Some(c) => c.sample(i, time),
+            None => crate::vector::Keyframe::default(),
+        };
+        let (x0, y0, _x1, _y1) = part.rect;
+        let dx = rx as f32 + (x0 as f32 + part.pivot.0) * scale_x + k.tx * scale_x;
+        let dy = ry as f32 + (y0 as f32 + part.pivot.1) * scale_y + k.ty * scale_y;
+        let sx = scale_x * if k.sx > 0.0 { k.sx } else { 1.0 };
+        let sy = scale_y * if k.sy > 0.0 { k.sy } else { 1.0 };
+        canvas.draw_sprite_affine(
+            &part.image.pixels,
+            part.image.width,
+            part.image.height,
+            part.pivot.0,
+            part.pivot.1,
+            k.rot.to_radians(),
+            sx,
+            sy,
+            dx,
+            dy,
+        );
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Particle {
@@ -800,6 +844,9 @@ impl GameState {
                 } else if path.contains("puzzle") {
                     let json = include_str!("../../../assets/scenes/puzzle_01.scene.json");
                     SceneData::from_json_str(json)?
+                } else if path.contains("svg_demo") {
+                    let json = include_str!("../../../assets/scenes/svg_demo_01.scene.json");
+                    SceneData::from_json_str(json)?
                 } else {
                     let default_json = include_str!("../../../assets/scenes/level_01.scene.json");
                     SceneData::from_json_str(default_json)?
@@ -808,6 +855,40 @@ impl GameState {
         };
 
         let mut entities = scene_data.to_entities();
+
+        // Résolution des sprites vectoriels SVG référencés par les entités
+        // (rastérisation à l'import, mise en cache par identifiant).
+        let mut svg_cache = crate::vector::SvgCache::new();
+        for ent in entities.iter_mut() {
+            if let Some(rend) = &ent.renderable {
+                if let ShapeKind::SvgRef { asset } = &rend.shape {
+                    match svg_cache.get_or_load(asset) {
+                        Ok(loaded) => {
+                            let default_clip = loaded
+                                .rig
+                                .as_ref()
+                                .and_then(|r| r.clips.first())
+                                .map(|c| c.name.clone())
+                                .unwrap_or_else(|| "idle".to_string());
+                            ent.vector_sprite = Some(VectorSprite {
+                                asset: asset.clone(),
+                                image: loaded.image.clone(),
+                                rig: loaded.rig.clone(),
+                                clip: default_clip,
+                                time: 0.0,
+                                speed: 1.0,
+                                playing: true,
+                            });
+                        }
+                        Err(_) => {
+                            // Repli visuel non bloquant : `rend.color` sert de
+                            // rectangle teinté au rendu (voir `ShapeKind::SvgRef`).
+                            ent.vector_sprite = None;
+                        }
+                    }
+                }
+            }
+        }
 
         let mut kvl_graphs = HashMap::new();
         let mut kvl_context = ExecutionContext::new();
@@ -1445,6 +1526,15 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             self.status_timer -= dt;
             if self.status_timer <= 0.0 {
                 self.status_message = "KaractiRage Studio • Prêt [Appuyez sur H pour le guide]".to_string();
+            }
+        }
+
+        // Avancement des animations vectorielles SVG (zéro allocation, aucun `String` en hot path)
+        for ent in self.entities.iter_mut() {
+            if let Some(vs) = ent.vector_sprite.as_mut() {
+                if vs.playing {
+                    vs.time += dt * vs.speed;
+                }
             }
         }
 
@@ -5208,6 +5298,34 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             }
         }
 
+        // Application des requêtes d'animation vectorielle émises par KVL
+        // (PlayAnimation2D / PlayAnimation2DOn / StopAnimation2D)
+        if let Some(Value::String(anim)) = self.kvl_context.get_var("anim_request").cloned() {
+            let target_tag = match self.kvl_context.get_var("anim_request_entity").cloned() {
+                Some(Value::String(t)) if !t.is_empty() => Some(t),
+                _ => None,
+            };
+            for ent in self.entities.iter_mut() {
+                if let Some(vs) = ent.vector_sprite.as_mut() {
+                    let matches = match &target_tag {
+                        Some(t) => &ent.tag == t,
+                        None => true,
+                    };
+                    if matches {
+                        if anim == "stop" {
+                            vs.playing = false;
+                        } else {
+                            vs.clip = anim.clone();
+                            vs.time = 0.0;
+                            vs.playing = true;
+                        }
+                    }
+                }
+            }
+            self.kvl_context.set_var("anim_request", Value::String(String::new()));
+            self.kvl_context.set_var("anim_request_entity", Value::String(String::new()));
+        }
+
         // ==========================================
         // SYSTEM 6 : VISION SENSING & RAYCASTING LINE-OF-SIGHT
         // ==========================================
@@ -6400,6 +6518,40 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                     }
                     // Rendu du sprite pixel-art à l'échelle
                     canvas.draw_pixel_matrix(rx, ry, dest_w, dest_h, pixels, width, height);
+                    if let Some(outline_col) = rend.outline_color {
+                        canvas.draw_rect_outline(rx, ry, dest_w, dest_h, outline_col, rend.outline_width);
+                    }
+                    if is_selected {
+                        canvas.draw_rect_outline(rx - 2, ry - 2, dest_w + 4, dest_h + 4, 0x00FBBF24, 2);
+                        let label = format!("{}: {}", ent.tag.to_uppercase(), ent.name);
+                        canvas.draw_text(rx, ry - 14, &label, 0x00FBBF24, 1);
+                    }
+                }
+                ShapeKind::SvgRef { .. } => {
+                    let dest_w = ent.transform.w as u32;
+                    let dest_h = ent.transform.h as u32;
+                    // Ombre portée subtile au sol
+                    if ent.tag != "floor" && ent.tag != "platform" {
+                        canvas.draw_rect(rx + 2, ry + 3, dest_w, dest_h, 0x00060911);
+                    }
+                    match &ent.vector_sprite {
+                        Some(vs) => {
+                            if let Some(rig) = &vs.rig {
+                                render_svg_rig(
+                                    canvas, rig, &vs.clip, vs.time, rx, ry, dest_w, dest_h,
+                                );
+                            } else {
+                                canvas.draw_pixel_matrix_alpha(
+                                    rx, ry, dest_w, dest_h,
+                                    &vs.image.pixels, vs.image.width, vs.image.height,
+                                );
+                            }
+                        }
+                        None => {
+                            // Repli si l'asset n'a pas pu être rastérisé
+                            canvas.draw_rect(rx, ry, dest_w, dest_h, rend.color);
+                        }
+                    }
                     if let Some(outline_col) = rend.outline_color {
                         canvas.draw_rect_outline(rx, ry, dest_w, dest_h, outline_col, rend.outline_width);
                     }
@@ -10395,7 +10547,11 @@ mod tests {
         assert!(state.scene_path.contains("boss"));
         assert!(state.scene_name.contains("Boss") || state.scene_name.contains("Titan"));
 
-        // 5. Rebouclage vers la première scène (Top-Down Aventure)
+        // 5. Bascule vers la démo SVG (décor + personnage animé)
+        state.cycle_scene_forward();
+        assert!(state.scene_path.contains("svg_demo"));
+
+        // 6. Rebouclage vers la première scène (Top-Down Aventure)
         state.cycle_scene_forward();
         assert!(state.scene_path.contains("level_01"));
     }
@@ -11472,6 +11628,113 @@ mod tests {
         ai_level_state.editor.mode = EditorMode::Play;
         ai_level_state.render(&mut canvas);
         save_test_ppm(&canvas, "/tmp/karactirage_ai_pixel_level.ppm");
+    }
+
+    #[test]
+    fn test_svg_entity_resolves_and_renders() {
+        let scene_json = r##"{
+  "name": "Test SVG",
+  "description": "",
+  "objective": null,
+  "entities": [
+    {
+      "id": 1,
+      "name": "Torche",
+      "tag": "decor",
+      "transform": { "x": 100.0, "y": 100.0, "w": 32.0, "h": 64.0, "rotation": 0.0 },
+      "renderable": { "shape": { "SvgRef": { "asset": "decor_torch" } }, "color": 16711680, "outline_color": null, "outline_width": 0, "z_index": 5, "visible": true },
+      "is_active": true
+    }
+  ]
+}"##;
+        let path = std::env::temp_dir().join("karactirage_svg_test_scene.json");
+        std::fs::write(&path, scene_json).unwrap();
+
+        let mut state = GameState::load_from_scene(path.to_str().unwrap())
+            .expect("chargement scène SVG");
+        let ent = state
+            .entities
+            .iter()
+            .find(|e| e.tag == "decor")
+            .expect("entité décor");
+        let vs = ent.vector_sprite.as_ref().expect("sprite vectoriel résolu");
+        assert!(vs.image.width > 0 && vs.image.height > 0);
+
+        let mut canvas = Canvas::new(1200, 800);
+        state.render(&mut canvas);
+        assert!(
+            canvas.buffer.iter().any(|&p| p != 0),
+            "le décor SVG doit produire des pixels"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_svg_demo_scene_has_animated_rig() {
+        let mut state =
+            GameState::load_from_scene("assets/scenes/svg_demo_01.scene.json").unwrap();
+        let hero = state
+            .entities
+            .iter()
+            .find(|e| e.tag == "player")
+            .expect("héros");
+        let vs = hero.vector_sprite.as_ref().expect("sprite vectoriel");
+        let rig = vs.rig.as_ref().expect("rig squelettique");
+        assert!(rig.parts.len() >= 2);
+        assert!(rig.clip("idle").is_some(), "clip idle chargé");
+        assert!(rig.clip("walk").is_some(), "clip walk chargé");
+
+        let mut canvas = Canvas::new(1200, 800);
+        state.render(&mut canvas);
+        assert!(canvas.buffer.iter().any(|&p| p != 0));
+    }
+
+    #[test]
+    fn test_kvl_animation_request_changes_clip() {
+        let mut state =
+            GameState::load_from_scene("assets/scenes/svg_demo_01.scene.json").unwrap();
+        state.kvl_context.set_var("anim_request", Value::String("walk".into()));
+        let input = InputState::new();
+        state.update(0.016, &input);
+
+        let hero = state.entities.iter().find(|e| e.tag == "player").unwrap();
+        let vs = hero.vector_sprite.as_ref().unwrap();
+        assert_eq!(vs.clip, "walk", "le clip doit être appliqué");
+        assert!(vs.playing);
+
+        // La requête doit être purgée (idempotence, pas de re-déclenchement)
+        match state.kvl_context.get_var("anim_request") {
+            Some(Value::String(s)) => assert!(s.is_empty()),
+            _ => panic!("anim_request doit être purgée après consommation"),
+        }
+    }
+
+    #[test]
+    fn test_no_per_frame_allocation_in_render_hot_path() {
+        let mut state =
+            GameState::load_from_scene("assets/scenes/svg_demo_01.scene.json").unwrap();
+        let mut canvas = Canvas::new(1200, 800);
+        let input = InputState::new();
+
+        // Échauffement (le premier rendu dimensionne les tampons)
+        state.render(&mut canvas);
+        let buf_cap = canvas.buffer.capacity();
+        let order_cap = state.render_order.capacity();
+
+        for _ in 0..120 {
+            state.update(0.016, &input);
+            state.render(&mut canvas);
+        }
+
+        assert_eq!(
+            canvas.buffer.capacity(), buf_cap,
+            "le framebuffer ne doit jamais être réalloué en rendu"
+        );
+        assert_eq!(
+            state.render_order.capacity(), order_cap,
+            "render_order ne doit jamais être réalloué en rendu"
+        );
     }
 
     #[test]

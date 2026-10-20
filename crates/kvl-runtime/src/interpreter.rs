@@ -490,6 +490,26 @@ impl Interpreter {
                             ctx.set_var("boss_roar_triggered", Value::Bool(true));
                             ctx.record_step(&next_node.id, &next_node.name, "Grondement terrifiant du Boss !");
                         }
+                        "StopAnimation2D" => {
+                            ctx.set_var("anim_request", Value::String("stop".into()));
+                            ctx.set_var("anim_request_entity", Value::String(String::new()));
+                            ctx.record_step(&next_node.id, &next_node.name, "Animation vectorielle arrêtée.");
+                        }
+                        op if op.starts_with("PlayAnimation2DOn:") => {
+                            let spec = op.trim_start_matches("PlayAnimation2DOn:");
+                            let mut it = spec.splitn(2, ':');
+                            let tag = it.next().unwrap_or("").to_string();
+                            let clip = it.next().unwrap_or("idle").to_string();
+                            ctx.set_var("anim_request", Value::String(clip.clone()));
+                            ctx.set_var("anim_request_entity", Value::String(tag.clone()));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Lecture de l'animation [{}] sur [{}]", clip, tag));
+                        }
+                        op if op.starts_with("PlayAnimation2D:") => {
+                            let clip = op.trim_start_matches("PlayAnimation2D:").to_string();
+                            ctx.set_var("anim_request", Value::String(clip.clone()));
+                            ctx.set_var("anim_request_entity", Value::String(String::new()));
+                            ctx.record_step(&next_node.id, &next_node.name, format!("Lecture de l'animation [{}]", clip));
+                        }
                         _ => {
                             ctx.record_step(&next_node.id, &next_node.name, format!("Action personnalisée {}", action_type));
                         }
