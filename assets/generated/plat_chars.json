@@ -1,0 +1,174 @@
+{
+ "frames": {
+  "plat_hero": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  },
+  "plat_enemy": {
+   "frame": {
+    "x": 19,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  },
+  "plat_coin": {
+   "frame": {
+    "x": 38,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 16
+   }
+  },
+  "plat_spike": {
+   "frame": {
+    "x": 0,
+    "y": 19,
+    "w": 18,
+    "h": 12
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 12
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 12
+   }
+  },
+  "plat_crate": {
+   "frame": {
+    "x": 19,
+    "y": 19,
+    "w": 18,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 16
+   }
+  },
+  "plat_spring": {
+   "frame": {
+    "x": 38,
+    "y": 19,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  },
+  "plat_flag": {
+   "frame": {
+    "x": 0,
+    "y": 38,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  },
+  "plat_cloud": {
+   "frame": {
+    "x": 19,
+    "y": 38,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  }
+ },
+ "meta": {
+  "app": "pxl",
+  "image": "plat_chars.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 56,
+   "h": 56
+  },
+  "scale": "1"
+ }
+}

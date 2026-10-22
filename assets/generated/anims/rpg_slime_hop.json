@@ -1,0 +1,148 @@
+{
+ "frames": {
+  "rpg_slime_hop_0": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   },
+   "duration": 125
+  },
+  "rpg_slime_hop_1": {
+   "frame": {
+    "x": 18,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   },
+   "duration": 125
+  },
+  "rpg_slime_hop_2": {
+   "frame": {
+    "x": 36,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   },
+   "duration": 125
+  },
+  "rpg_slime_hop_3": {
+   "frame": {
+    "x": 54,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   },
+   "duration": 125
+  },
+  "rpg_slime_hop_4": {
+   "frame": {
+    "x": 72,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   },
+   "duration": 125
+  },
+  "rpg_slime_hop_5": {
+   "frame": {
+    "x": 90,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   },
+   "duration": 125
+  }
+ },
+ "meta": {
+  "app": "pxl",
+  "image": "rpg_slime_hop.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 108,
+   "h": 18
+  },
+  "scale": "1",
+  "frameTags": [
+   {
+    "name": "rpg_slime_hop",
+    "from": 0,
+    "to": 5,
+    "direction": "forward"
+   }
+  ]
+ }
+}

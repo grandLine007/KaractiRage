@@ -1,0 +1,154 @@
+{
+ "frames": {
+  "boss_titan": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  },
+  "boss_core": {
+   "frame": {
+    "x": 19,
+    "y": 0,
+    "w": 10,
+    "h": 10
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 10,
+    "h": 10
+   },
+   "sourceSize": {
+    "w": 10,
+    "h": 10
+   }
+  },
+  "boss_projectile": {
+   "frame": {
+    "x": 30,
+    "y": 0,
+    "w": 10,
+    "h": 10
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 10,
+    "h": 10
+   },
+   "sourceSize": {
+    "w": 10,
+    "h": 10
+   }
+  },
+  "boss_orb": {
+   "frame": {
+    "x": 0,
+    "y": 19,
+    "w": 10,
+    "h": 10
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 10,
+    "h": 10
+   },
+   "sourceSize": {
+    "w": 10,
+    "h": 10
+   }
+  },
+  "boss_arena_floor": {
+   "frame": {
+    "x": 11,
+    "y": 19,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   }
+  },
+  "boss_arena_wall": {
+   "frame": {
+    "x": 28,
+    "y": 19,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   }
+  },
+  "boss_crack": {
+   "frame": {
+    "x": 0,
+    "y": 36,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   }
+  }
+ },
+ "meta": {
+  "app": "pxl",
+  "image": "boss_chars.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 44,
+   "h": 52
+  },
+  "scale": "1"
+ }
+}

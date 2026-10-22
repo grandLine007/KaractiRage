@@ -639,6 +639,24 @@ fn engine_sprite_png(id: String, engine: tauri::State<'_, SharedEngine>) -> taur
 }
 
 #[tauri::command]
+fn engine_list_anim_assets(engine: tauri::State<'_, SharedEngine>) -> String {
+    engine.lock().unwrap().list_anim_assets_json()
+}
+
+#[tauri::command]
+fn engine_list_sheet_assets(engine: tauri::State<'_, SharedEngine>) -> String {
+    engine.lock().unwrap().list_sheet_assets_json()
+}
+
+#[tauri::command]
+fn engine_sheet_png(id: String, engine: tauri::State<'_, SharedEngine>) -> tauri::ipc::Response {
+    match engine.lock().unwrap().sheet_png_bytes(&id) {
+        Some(bytes) => tauri::ipc::Response::new(bytes),
+        None => tauri::ipc::Response::new(Vec::<u8>::new()),
+    }
+}
+
+#[tauri::command]
 fn engine_get_kvl_graphs(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().get_kvl_graphs_json()
 }
@@ -812,6 +830,15 @@ fn resolve_art_file(name: &str) -> Result<PathBuf, String> {
     Ok(file)
 }
 
+/// Résout `assets/art/{name}.px.js` en chemin absolu **sans exiger l'existence**
+/// (pour la création/écriture). Même validation de nom que `resolve_art_file`.
+fn art_file_path(name: &str) -> Result<PathBuf, String> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return Err("Nom d'art invalide (lettres, chiffres, _ et - uniquement).".to_string());
+    }
+    Ok(pxl_root().join("assets/art").join(format!("{name}.px.js")))
+}
+
 #[derive(Serialize)]
 struct PxlBuildResult {
     ok: bool,
@@ -917,6 +944,46 @@ fn pxl_serve_status(port: u16, state: tauri::State<'_, PxlServe>) -> PxlServeSta
         url: running.then(|| format!("http://127.0.0.1:{port}/")),
         port,
     }
+}
+
+/// Liste les sources d'art pxl disponibles (`assets/art/*.px.js`), triées.
+#[tauri::command]
+fn pxl_list_sources() -> Vec<String> {
+    let dir = pxl_root().join("assets/art");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| {
+                    let p = e.path();
+                    if p.extension().and_then(|x| x.to_str()) == Some("js") {
+                        p.file_stem().and_then(|s| s.to_str()).map(str::to_string)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// Lit le contenu d'une source d'art pxl (fichier existant uniquement).
+#[tauri::command]
+fn pxl_read_source(name: String) -> Result<String, String> {
+    let file = resolve_art_file(&name)?;
+    std::fs::read_to_string(&file).map_err(|e| format!("Lecture impossible : {e}"))
+}
+
+/// Écrit (ou crée) une source d'art pxl. Retourne le chemin absolu écrit.
+#[tauri::command]
+fn pxl_write_source(name: String, content: String) -> Result<String, String> {
+    let file = art_file_path(&name)?;
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Création du dossier : {e}"))?;
+    }
+    std::fs::write(&file, &content).map_err(|e| format!("Écriture impossible : {e}"))?;
+    Ok(file.display().to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1025,11 +1092,17 @@ pub fn run() {
             engine_save_scene,
             engine_list_sprite_assets,
             engine_sprite_png,
+            engine_list_anim_assets,
+            engine_list_sheet_assets,
+            engine_sheet_png,
             pxl_available,
             pxl_build,
             pxl_serve_start,
             pxl_serve_stop,
             pxl_serve_status,
+            pxl_list_sources,
+            pxl_read_source,
+            pxl_write_source,
             engine_get_kvl_graphs,
             engine_get_kvl_graph,
             engine_validate_kvl_graph,

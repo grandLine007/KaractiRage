@@ -8,4 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 node tools/pxl/scripts/build.js
-node tools/pxl/run.js build assets/art/game.px.js --out assets/generated
+for art in assets/art/*.px.js; do
+  echo "-> build $art"
+  node tools/pxl/run.js build "$art" --out assets/generated
+done

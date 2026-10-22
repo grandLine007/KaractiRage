@@ -1,0 +1,190 @@
+{
+ "frames": {
+  "boss_shockwave_0": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   },
+   "duration": 83
+  },
+  "boss_shockwave_1": {
+   "frame": {
+    "x": 16,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   },
+   "duration": 83
+  },
+  "boss_shockwave_2": {
+   "frame": {
+    "x": 32,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   },
+   "duration": 83
+  },
+  "boss_shockwave_3": {
+   "frame": {
+    "x": 48,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   },
+   "duration": 83
+  },
+  "boss_shockwave_4": {
+   "frame": {
+    "x": 64,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   },
+   "duration": 83
+  },
+  "boss_shockwave_5": {
+   "frame": {
+    "x": 80,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   },
+   "duration": 83
+  },
+  "boss_shockwave_6": {
+   "frame": {
+    "x": 96,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   },
+   "duration": 83
+  },
+  "boss_shockwave_7": {
+   "frame": {
+    "x": 112,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   },
+   "duration": 83
+  }
+ },
+ "meta": {
+  "app": "pxl",
+  "image": "boss_shockwave.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 128,
+   "h": 16
+  },
+  "scale": "1",
+  "frameTags": [
+   {
+    "name": "boss_shockwave",
+    "from": 0,
+    "to": 7,
+    "direction": "forward"
+   }
+  ]
+ }
+}

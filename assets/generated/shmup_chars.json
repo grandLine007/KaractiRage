@@ -1,0 +1,174 @@
+{
+ "frames": {
+  "shmup_ship": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  },
+  "shmup_drone": {
+   "frame": {
+    "x": 19,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  },
+  "shmup_asteroid": {
+   "frame": {
+    "x": 38,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  },
+  "shmup_asteroid_small": {
+   "frame": {
+    "x": 0,
+    "y": 19,
+    "w": 12,
+    "h": 8
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "sourceSize": {
+    "w": 12,
+    "h": 8
+   }
+  },
+  "shmup_bullet": {
+   "frame": {
+    "x": 13,
+    "y": 19,
+    "w": 8,
+    "h": 8
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 8,
+    "h": 8
+   },
+   "sourceSize": {
+    "w": 8,
+    "h": 8
+   }
+  },
+  "shmup_enemy_bullet": {
+   "frame": {
+    "x": 22,
+    "y": 19,
+    "w": 6,
+    "h": 6
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 6,
+    "h": 6
+   },
+   "sourceSize": {
+    "w": 6,
+    "h": 6
+   }
+  },
+  "shmup_star": {
+   "frame": {
+    "x": 0,
+    "y": 28,
+    "w": 7,
+    "h": 5
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 7,
+    "h": 5
+   },
+   "sourceSize": {
+    "w": 7,
+    "h": 5
+   }
+  },
+  "shmup_powerup": {
+   "frame": {
+    "x": 8,
+    "y": 28,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  }
+ },
+ "meta": {
+  "app": "pxl",
+  "image": "shmup_chars.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 56,
+   "h": 46
+  },
+  "scale": "1"
+ }
+}

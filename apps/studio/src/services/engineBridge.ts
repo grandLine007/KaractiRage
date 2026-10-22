@@ -347,6 +347,56 @@ export async function getSpritePngUrl(id: string): Promise<string> {
   return url;
 }
 
+export interface AnimAsset {
+  id: string;
+  file: string;
+  frames: number;
+}
+
+export interface SheetAsset {
+  id: string;
+  file: string;
+  frames: string[];
+}
+
+/** Liste des animations pxl (assets/generated/anims/*.json). */
+export async function listAnimAssets(): Promise<AnimAsset[]> {
+  const raw: string = await invoke('engine_list_anim_assets');
+  try {
+    return JSON.parse(raw) as AnimAsset[];
+  } catch {
+    return [];
+  }
+}
+
+/** Liste des atlas pxl (assets/generated/<sheet>.json). */
+export async function listSheetAssets(): Promise<SheetAsset[]> {
+  const raw: string = await invoke('engine_list_sheet_assets');
+  try {
+    return JSON.parse(raw) as SheetAsset[];
+  } catch {
+    return [];
+  }
+}
+
+/** Octets PNG bruts d'un atlas / bande d'animation (miniature). */
+export async function getSheetPngBytes(id: string): Promise<ArrayBuffer> {
+  return await invoke<ArrayBuffer>('engine_sheet_png', { id });
+}
+
+const sheetUrlCache = new Map<string, string>();
+
+/** URL objet (Blob) pour afficher un atlas ou une bande d'animation. */
+export async function getSheetPngUrl(id: string): Promise<string> {
+  const hit = sheetUrlCache.get(id);
+  if (hit) return hit;
+  const bytes = await getSheetPngBytes(id);
+  const blob = new Blob([bytes], { type: 'image/png' });
+  const url = URL.createObjectURL(blob);
+  sheetUrlCache.set(id, url);
+  return url;
+}
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Atelier Pixel Art (pxl) — build + viewer live
@@ -383,6 +433,21 @@ export async function pxlServeStop(): Promise<boolean> {
 
 export async function pxlServeStatus(port: number): Promise<PxlServeStatus> {
   return await invoke('pxl_serve_status', { port });
+}
+
+/** Liste les sources d'art pxl disponibles (assets/art/*.px.js). */
+export async function pxlListSources(): Promise<string[]> {
+  return await invoke<string[]>('pxl_list_sources');
+}
+
+/** Lit le contenu d'une source d'art pxl. */
+export async function pxlReadSource(name: string): Promise<string> {
+  return await invoke<string>('pxl_read_source', { name });
+}
+
+/** Écrit (ou crée) une source d'art pxl. Retourne le chemin absolu écrit. */
+export async function pxlWriteSource(name: string, content: string): Promise<string> {
+  return await invoke<string>('pxl_write_source', { name, content });
 }
 
 // KVL Guidé — graphes, validation et recettes en un clic

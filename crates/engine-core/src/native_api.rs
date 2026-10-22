@@ -1320,6 +1320,83 @@ impl NativeEngine {
         crate::vector::read_png_source(id)
     }
 
+    /// Liste les animations pxl disponibles (`assets/generated/anims/*.json`)
+    /// sous forme JSON `[{ id, file, frames }]`, triées par identifiant.
+    pub fn list_anim_assets_json(&self) -> String {
+        let roots = [
+            "assets/generated/anims".to_string(),
+            format!("{}/../../assets/generated/anims", env!("CARGO_MANIFEST_DIR")),
+        ];
+        let mut seen = std::collections::BTreeMap::<String, serde_json::Value>::new();
+        for dir in roots {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                        continue;
+                    }
+                    let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
+                        continue;
+                    };
+                    let frames = std::fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                        .and_then(|v| v.get("frames").and_then(|f| f.as_object()).map(|o| o.len()))
+                        .unwrap_or(0);
+                    seen.entry(id.to_string()).or_insert_with(|| {
+                        serde_json::json!({ "id": id, "file": path.display().to_string(), "frames": frames })
+                    });
+                }
+            }
+        }
+        serde_json::Value::Array(seen.into_values().collect()).to_string()
+    }
+
+    /// Liste les atlas pxl (`assets/generated/<sheet>.json` à la racine) sous
+    /// forme JSON `[{ id, file, frames: [noms] }]`, triés par identifiant.
+    pub fn list_sheet_assets_json(&self) -> String {
+        let roots = [
+            "assets/generated".to_string(),
+            format!("{}/../../assets/generated", env!("CARGO_MANIFEST_DIR")),
+        ];
+        let mut seen = std::collections::BTreeMap::<String, serde_json::Value>::new();
+        for dir in roots {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                        continue;
+                    }
+                    let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
+                        continue;
+                    };
+                    // Un atlas doit avoir un PNG homonyme (les anims vivent dans anims/).
+                    if !path.with_extension("png").exists() {
+                        continue;
+                    }
+                    let frames = std::fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                        .and_then(|v| {
+                            v.get("frames")
+                                .and_then(|f| f.as_object())
+                                .map(|o| o.keys().cloned().collect::<Vec<String>>())
+                        })
+                        .unwrap_or_default();
+                    seen.entry(id.to_string()).or_insert_with(|| {
+                        serde_json::json!({ "id": id, "file": path.display().to_string(), "frames": frames })
+                    });
+                }
+            }
+        }
+        serde_json::Value::Array(seen.into_values().collect()).to_string()
+    }
+
+    /// Octets PNG de l'atlas (feuille) ou de la bande d'animation d'un identifiant.
+    pub fn sheet_png_bytes(&self, id: &str) -> Option<Vec<u8>> {
+        crate::sheet::read_sheet_source(id).map(|(png, _json)| png)
+    }
+
 
     /// Instancie une entité selon un préfabriqué (coin, potion, key, chest, door,
     /// platform, wall, spikes, boss, crate, plate).

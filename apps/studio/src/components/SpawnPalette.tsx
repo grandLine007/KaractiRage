@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Coins, FlaskConical, KeyRound, Package, DoorOpen, Square, TriangleAlert, Box, CircleDot, Skull, BrickWall, RefreshCw } from 'lucide-react';
-import { listSpriteAssets, getSpritePngUrl, type SpriteAsset } from '../services/engineBridge';
+import {
+  listSpriteAssets,
+  listAnimAssets,
+  listSheetAssets,
+  getSpritePngUrl,
+  getSheetPngUrl,
+  type SpriteAsset,
+  type AnimAsset,
+  type SheetAsset,
+} from '../services/engineBridge';
 
 interface SpawnPreset {
   id: string;
@@ -35,23 +44,43 @@ interface SpawnPaletteProps {
  * glisser-déposer = placement à la position exacte du curseur.
  */
 export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter }) => {
+  const [tab, setTab] = useState<'objets' | 'sprites' | 'anims' | 'atlas'>('objets');
   const [sprites, setSprites] = useState<SpriteAsset[]>([]);
+  const [anims, setAnims] = useState<AnimAsset[]>([]);
+  const [sheets, setSheets] = useState<SheetAsset[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
 
-  const refreshSprites = useCallback(async () => {
-    const list = await listSpriteAssets();
-    setSprites(list);
-    // Précharge les miniatures sans bloquer l'affichage de la grille.
-    for (const s of list) {
-      getSpritePngUrl(s.id)
-        .then(url => setThumbnails(prev => ({ ...prev, [s.id]: url })))
-        .catch(() => {});
+  const refresh = useCallback(async () => {
+    const [s, a, sh] = await Promise.all([listSpriteAssets(), listAnimAssets(), listSheetAssets()]);
+    setSprites(s);
+    setAnims(a);
+    setSheets(sh);
+    for (const it of s) {
+      getSpritePngUrl(it.id).then(u => setThumbnails(prev => ({ ...prev, [it.id]: u }))).catch(() => {});
+    }
+    for (const it of a) {
+      getSheetPngUrl(it.id).then(u => setThumbnails(prev => ({ ...prev, [it.id]: u }))).catch(() => {});
+    }
+    for (const it of sh) {
+      getSheetPngUrl(it.id).then(u => setThumbnails(prev => ({ ...prev, [it.id]: u }))).catch(() => {});
     }
   }, []);
 
   useEffect(() => {
-    void refreshSprites();
-  }, [refreshSprites]);
+    void refresh();
+  }, [refresh]);
+
+  const drag = (payload: string) => (e: React.DragEvent) => {
+    e.dataTransfer.setData('application/x-karacti-preset', payload);
+    e.dataTransfer.effectAllowed = 'copy';
+  };
+
+  const TABS: { id: 'objets' | 'sprites' | 'anims' | 'atlas'; label: string }[] = [
+    { id: 'objets', label: 'Objets' },
+    { id: 'sprites', label: 'Sprites' },
+    { id: 'anims', label: 'Anims' },
+    { id: 'atlas', label: 'Atlas' },
+  ];
 
   return (
     <div className="flex flex-col gap-2 p-2.5 bg-[#0d0819] border-b border-[#2d1b4e]">
@@ -60,19 +89,55 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter }) =
           Ajouter un objet
         </span>
         <span className="text-[10px] text-[#64748b]">
-          clic = au centre · glisser = position libre
+          clic = centre · glisser = libre
         </span>
       </div>
 
-      {sprites.length > 0 && (
+      <div className="flex gap-1">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 px-1 py-1 rounded-md text-[10px] font-semibold transition border ${
+              tab === t.id
+                ? 'bg-[#3b0764] text-[#f3e8ff] border-[#a855f7]'
+                : 'bg-[#150d27] text-[#94a3b8] border-[#2d1b4e] hover:text-[#f8fafc]'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'objets' && (
+        <div className="grid grid-cols-4 gap-1.5">
+          {PRESETS.map(p => (
+            <button
+              key={p.id}
+              draggable
+              onDragStart={drag(p.id)}
+              onClick={() => onSpawnAtCenter(p.id)}
+              title={`${p.label} — ${p.desc}`}
+              className="flex flex-col items-center gap-1 p-2 bg-[#150d27] hover:bg-[#1e1338] border border-[#2d1b4e] hover:border-[#a855f7] rounded-lg transition group cursor-grab"
+            >
+              <span style={{ color: p.color }}>{p.icon}</span>
+              <span className="text-[10px] font-semibold text-[#cbd5e1] group-hover:text-[#f8fafc]">
+                {p.label}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === 'sprites' && (
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between px-0.5">
             <span className="text-[10px] font-bold uppercase tracking-wider text-[#a855f7]">
               Mes sprites (pxl)
             </span>
             <button
-              onClick={() => void refreshSprites()}
-              title="Recharger les sprites"
+              onClick={() => void refresh()}
+              title="Recharger"
               className="text-[#64748b] hover:text-[#f8fafc] transition"
             >
               <RefreshCw size={12} />
@@ -83,10 +148,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter }) =
               <button
                 key={s.id}
                 draggable
-                onDragStart={e => {
-                  e.dataTransfer.setData('application/x-karacti-preset', `sprite:${s.id}`);
-                  e.dataTransfer.effectAllowed = 'copy';
-                }}
+                onDragStart={drag(`sprite:${s.id}`)}
                 onClick={() => onSpawnAtCenter(`sprite:${s.id}`)}
                 title={`${s.id} — ${s.w}×${s.h} px`}
                 className="flex flex-col items-center gap-1 p-1.5 bg-[#150d27] hover:bg-[#1e1338] border border-[#2d1b4e] hover:border-[#a855f7] rounded-lg transition group cursor-grab"
@@ -110,26 +172,92 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter }) =
         </div>
       )}
 
-      <div className="grid grid-cols-4 gap-1.5">
-        {PRESETS.map(p => (
-          <button
-            key={p.id}
-            draggable
-            onDragStart={e => {
-              e.dataTransfer.setData('application/x-karacti-preset', p.id);
-              e.dataTransfer.effectAllowed = 'copy';
-            }}
-            onClick={() => onSpawnAtCenter(p.id)}
-            title={`${p.label} — ${p.desc}`}
-            className="flex flex-col items-center gap-1 p-2 bg-[#150d27] hover:bg-[#1e1338] border border-[#2d1b4e] hover:border-[#a855f7] rounded-lg transition group cursor-grab"
-          >
-            <span style={{ color: p.color }}>{p.icon}</span>
-            <span className="text-[10px] font-semibold text-[#cbd5e1] group-hover:text-[#f8fafc]">
-              {p.label}
+      {tab === 'anims' && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between px-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#a855f7]">
+              Animations (pxl)
             </span>
-          </button>
-        ))}
-      </div>
+            <button
+              onClick={() => void refresh()}
+              title="Recharger"
+              className="text-[#64748b] hover:text-[#f8fafc] transition"
+            >
+              <RefreshCw size={12} />
+            </button>
+          </div>
+          {anims.length === 0 ? (
+            <span className="text-[10px] text-[#64748b] px-1">Aucune animation.</span>
+          ) : (
+            <div className="grid grid-cols-4 gap-1.5">
+              {anims.map(a => (
+                <button
+                  key={a.id}
+                  draggable
+                  onDragStart={drag(`anim:${a.id}`)}
+                  onClick={() => onSpawnAtCenter(`anim:${a.id}`)}
+                  title={`${a.id} — ${a.frames} frames`}
+                  className="flex flex-col items-center gap-1 p-1.5 bg-[#150d27] hover:bg-[#1e1338] border border-[#2d1b4e] hover:border-[#a855f7] rounded-lg transition group cursor-grab"
+                >
+                  {thumbnails[a.id] ? (
+                    <img
+                      src={thumbnails[a.id]}
+                      alt={a.id}
+                      className="w-8 h-8 object-contain"
+                      style={{ imageRendering: 'pixelated' }}
+                    />
+                  ) : (
+                    <span className="w-8 h-8 flex items-center justify-center text-[#64748b] text-[8px]">…</span>
+                  )}
+                  <span className="text-[9px] font-semibold text-[#cbd5e1] group-hover:text-[#f8fafc] truncate max-w-full">
+                    {a.id}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'atlas' && (
+        <div className="flex flex-col gap-2">
+          {sheets.length === 0 ? (
+            <span className="text-[10px] text-[#64748b] px-1">Aucun atlas.</span>
+          ) : (
+            sheets.map(sh => (
+              <div key={sh.id} className="flex flex-col gap-1 bg-[#150d27] border border-[#2d1b4e] rounded-lg p-1.5">
+                <div className="flex items-center gap-2">
+                  {thumbnails[sh.id] ? (
+                    <img
+                      src={thumbnails[sh.id]}
+                      alt={sh.id}
+                      className="w-8 h-8 object-contain"
+                      style={{ imageRendering: 'pixelated' }}
+                    />
+                  ) : (
+                    <span className="w-8 h-8 flex items-center justify-center text-[#64748b] text-[8px]">…</span>
+                  )}
+                  <span className="text-[10px] font-bold text-[#cbd5e1]">{sh.id}</span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {sh.frames.map(f => (
+                    <button
+                      key={f}
+                      draggable
+                      onDragStart={drag(`sheet:${sh.id}:${f}`)}
+                      onClick={() => onSpawnAtCenter(`sheet:${sh.id}:${f}`)}
+                      title={`${sh.id}/${f}`}
+                      className="px-1.5 py-0.5 bg-[#1e1338] hover:bg-[#2d1b4e] border border-[#3b0764] hover:border-[#a855f7] rounded text-[9px] text-[#cbd5e1] cursor-grab transition"
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 };
