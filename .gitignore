@@ -30,3 +30,14 @@ KaractiRage_et1.md
 KaractiRage_vision_technique_etude_2026.docx.md
 KaractiRage_et1-1.md
 KaractiRageet1-1.md
+
+# Pixel-art généré (sources dans assets/art/)
+assets/generated/_preview/
+
+# Outil pxl vendu (MIT) — dist régénéré par scripts/build_art.sh, docs = galerie
+tools/pxl/dist/
+tools/pxl/node_modules/
+tools/pxl/docs/
+
+# Build WASM généré (reconstruit par scripts/build_wasm.sh)
+dist/

@@ -1,0 +1,161 @@
+{
+  "id": "graph_chest_coffre",
+  "name": "Coffre : Coffre",
+  "description": "Mécanique guidée : ouverture de coffre, récompense et sons.",
+  "version": 1,
+  "variables": {
+    "chest_opened": {
+      "name": "chest_opened",
+      "data_type": "Bool",
+      "initial_value": {
+        "type": "Bool",
+        "value": false
+      }
+    }
+  },
+  "nodes": {
+    "act_chest_open_state": {
+      "id": "act_chest_open_state",
+      "name": "Marquer coffre ouvert",
+      "category": "World",
+      "description": "Enregistre l'état ouvert du coffre.",
+      "kind": {
+        "Action": {
+          "action_type": "SetVariable:chest_opened:true"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "evt_chest_interact": {
+      "id": "evt_chest_interact",
+      "name": "Ouvrir Coffre",
+      "category": "Interactions",
+      "description": "Déclenché lors de l'interaction du joueur avec le coffre.",
+      "kind": {
+        "Event": {
+          "event_type": "OnDoorInteract"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_chest_score": {
+      "id": "act_chest_score",
+      "name": "Gain +100 Or",
+      "category": "Progression",
+      "description": "Ajoute le trésor au score.",
+      "kind": {
+        "Action": {
+          "action_type": "AddScore:100"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_chest_sound": {
+      "id": "act_chest_sound",
+      "name": "Son de récompense",
+      "category": "Audio",
+      "description": "Joue le son d'obtention de trésor.",
+      "kind": {
+        "Action": {
+          "action_type": "PlaySound"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    }
+  },
+  "connections": [
+    {
+      "id": "conn_act_snd",
+      "from_node": "act_chest_score",
+      "from_pin": "out_trigger",
+      "to_node": "act_chest_sound",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_snd_open",
+      "from_node": "act_chest_sound",
+      "from_pin": "out_trigger",
+      "to_node": "act_chest_open_state",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_evt_act",
+      "from_node": "evt_chest_interact",
+      "from_pin": "out_trigger",
+      "to_node": "act_chest_score",
+      "to_pin": "in_trigger"
+    }
+  ]
+}

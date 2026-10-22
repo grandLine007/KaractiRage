@@ -1,0 +1,234 @@
+{
+ "frames": {
+  "coin": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 16
+   }
+  },
+  "potion": {
+   "frame": {
+    "x": 19,
+    "y": 0,
+    "w": 18,
+    "h": 17
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 17
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 17
+   }
+  },
+  "key": {
+   "frame": {
+    "x": 38,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 16
+   }
+  },
+  "chest": {
+   "frame": {
+    "x": 57,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 16
+   }
+  },
+  "door": {
+   "frame": {
+    "x": 0,
+    "y": 18,
+    "w": 18,
+    "h": 34
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 34
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 34
+   }
+  },
+  "platform": {
+   "frame": {
+    "x": 19,
+    "y": 18,
+    "w": 35,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 35,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 35,
+    "h": 18
+   }
+  },
+  "spikes": {
+   "frame": {
+    "x": 55,
+    "y": 18,
+    "w": 18,
+    "h": 12
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 12
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 12
+   }
+  },
+  "crate": {
+   "frame": {
+    "x": 74,
+    "y": 18,
+    "w": 18,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 16
+   }
+  },
+  "plate": {
+   "frame": {
+    "x": 0,
+    "y": 53,
+    "w": 18,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 16
+   }
+  },
+  "boss": {
+   "frame": {
+    "x": 19,
+    "y": 53,
+    "w": 18,
+    "h": 18
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 18,
+    "h": 18
+   },
+   "sourceSize": {
+    "w": 18,
+    "h": 18
+   }
+  },
+  "wall": {
+   "frame": {
+    "x": 38,
+    "y": 53,
+    "w": 35,
+    "h": 34
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 35,
+    "h": 34
+   },
+   "sourceSize": {
+    "w": 35,
+    "h": 34
+   }
+  }
+ },
+ "meta": {
+  "app": "pxl",
+  "image": "chars.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 92,
+   "h": 87
+  },
+  "scale": "1"
+ }
+}

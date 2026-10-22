@@ -22,6 +22,9 @@ pub struct ProjectMetadata {
     pub genre_primary: GameGenre,
     #[serde(default)]
     pub genres_secondary: Vec<GameGenre>,
+    /// Dimension du rendu (« 2D », « 2.5D », « 3D ») — rétrocompatible (`None` = 2D).
+    #[serde(default)]
+    pub dimension: Option<String>,
 }
 
 /// Paramètres techniques de rendu, physique et adaptabilité
@@ -77,6 +80,7 @@ impl KaractiProject {
             description: format!("Nouveau projet vierge {} créé dans KaractiRage Studio.", genre.label()),
             genre_primary: genre,
             genres_secondary: Vec::new(),
+            dimension: None,
         };
 
         let mut settings = ProjectSettings::default();
@@ -182,6 +186,12 @@ impl KaractiProject {
             description: format!("Projet '{}' basé sur le genre {}.", recipe.title, recipe.genres.primary.label()),
             genre_primary: recipe.genres.primary,
             genres_secondary: recipe.genres.secondary.clone(),
+            dimension: Some(match recipe.dimension {
+                crate::recipe::GameDimension::TwoD => "2D",
+                crate::recipe::GameDimension::TwoAndHalfD => "2.5D",
+                crate::recipe::GameDimension::ThreeD => "3D",
+            }
+            .to_string()),
         };
 
         let mut settings = ProjectSettings::default();
@@ -273,6 +283,8 @@ impl KaractiProject {
             entities: self.scene.entities.clone(),
             kvl_graphs: self.kvl_graphs.clone(),
             initial_variables: self.kvl_variables.clone(),
+            sprite_assets: std::collections::HashMap::new(),
+            sheet_assets: std::collections::HashMap::new(),
         };
         package.generate_standalone_html()
     }

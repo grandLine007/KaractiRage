@@ -1,4 +1,5 @@
-use crate::entity::Entity;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use crate::entity::{Entity, ShapeKind};
 use crate::game::GameState;
 use kvl_core::{Graph, Value};
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,15 @@ impl Default for PackageMetadata {
     }
 }
 
+/// Spritesheet embarquée dans un package autonome (atlas PNG + JSON).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct SheetAssetExport {
+    /// Atlas PNG en base64.
+    pub png: String,
+    /// JSON TexturePacker/Aseprite.
+    pub json: String,
+}
+
 /// Package autonome universel (.karacti.json) embarquant scène et logique KVL
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KaractiGamePackage {
@@ -58,6 +68,12 @@ pub struct KaractiGamePackage {
     pub kvl_graphs: HashMap<String, Graph>,
     /// Variables globales initiales de contexte
     pub initial_variables: HashMap<String, Value>,
+    /// Sprites pixel-art embarqués (id -> PNG base64), pour l'export autonome.
+    #[serde(default)]
+    pub sprite_assets: HashMap<String, String>,
+    /// Spritesheets embarquées (id -> atlas PNG base64 + JSON), pour l'export autonome.
+    #[serde(default)]
+    pub sheet_assets: HashMap<String, SheetAssetExport>,
 }
 
 impl KaractiGamePackage {
@@ -124,6 +140,31 @@ impl StandaloneExporter {
             initial_vars.insert("keys".to_string(), keys.clone());
         }
 
+        // Collecte des assets pixel-art référencés (sprites + spritesheets/anims)
+        // pour rendre le package autonome (pas de dépendance au système de fichiers).
+        let mut sprite_assets = HashMap::new();
+        let mut sheet_assets = HashMap::new();
+        for ent in &game.entities {
+            if let Some(rend) = &ent.renderable {
+                match &rend.shape {
+                    ShapeKind::ImageRef { asset } => {
+                        if let Some(bytes) = crate::vector::read_png_source(asset) {
+                            sprite_assets.entry(asset.clone()).or_insert_with(|| STANDARD.encode(&bytes));
+                        }
+                    }
+                    ShapeKind::SheetRef { asset, .. } | ShapeKind::AnimRef { asset } => {
+                        if let Some((png, json)) = crate::sheet::read_sheet_source(asset) {
+                            sheet_assets.entry(asset.clone()).or_insert_with(|| SheetAssetExport {
+                                png: STANDARD.encode(&png),
+                                json,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         KaractiGamePackage {
             metadata,
             scene_name: game.scene_name.clone(),
@@ -131,6 +172,8 @@ impl StandaloneExporter {
             entities: game.entities.clone(),
             kvl_graphs: game.kvl_graphs.clone(),
             initial_variables: initial_vars,
+            sprite_assets,
+            sheet_assets,
         }
     }
 
@@ -157,6 +200,21 @@ impl StandaloneExporter {
         for (k, v) in &package.initial_variables {
             game.kvl_context.set_var(k.clone(), v.clone());
         }
+
+        // Décodage des assets embarqués + re-résolution des sprites/spritesheets.
+        let mut sprites = HashMap::new();
+        for (id, b64) in &package.sprite_assets {
+            if let Ok(bytes) = STANDARD.decode(b64) {
+                sprites.insert(id.clone(), bytes);
+            }
+        }
+        let mut sheets = HashMap::new();
+        for (id, s) in &package.sheet_assets {
+            if let Ok(png) = STANDARD.decode(&s.png) {
+                sheets.insert(id.clone(), (png, s.json.clone()));
+            }
+        }
+        game.apply_embedded_assets(sprites, sheets);
 
         // Réinitialise la caméra et la sélection du Studio
         game.editor.selected = crate::editor::SelectedEntity::None;
@@ -201,6 +259,8 @@ mod tests {
             entities: Vec::new(),
             kvl_graphs: graphs,
             initial_variables: HashMap::new(),
+            sprite_assets: HashMap::new(),
+            sheet_assets: HashMap::new(),
         };
 
         let json = package.to_json_pretty().expect("Sérialisation package");
@@ -230,6 +290,8 @@ mod tests {
             entities: Vec::new(),
             kvl_graphs: HashMap::new(),
             initial_variables: HashMap::new(),
+            sprite_assets: HashMap::new(),
+            sheet_assets: HashMap::new(),
         };
 
         let html = package.generate_standalone_html();

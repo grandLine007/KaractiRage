@@ -1,5 +1,6 @@
-use crate::entity::{Collider2D, DialogueComponent, Entity, Health2D, ItemPickupComponent, KVLScriptComponent, Movement2D, ParticleEmitter2D, Renderable2D, Transform2D, VisionSensing};
+use crate::entity::{Collider2D, DialogueComponent, Entity, Health2D, ItemPickupComponent, KVLScriptComponent, MaterialRef, MeshRef, Movement2D, ParticleEmitter2D, Renderable2D, Renderable3D, Transform2D, Transform3D, VisionSensing};
 use crate::flocking::FlockMember;
+use glam::Vec3;
 use crate::navigation::NavAgent;
 use kvl_core::{Category, Connection, Graph, Node, NodeKind, Pin, PinDirection, Value};
 use kvl_runtime::Interpreter;
@@ -1155,8 +1156,15 @@ impl AiPatchBuilder {
                 0x0038BDF8
             };
 
-            // Rendu pixel-art : priorité à la matrice ASCII personnalisée, puis à l'archétype, puis détection automatique
-            if let (Some(ref rows), Some(ref pal_map)) = (&ent_spec.sprite_ascii, &ent_spec.sprite_palette) {
+            // Rendu pixel-art : priorité à l'asset pxl (sprite ou frame d'atlas),
+            // puis matrice ASCII, puis archétype, puis détection automatique.
+            if let Some(ref asset) = ent_spec.sprite_asset {
+                if let Some(ref frame) = ent_spec.sprite_frame {
+                    ent.renderable = Some(Renderable2D::sheet_ref(asset, frame, 5));
+                } else {
+                    ent.renderable = Some(Renderable2D::image_ref(asset, 5));
+                }
+            } else if let (Some(ref rows), Some(ref pal_map)) = (&ent_spec.sprite_ascii, &ent_spec.sprite_palette) {
                 let mut pal = std::collections::HashMap::new();
                 for (k, v) in pal_map {
                     if let Some(ch) = k.chars().next() {
@@ -1188,6 +1196,42 @@ impl AiPatchBuilder {
                     _ => "coin",
                 };
                 ent.renderable = Some(Renderable2D::procedural_sprite(detected_arch, color, 5));
+            }
+
+            // --- Champs 3D (Lot 7) : mesh référencé (manifest) ou primitive ---
+            let is_3d = ent_spec.mesh_asset.is_some()
+                || ent_spec.mesh_primitive.is_some()
+                || ent_spec.position3d.is_some()
+                || ent_spec.rotation_euler_deg.is_some()
+                || ent_spec.scale3d.is_some();
+            if is_3d {
+                let mesh = if let Some(ref asset) = ent_spec.mesh_asset {
+                    MeshRef::Asset { id: asset.clone(), node: None }
+                } else {
+                    match ent_spec.mesh_primitive.as_deref() {
+                        Some("sphere") => MeshRef::Sphere,
+                        Some("plane") => MeshRef::Plane,
+                        Some("capsule") => MeshRef::Capsule,
+                        _ => MeshRef::Cube,
+                    }
+                };
+                let position = match ent_spec.position3d {
+                    Some([x, y, z]) => Vec3::new(x, y, z),
+                    None => Vec3::new(spawn_x, 0.0, spawn_y),
+                };
+                let rotation = ent_spec.rotation_euler_deg.unwrap_or([0.0, 0.0, 0.0]);
+                let scale = ent_spec.scale3d.unwrap_or([1.0, 1.0, 1.0]);
+                ent.transform3d = Some(Transform3D::from_euler_deg(
+                    position,
+                    Vec3::new(rotation[0], rotation[1], rotation[2]),
+                    Vec3::new(scale[0], scale[1], scale[2]),
+                ));
+                ent.renderable3d = Some(Renderable3D {
+                    mesh,
+                    material: MaterialRef::Solid { color, roughness: 0.4, metalness: 0.0 },
+                    cast_shadow: true,
+                    receive_shadow: true,
+                });
             }
 
             if ent_spec.has_collider {
@@ -1368,10 +1412,13 @@ mod tests {
                     sprite_archetype: Some("knight".to_string()),
                     sprite_ascii: None,
                     sprite_palette: None,
+                    sprite_asset: None,
+                    sprite_frame: None,
                     movement: None,
                     has_collider: true,
                     has_vision: false,
                     is_flocking: false,
+                    ..Default::default()
                 },
                 crate::ai_client::AiGeneratedEntity {
                     name: "Coffre_Or".to_string(),
@@ -1385,10 +1432,13 @@ mod tests {
                     sprite_archetype: Some("chest".to_string()),
                     sprite_ascii: None,
                     sprite_palette: None,
+                    sprite_asset: None,
+                    sprite_frame: None,
                     movement: None,
                     has_collider: true,
                     has_vision: false,
                     is_flocking: false,
+                    ..Default::default()
                 },
             ],
             kvl_actions: vec![
@@ -1431,6 +1481,69 @@ mod tests {
     }
 
     #[test]
+    fn test_payload_with_sprite_asset_maps_to_image_and_sheet_ref() {
+        // `sprite_asset` seul -> ImageRef, `sprite_asset`+`sprite_frame` -> SheetRef.
+        let json = r#"{
+            "title": "Test Sprite Asset",
+            "description": "test",
+            "primary_genre": "Platformer",
+            "terrain": { "theme": "dungeon", "platforms": [], "hazards": [] },
+            "entities": [
+                { "name": "Piece", "kind": "item", "sprite_asset": "coin" },
+                { "name": "Coffre", "kind": "item", "sprite_asset": "chars", "sprite_frame": "chest" }
+            ],
+            "gameplay_loop": { "objective": "test", "win_condition": "DefeatBoss", "lose_condition": "PlayerHealthZero" },
+            "kvl_actions": []
+        }"#;
+        let payload: crate::ai_client::AiGeneratedGamePayload =
+            serde_json::from_str(json).expect("payload valide");
+        let patch = AiPatchBuilder::build_from_generated_payload(&payload, "test", (100.0, 100.0), 50, &[], None);
+
+        let coin = patch.created_entities.iter().find(|e| e.name == "Piece").expect("Piece");
+        assert!(matches!(
+            &coin.renderable.as_ref().unwrap().shape,
+            ShapeKind::ImageRef { asset } if asset == "coin"
+        ));
+
+        let chest = patch.created_entities.iter().find(|e| e.name == "Coffre").expect("Coffre");
+        assert!(matches!(
+            &chest.renderable.as_ref().unwrap().shape,
+            ShapeKind::SheetRef { asset, frame } if asset == "chars" && frame == "chest"
+        ));
+    }
+
+    #[test]
+    fn test_payload_with_3d_fields_maps_to_renderable3d() {
+        let json = r#"{
+            "title": "Test 3D",
+            "description": "test",
+            "primary_genre": "Platformer",
+            "terrain": { "theme": "dungeon", "platforms": [], "hazards": [] },
+            "entities": [
+                { "name": "Pilier", "kind": "wall", "mesh_asset": "pillar", "position3d": [1.0, 2.0, 3.0] },
+                { "name": "Orbe", "kind": "item", "mesh_primitive": "sphere", "scale3d": [2.0, 2.0, 2.0] }
+            ],
+            "gameplay_loop": { "objective": "test", "win_condition": "DefeatBoss", "lose_condition": "PlayerHealthZero" },
+            "kvl_actions": []
+        }"#;
+        let payload: crate::ai_client::AiGeneratedGamePayload =
+            serde_json::from_str(json).expect("payload valide");
+        let patch = AiPatchBuilder::build_from_generated_payload(&payload, "test", (100.0, 100.0), 50, &[], None);
+
+        let pillar = patch.created_entities.iter().find(|e| e.name == "Pilier").expect("Pilier");
+        let r3d = pillar.renderable3d.as_ref().expect("Renderable3D");
+        assert!(matches!(&r3d.mesh, crate::entity::MeshRef::Asset { id, .. } if id == "pillar"));
+        let t3d = pillar.transform3d.as_ref().expect("Transform3D");
+        assert_eq!(t3d.position.x, 1.0);
+        assert_eq!(t3d.position.y, 2.0);
+        assert_eq!(t3d.position.z, 3.0);
+
+        let orb = patch.created_entities.iter().find(|e| e.name == "Orbe").expect("Orbe");
+        let r3d = orb.renderable3d.as_ref().expect("Renderable3D");
+        assert!(matches!(&r3d.mesh, crate::entity::MeshRef::Sphere));
+    }
+
+    #[test]
     fn test_build_complex_kvl_graph_with_conditions_branching_and_variables() {
         let current_entities = Vec::new();
         let mut custom_vars = std::collections::HashMap::new();
@@ -1463,10 +1576,13 @@ mod tests {
                     sprite_archetype: Some("portal".to_string()),
                     sprite_ascii: None,
                     sprite_palette: None,
+                    sprite_asset: None,
+                    sprite_frame: None,
                     movement: Some("none".to_string()),
                     has_collider: true,
                     has_vision: false,
                     is_flocking: false,
+                    ..Default::default()
                 },
             ],
             kvl_actions: vec![

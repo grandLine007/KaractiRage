@@ -1,0 +1,111 @@
+{
+  "id": "graph_hazard_lave",
+  "name": "Piège : Lave",
+  "description": "Mécanique guidée : dégâts au contact, son et flash.",
+  "version": 1,
+  "variables": {},
+  "nodes": {
+    "act_hazard_sound": {
+      "id": "act_hazard_sound",
+      "name": "Son d'impact",
+      "category": "Audio",
+      "description": "Joue le son de blessure du joueur.",
+      "kind": {
+        "Action": {
+          "action_type": "PlaySound"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_hazard_damage": {
+      "id": "act_hazard_damage",
+      "name": "Infliger 15 Dégâts",
+      "category": "Progression",
+      "description": "Réduit les points de vie du joueur.",
+      "kind": {
+        "Action": {
+          "action_type": "DamagePlayer:15"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "evt_hazard_overlap": {
+      "id": "evt_hazard_overlap",
+      "name": "Contact avec Lave",
+      "category": "Interactions",
+      "description": "Déclenché quand le joueur entre dans la zone du piège.",
+      "kind": {
+        "Event": {
+          "event_type": "OnPlayerOverlap"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    }
+  },
+  "connections": [
+    {
+      "id": "conn_haz_dmg",
+      "from_node": "evt_hazard_overlap",
+      "from_pin": "out_trigger",
+      "to_node": "act_hazard_damage",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_dmg_snd",
+      "from_node": "act_hazard_damage",
+      "from_pin": "out_trigger",
+      "to_node": "act_hazard_sound",
+      "to_pin": "in_trigger"
+    }
+  ]
+}

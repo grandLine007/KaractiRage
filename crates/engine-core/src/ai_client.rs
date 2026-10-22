@@ -231,7 +231,7 @@ fn default_objective() -> String { "Explorer et triompher de l'épreuve".to_stri
 fn default_win_condition() -> String { "CollectAllKeysThenExit".to_string() }
 fn default_lose_condition() -> String { "PlayerHealthZero".to_string() }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedEntity {
     pub name: String,
     pub kind: String, // "player", "enemy", "boss", "item", "door", "hazard", "npc"
@@ -254,6 +254,10 @@ pub struct AiGeneratedEntity {
     #[serde(default)]
     pub sprite_palette: Option<std::collections::HashMap<String, String>>, // Caractère -> Couleur Hex
     #[serde(default)]
+    pub sprite_asset: Option<String>, // Asset pxl prégénéré (assets/generated/sprites/<asset>.png)
+    #[serde(default)]
+    pub sprite_frame: Option<String>, // Frame nommée d'une spritesheet (avec sprite_asset)
+    #[serde(default)]
     pub movement: Option<String>, // "patrol", "chase", "jump", "none"
     #[serde(default)]
     pub has_collider: bool,
@@ -261,6 +265,22 @@ pub struct AiGeneratedEntity {
     pub has_vision: bool,
     #[serde(default)]
     pub is_flocking: bool,
+    // --- Champs 3D (Lot 7) ---
+    /// Asset de mesh 3D référencé dans le manifest (pillar, rock, platform, …).
+    #[serde(default)]
+    pub mesh_asset: Option<String>,
+    /// Primitive 3D directe : "cube", "sphere", "plane", "capsule".
+    #[serde(default)]
+    pub mesh_primitive: Option<String>,
+    /// Position 3D [x, y, z] (sinon dérivée de offset_x/offset_y).
+    #[serde(default)]
+    pub position3d: Option<[f32; 3]>,
+    /// Rotation d'Euler en degrés [x, y, z].
+    #[serde(default)]
+    pub rotation_euler_deg: Option<[f32; 3]>,
+    /// Échelle [sx, sy, sz].
+    #[serde(default)]
+    pub scale3d: Option<[f32; 3]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -357,6 +377,7 @@ CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdo
 }
 
 Available sprite_archetype values: "ninja", "knight", "drone", "slime", "skull", "boss", "chest", "key", "potion", "portal", "coin", "spikes".
+Available sprite_asset values (pixel-art pxl prégénéré): "coin", "potion", "key", "chest", "door", "platform", "spikes", "crate", "plate", "boss", "wall". Use "sprite_frame" (ex: "coin") with "sprite_asset":"chars" to pick a frame from the atlas.
 Available movement values: "patrol", "chase", "jump", "none".
 Available win_condition values: "DefeatBoss", "CollectAllKeysThenExit", "SurviveTimer".
 Available loss_condition values: "PlayerDeath", "TimeOut".

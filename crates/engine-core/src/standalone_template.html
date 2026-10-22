@@ -252,7 +252,7 @@
     // Initialisation du runtime WASM avec fallback gracieux
     async function initRuntime() {
       try {
-        const wasmModule = await import('./pkg/karactirage_wasm.js');
+        const wasmModule = await import('./pkg/engine_wasm.js');
         await wasmModule.default();
         wasmModule.wasm_init_engine();
 

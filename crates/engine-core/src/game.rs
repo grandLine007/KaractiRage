@@ -27,6 +27,48 @@ pub const AVAILABLE_SCENES: &[(&str, &str)] = &[
     ("assets/scenes/svg_demo_01.scene.json", "Démo SVG (Décor & Personnage animé)"),
 ];
 
+/// Jeux de référence (scènes officielles ciselées) associés aux 5 archétypes du
+/// « DÉMARRAGE IMMÉDIAT ». Source de vérité unique pour le Hub Canvas, la
+/// commande Tauri et le Hub React.
+pub const DEFAULT_GAME_ARCHETYPES: &[(&str, &str, &str)] = &[
+    ("rpg", "assets/scenes/level_01.scene.json", "RPG Donjon"),
+    ("platformer", "assets/scenes/platformer_01.scene.json", "Plateforme 2D"),
+    ("shmup", "assets/scenes/space_01.scene.json", "Shmup Spatial"),
+    ("sokoban", "assets/scenes/puzzle_01.scene.json", "Puzzle Sokoban"),
+    ("boss", "assets/scenes/boss_01.scene.json", "Titan Boss"),
+];
+
+/// Résout la clé d'un archétype (y compris les alias historiques) vers son jeu
+/// de référence `(chemin_de_scène, libellé_court)`.
+pub fn default_game_for_archetype(key: &str) -> Option<(&'static str, &'static str)> {
+    let canonical = match key {
+        "rpg" | "rpg_dungeon" | "dungeon" => "rpg",
+        "platformer" => "platformer",
+        "shmup" | "shootemup" | "space" => "shmup",
+        "sokoban" | "puzzle_sokoban" | "puzzle" => "sokoban",
+        "boss" | "boss_arena" | "titan" => "boss",
+        _ => return None,
+    };
+    DEFAULT_GAME_ARCHETYPES
+        .iter()
+        .find(|(k, _, _)| *k == canonical)
+        .map(|(_, path, label)| (*path, *label))
+}
+
+/// Résout le chemin d'une scène quel que soit le répertoire courant de lancement.
+pub(crate) fn resolve_scene_path(path: &str) -> String {
+    if std::path::Path::new(path).exists() {
+        path.to_string()
+    } else {
+        let alt = format!("{}/../../{}", env!("CARGO_MANIFEST_DIR"), path);
+        if std::path::Path::new(&alt).exists() {
+            alt
+        } else {
+            path.to_string()
+        }
+    }
+}
+
 /// Compose un rig vectoriel SVG à l'écran : chaque membre est blitté avec son
 /// keyframe interpolé (rotation autour du pivot + translation + échelle). Aucune
 /// allocation : tout est lu depuis les bitmaps partagés mis en cache à l'import.
@@ -199,6 +241,12 @@ pub struct GameState {
     pub block_push_cooldown: f32,
     /// Tampon réutilisé pour les candidats de collision (sans plafond artificiel).
     pub collision_candidates: Vec<SpatialItem>,
+    /// Cache d'assets PNG pixel-art décodés (voir `vector::PngCache`).
+    pub sprite_cache: crate::vector::PngCache,
+    /// Cache de spritesheets/animations pxl décodées (voir `sheet::SheetCache`).
+    pub sheet_cache: crate::sheet::SheetCache,
+    /// État d'avancement des animations par frames, indexé par id d'entité.
+    pub anim_states: HashMap<usize, crate::sheet::AnimState>,
 }
 
 impl GameState {
@@ -830,7 +878,8 @@ impl GameState {
     }
 
     pub fn load_from_scene(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let scene_data = match SceneData::load_from_file(path) {
+        let resolved = resolve_scene_path(path);
+        let scene_data = match SceneData::load_from_file(&resolved) {
             Ok(s) => s,
             Err(_) => {
                 if let Ok(s) = SceneData::load_from_file(format!("../../{}", path)) {
@@ -843,6 +892,9 @@ impl GameState {
                     SceneData::from_json_str(json)?
                 } else if path.contains("puzzle") {
                     let json = include_str!("../../../assets/scenes/puzzle_01.scene.json");
+                    SceneData::from_json_str(json)?
+                } else if path.contains("boss") {
+                    let json = include_str!("../../../assets/scenes/boss_01.scene.json");
                     SceneData::from_json_str(json)?
                 } else if path.contains("svg_demo") {
                     let json = include_str!("../../../assets/scenes/svg_demo_01.scene.json");
@@ -886,6 +938,30 @@ impl GameState {
                             ent.vector_sprite = None;
                         }
                     }
+                }
+            }
+        }
+
+        // Résolution des sprites pixel-art PNG (générés par pxl) : décodage à
+        // l'import + mise en cache par identifiant. Un asset manquant ne casse
+        // pas le chargement (repli rectangle coloré au rendu).
+        let mut sprite_cache = crate::vector::PngCache::new();
+        let mut sheet_cache = crate::sheet::SheetCache::new();
+        let mut anim_states: HashMap<usize, crate::sheet::AnimState> = HashMap::new();
+        for ent in entities.iter() {
+            if let Some(rend) = &ent.renderable {
+                match &rend.shape {
+                    ShapeKind::ImageRef { asset } => {
+                        let _ = sprite_cache.get_or_load(asset);
+                    }
+                    ShapeKind::SheetRef { asset, .. } => {
+                        let _ = sheet_cache.get_or_load(asset);
+                    }
+                    ShapeKind::AnimRef { asset } => {
+                        let _ = sheet_cache.get_or_load(asset);
+                        anim_states.insert(ent.id, crate::sheet::AnimState::default());
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1028,9 +1104,48 @@ impl GameState {
             hit_events: Vec::new(),
             block_push_cooldown: 0.0,
             collision_candidates: Vec::new(),
+            sprite_cache,
+            sheet_cache,
+            anim_states,
         };
         state.rebuild_static_spatial_grid();
         Ok(state)
+    }
+
+    /// Installe des assets embarqués (décodés depuis un package autonome) puis
+    /// re-résout les sprites/spritesheets référencés par les entités. Utilisé par
+    /// l'import de package : les assets survivent à l'export sans système de fichiers.
+    pub fn apply_embedded_assets(
+        &mut self,
+        sprites: HashMap<String, Vec<u8>>,
+        sheets: HashMap<String, (Vec<u8>, String)>,
+    ) {
+        let mut sprite_cache = crate::vector::PngCache::new();
+        sprite_cache.install_embedded(sprites);
+        let mut sheet_cache = crate::sheet::SheetCache::new();
+        sheet_cache.install_embedded(sheets);
+
+        self.sprite_cache = sprite_cache;
+        self.sheet_cache = sheet_cache;
+        self.anim_states = HashMap::new();
+
+        for ent in self.entities.iter() {
+            if let Some(rend) = &ent.renderable {
+                match &rend.shape {
+                    ShapeKind::ImageRef { asset } => {
+                        let _ = self.sprite_cache.get_or_load(asset);
+                    }
+                    ShapeKind::SheetRef { asset, .. } => {
+                        let _ = self.sheet_cache.get_or_load(asset);
+                    }
+                    ShapeKind::AnimRef { asset } => {
+                        let _ = self.sheet_cache.get_or_load(asset);
+                        self.anim_states.insert(ent.id, crate::sheet::AnimState::default());
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     /// Reconstruit les seaux statiques persistants du partitionnement spatial (murs, obstacles fixes, plateformes)
@@ -1108,6 +1223,27 @@ impl GameState {
         }
     }
 
+    /// Lance le jeu de référence (scène officielle ciselée) correspondant à un
+    /// archétype du « DÉMARRAGE IMMÉDIAT ». Préserve le mode embarqué (Tauri) et
+    /// bascule le Studio en mode Jeu. Renvoie le nom réel de la scène chargée.
+    pub fn launch_default_game(&mut self, key: &str) -> Result<String, String> {
+        let (path, _) = default_game_for_archetype(key)
+            .ok_or_else(|| format!("Archétype inconnu : '{}'", key))?;
+        let resolved = resolve_scene_path(path);
+        let was_embedded = self.editor.embedded_mode;
+        if !self.switch_scene(&resolved) {
+            return Err(format!("Impossible de charger le jeu par défaut '{}'", path));
+        }
+        self.editor.embedded_mode = was_embedded;
+        self.editor.mode = EditorMode::Play;
+        self.editor.selected = SelectedEntity::None;
+        self.editor.show_welcome_modal = false;
+        self.editor.show_help_modal = false;
+        let name = self.scene_name.clone();
+        self.set_status(&format!("🎮 Jeu par défaut lancé : '{}'", name));
+        Ok(name)
+    }
+
     /// Charge un projet KaractiProject complet dans le moteur de jeu
     pub fn load_project(&mut self, project: crate::project::KaractiProject) {
         self.scene_name = project.metadata.title;
@@ -1165,6 +1301,7 @@ impl GameState {
             description: "Projet sauvegardé depuis l'Atelier Studio KaractiRage.".to_string(),
             genre_primary: genre,
             genres_secondary: Vec::new(),
+            dimension: None,
         };
 
         let settings = crate::project::ProjectSettings {
@@ -1224,6 +1361,11 @@ impl GameState {
             is_trigger: bool,
             is_pushable: bool,
             is_active: bool,
+            script_path: Option<String>,
+            has_movement: bool,
+            has_vision: bool,
+            vision_range: Option<f32>,
+            is_player_controlled: bool,
         }
 
         let summaries: Vec<EntitySummary> = self.entities.iter().map(|e| {
@@ -1243,14 +1385,33 @@ impl GameState {
                 is_trigger: e.collider.as_ref().map_or(false, |c| c.is_trigger),
                 is_pushable: e.collider.as_ref().map_or(false, |c| c.is_pushable),
                 is_active: e.is_active,
+                script_path: e.script.as_ref().map(|s| s.script_path.clone()),
+                has_movement: e.movement.is_some(),
+                has_vision: e.vision.is_some(),
+                vision_range: e.vision.as_ref().map(|v| v.range),
+                is_player_controlled: e.movement.as_ref().map_or(false, |m| m.is_player_controlled),
             }
         }).collect();
 
         serde_json::to_string(&summaries).unwrap_or_else(|_| "[]".to_string())
     }
 
-    /// Met à jour la position et dimension d'une entité par son ID
-    pub fn update_entity_transform_by_id(&mut self, id: usize, x: f32, y: f32, w: f32, h: f32) -> bool {
+    /// Met à jour la position et dimension d'une entité par son ID.
+    /// `record_history` pousse une commande `MoveEntity` (une seule entrée Ctrl+Z par commit).
+    pub fn update_entity_transform_by_id(
+        &mut self,
+        id: usize,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        record_history: bool,
+    ) -> bool {
+        let old_pos = self
+            .entities
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| (e.transform.x, e.transform.y));
         if let Some(ent) = self.entities.iter_mut().find(|e| e.id == id) {
             ent.transform.x = x;
             ent.transform.y = y;
@@ -1260,20 +1421,107 @@ impl GameState {
                 col.w = w;
                 col.h = h;
             }
+            if record_history {
+                if let Some((old_x, old_y)) = old_pos {
+                    self.editor.undo_stack.push_undo(StudioCommand::MoveEntity {
+                        entity_id: id,
+                        old_x,
+                        old_y,
+                        new_x: x,
+                        new_y: y,
+                    });
+                }
+            }
             self.rebuild_static_spatial_grid();
             return true;
         }
         false
     }
 
-    /// Supprime définitivement une entité par son ID
+    /// Supprime une entité par son ID en protégeant l'avatar joueur principal,
+    /// en enregistrant une commande d'annulation et en purgeant la sélection.
     pub fn delete_entity_by_id(&mut self, id: usize) -> bool {
-        if let Some(pos) = self.entities.iter().position(|e| e.id == id) {
-            self.entities.remove(pos);
-            self.rebuild_static_spatial_grid();
+        let pos = match self.entities.iter().position(|e| e.id == id) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        // Sécurité : l'avatar contrôlé par le joueur est protégé.
+        if self.entities[pos]
+            .movement
+            .as_ref()
+            .map_or(false, |m| m.is_player_controlled)
+        {
+            self.status_message =
+                "Suppression refusée : l'entité Joueur principale est protégée !".into();
+            self.audio.play(SoundType::AccessDenied);
+            return false;
+        }
+
+        let entity = self.entities.remove(pos);
+        self.editor
+            .undo_stack
+            .push_undo(StudioCommand::DeleteEntity { entity, index: pos });
+        self.editor.selected = SelectedEntity::None;
+        self.rebuild_static_spatial_grid();
+        self.status_message = "Entité supprimée (Ctrl+Z pour annuler).".into();
+        self.audio.play(SoundType::WireCut);
+        true
+    }
+
+    /// Duplique une entité par son ID (décalage de confort + historique d'annulation).
+    pub fn duplicate_entity_by_id(&mut self, id: usize) -> Option<usize> {
+        let idx = self.entities.iter().position(|e| e.id == id)?;
+        self.editor.selected = SelectedEntity::Entity(idx);
+        self.duplicate_selected_entity()
+    }
+
+    /// Sélectionne une entité par son identifiant unique (lève l'ambiguïté index/id).
+    pub fn select_entity_by_id(&mut self, id: usize) -> bool {
+        if let Some(idx) = self.entities.iter().position(|e| e.id == id) {
+            self.editor.selected = SelectedEntity::Entity(idx);
+            self.editor.is_dragging = false;
             return true;
         }
         false
+    }
+
+    /// Renvoie l'identifiant unique de l'entité sélectionnée (None si aucune).
+    pub fn selected_entity_id(&self) -> Option<usize> {
+        match self.editor.selected {
+            SelectedEntity::Entity(idx) if idx < self.entities.len() => {
+                Some(self.entities[idx].id)
+            }
+            _ => None,
+        }
+    }
+
+    /// Instantané complet de l'état de l'éditeur pour l'Atelier React (1 seul IPC).
+    pub fn editor_state_json(&self) -> String {
+        let entities: serde_json::Value =
+            serde_json::from_str(&self.get_entities_summary_json())
+                .unwrap_or(serde_json::Value::Array(vec![]));
+        let tool = match self.editor.active_tool {
+            StudioTool::Select => "select",
+            StudioTool::Brush => "brush",
+            StudioTool::Eraser => "eraser",
+        };
+        let mode = match self.editor.mode {
+            EditorMode::Edit => "edit",
+            EditorMode::Play => "play",
+        };
+        serde_json::json!({
+            "entities": entities,
+            "selected_id": self.selected_entity_id(),
+            "tool": tool,
+            "tile": self.editor.brush_tile.id(),
+            "tile_label": self.editor.brush_tile.label(),
+            "can_undo": self.editor.undo_stack.can_undo(),
+            "can_redo": self.editor.undo_stack.can_redo(),
+            "status": self.status_message,
+            "mode": mode,
+        })
+        .to_string()
     }
 
     pub fn fire_player_projectile(&mut self) -> bool {
@@ -1538,6 +1786,27 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             }
         }
 
+        // Avancement des animations par frames pxl (zéro allocation).
+        for ent in self.entities.iter_mut() {
+            if let Some(rend) = ent.renderable.as_ref() {
+                if let ShapeKind::AnimRef { asset } = &rend.shape {
+                    if let Some(sheet) = self.sheet_cache.get(asset.as_str()) {
+                        let count = sheet.frame_count();
+                        if count > 0 {
+                            let state = self.anim_states.entry(ent.id).or_default();
+                            let mut dur = sheet.frame_duration(state.frame);
+                            state.acc += dt;
+                            while state.acc >= dur {
+                                state.acc -= dur;
+                                state.frame = (state.frame + 1) % count;
+                                dur = sheet.frame_duration(state.frame);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Réception asynchrone non-bloquante des réponses du modèle IA (Ollama, LM Studio, Claude, Gemini, DeepSeek, OpenAI)
         if let Some(ref rx) = self.ai_rx {
             match rx.try_recv() {
@@ -1649,6 +1918,38 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                 return;
             }
 
+            // Saisie du nom de projet (champ « Nom du projet » de l'onglet 1.1)
+            if self.editor.welcome_name_active {
+                if input.is_key_just_pressed(KeyCode::Escape) {
+                    self.editor.welcome_name_active = false;
+                    return;
+                }
+                if input.is_key_just_pressed(KeyCode::Backspace) {
+                    self.editor.welcome_project_name.pop();
+                }
+                if input.is_key_just_pressed(KeyCode::Enter) {
+                    self.editor.welcome_name_active = false;
+                    self.create_welcome_project();
+                    return;
+                }
+                if !input.received_chars.is_empty() {
+                    for &ch in &input.received_chars {
+                        if self.editor.welcome_project_name.chars().count() < 60 {
+                            self.editor.welcome_project_name.push(ch);
+                        }
+                    }
+                } else {
+                    let shift = input.is_key_pressed(KeyCode::ShiftLeft) || input.is_key_pressed(KeyCode::ShiftRight);
+                    for &k in &input.just_pressed_keys {
+                        if let Some(ch) = Self::key_to_char(k, shift, self.editor.keyboard_layout) {
+                            if self.editor.welcome_project_name.chars().count() < 60 {
+                                self.editor.welcome_project_name.push(ch);
+                            }
+                        }
+                    }
+                }
+            }
+
             // Saisie au clavier dans le Hub lorsque l'onglet Intention IA (Tab 2) est sélectionné
             if self.editor.welcome_tab == 2 {
                 if input.is_key_just_pressed(KeyCode::Backspace) {
@@ -1687,6 +1988,10 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                 // 1. Changement d'onglet du Hub (0: Nouveau Projet 1.1, 1: Charger Projet 1.2, 2: Intention IA 1.3)
                 if let Some(tab_idx) = self.editor.clicked_welcome_tab(mx, my) {
                     self.editor.welcome_tab = tab_idx;
+                    self.editor.welcome_name_active = false;
+                    if tab_idx == 1 {
+                        self.refresh_welcome_entries();
+                    }
                     self.audio.play(SoundType::UiClick);
                     return;
                 }
@@ -1753,27 +2058,86 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                     }
                 }
 
-                // 2. Clic sur une Scène Récente du Disque (Charger & Jouer OU Ouvrir en Studio)
+                // 2. Clic sur un projet/scène du disque (Charger & Jouer OU Ouvrir en Studio)
                 if let Some((scene_idx, is_studio)) = self.editor.clicked_welcome_scene(mx, my) {
-                    if scene_idx < AVAILABLE_SCENES.len() {
-                        let (scene_path, scene_genre) = AVAILABLE_SCENES[scene_idx];
-                        self.switch_scene(scene_path);
-                        self.editor.mode = if is_studio { EditorMode::Edit } else { EditorMode::Play };
-                        self.editor.show_welcome_modal = false;
-                        self.audio.play(SoundType::Teleport);
-                        self.set_status(&format!("Projet chargé : {} (Mode {})", scene_genre, if is_studio { "Studio ECS" } else { "Jeu 60 FPS" }));
+                    if scene_idx < self.editor.welcome_entries.len() {
+                        let path = self.editor.welcome_entries[scene_idx].path.clone();
+                        let title = self.editor.welcome_entries[scene_idx].title.clone();
+                        let mut ok = true;
+                        if path.ends_with(".scene.json") {
+                            ok = self.switch_scene(&path);
+                        } else {
+                            match crate::project::KaractiProject::load_from_file(&path) {
+                                Ok(proj) => self.load_project(proj),
+                                Err(e) => {
+                                    ok = false;
+                                    self.set_status(&format!("Échec du chargement du projet : {}", e));
+                                }
+                            }
+                        }
+                        if ok {
+                            // Enregistre le projet dans les récents.
+                            let mut registry = crate::project_registry::ProjectRegistry::open();
+                            registry.record_recent(&path);
+                            let _ = registry.save();
+
+                            self.editor.mode = if is_studio { EditorMode::Edit } else { EditorMode::Play };
+                            self.editor.show_welcome_modal = false;
+                            self.audio.play(SoundType::Teleport);
+                            self.set_status(&format!("Projet chargé : {} (Mode {})", title, if is_studio { "Studio ECS" } else { "Jeu 60 FPS" }));
+                        }
                         return;
                     }
                 }
 
-                // 3. Clic sur un Archétype Rapide 1-Clic (Génération & Remplacement Scène)
+                // 3. Clic sur un Archétype Rapide 1-Clic (Lance le jeu de référence du genre)
                 if let Some(arch_key) = self.editor.clicked_welcome_archetype(mx, my) {
-                    self.editor.recipe_wizard.apply_archetype(arch_key);
-                    self.apply_active_recipe();
-                    self.editor.show_welcome_modal = false;
-                    self.editor.mode = EditorMode::Play;
-                    self.audio.play(SoundType::BonusFanfare);
-                    self.set_status(&format!("Archétype instancié : {} ! Bon jeu.", arch_key));
+                    match self.launch_default_game(arch_key) {
+                        Ok(name) => {
+                            self.audio.play(SoundType::BonusFanfare);
+                            self.set_status(&format!("🎮 {} — {} ! Bon jeu.", arch_key, name));
+                        }
+                        Err(e) => {
+                            self.audio.play(SoundType::AccessDenied);
+                            self.set_status(&e);
+                        }
+                    }
+                    return;
+                }
+
+                // 3bis. Actions de la liste (Dossier / Dupliquer / Retirer / Archiver)
+                if let Some((idx, action)) = self.editor.clicked_welcome_entry_action(mx, my) {
+                    self.perform_welcome_entry_action(idx, action);
+                    return;
+                }
+
+                // 3ter. Pagination de la liste
+                if let Some((px, py, pw, ph)) = self.editor.welcome_page_prev_hitbox {
+                    if mx >= px as f32 && mx <= (px + pw as i32) as f32 && my >= py as f32 && my <= (py + ph as i32) as f32 {
+                        if self.editor.welcome_page > 0 {
+                            self.editor.welcome_page -= 1;
+                        }
+                        self.audio.play(SoundType::UiClick);
+                        return;
+                    }
+                }
+                if let Some((nx, ny, nw, nh)) = self.editor.welcome_page_next_hitbox {
+                    if mx >= nx as f32 && mx <= (nx + nw as i32) as f32 && my >= ny as f32 && my <= (ny + nh as i32) as f32 {
+                        self.editor.welcome_page += 1;
+                        self.audio.play(SoundType::UiClick);
+                        return;
+                    }
+                }
+
+                // 3quater. Champ nom de projet + bouton Créer
+                if self.editor.is_welcome_create_name_clicked(mx, my) {
+                    self.editor.welcome_name_active = true;
+                    self.audio.play(SoundType::UiClick);
+                    return;
+                }
+                if self.editor.is_welcome_create_action_clicked(mx, my) {
+                    self.editor.welcome_name_active = false;
+                    self.create_welcome_project();
                     return;
                 }
 
@@ -2831,7 +3195,10 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                 return;
             }
 
-            self.camera.set_viewport(20, 66, 790, 470);
+            // NOTE : le viewport de la caméra est défini une seule fois par `render`
+            // (géométrie réactive) pour que les conversions screen->world des clics
+            // restent alignées sur le framebuffer affiché. Plus de décalage en mode
+            // Studio embarqué (précédemment `set_viewport(20, 66, 790, 470)`).
 
             // Défilement de la Caméra Studio avec les touches Fléchées et recentrage C
             let pan_speed = 500.0 * dt;
@@ -6561,6 +6928,91 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                         canvas.draw_text(rx, ry - 14, &label, 0x00FBBF24, 1);
                     }
                 }
+                ShapeKind::ImageRef { ref asset } => {
+                    let dest_w = ent.transform.w as u32;
+                    let dest_h = ent.transform.h as u32;
+                    // Ombre portée subtile au sol
+                    if ent.tag != "floor" && ent.tag != "platform" {
+                        canvas.draw_rect(rx + 2, ry + 3, dest_w, dest_h, 0x00060911);
+                    }
+                    match self.sprite_cache.get(asset) {
+                        Some(img) => {
+                            canvas.draw_pixel_matrix_alpha(
+                                rx, ry, dest_w, dest_h,
+                                &img.pixels, img.width, img.height,
+                            );
+                        }
+                        None => {
+                            // Repli si l'asset n'a pas pu être décodé
+                            canvas.draw_rect(rx, ry, dest_w, dest_h, rend.color);
+                        }
+                    }
+                    if let Some(outline_col) = rend.outline_color {
+                        canvas.draw_rect_outline(rx, ry, dest_w, dest_h, outline_col, rend.outline_width);
+                    }
+                    if is_selected {
+                        canvas.draw_rect_outline(rx - 2, ry - 2, dest_w + 4, dest_h + 4, 0x00FBBF24, 2);
+                        let label = format!("{}: {}", ent.tag.to_uppercase(), ent.name);
+                        canvas.draw_text(rx, ry - 14, &label, 0x00FBBF24, 1);
+                    }
+                }
+                ShapeKind::SheetRef { ref asset, ref frame } => {
+                    let dest_w = ent.transform.w as u32;
+                    let dest_h = ent.transform.h as u32;
+                    // Ombre portée subtile au sol
+                    if ent.tag != "floor" && ent.tag != "platform" {
+                        canvas.draw_rect(rx + 2, ry + 3, dest_w, dest_h, 0x00060911);
+                    }
+                    match self.sheet_cache.get(asset).and_then(|s| s.frame(frame)) {
+                        Some(f) => {
+                            canvas.draw_pixel_matrix_alpha(
+                                rx, ry, dest_w, dest_h,
+                                &f.image.pixels, f.image.width, f.image.height,
+                            );
+                        }
+                        None => {
+                            // Repli si la frame n'a pas pu être résolue
+                            canvas.draw_rect(rx, ry, dest_w, dest_h, rend.color);
+                        }
+                    }
+                    if let Some(outline_col) = rend.outline_color {
+                        canvas.draw_rect_outline(rx, ry, dest_w, dest_h, outline_col, rend.outline_width);
+                    }
+                    if is_selected {
+                        canvas.draw_rect_outline(rx - 2, ry - 2, dest_w + 4, dest_h + 4, 0x00FBBF24, 2);
+                        let label = format!("{}: {}", ent.tag.to_uppercase(), ent.name);
+                        canvas.draw_text(rx, ry - 14, &label, 0x00FBBF24, 1);
+                    }
+                }
+                ShapeKind::AnimRef { ref asset } => {
+                    let dest_w = ent.transform.w as u32;
+                    let dest_h = ent.transform.h as u32;
+                    // Ombre portée subtile au sol
+                    if ent.tag != "floor" && ent.tag != "platform" {
+                        canvas.draw_rect(rx + 2, ry + 3, dest_w, dest_h, 0x00060911);
+                    }
+                    let frame_idx = self.anim_states.get(&ent.id).map(|s| s.frame).unwrap_or(0);
+                    match self.sheet_cache.get(asset).and_then(|s| s.frame_index(frame_idx)) {
+                        Some(f) => {
+                            canvas.draw_pixel_matrix_alpha(
+                                rx, ry, dest_w, dest_h,
+                                &f.image.pixels, f.image.width, f.image.height,
+                            );
+                        }
+                        None => {
+                            // Repli si l'animation n'a pas pu être résolue
+                            canvas.draw_rect(rx, ry, dest_w, dest_h, rend.color);
+                        }
+                    }
+                    if let Some(outline_col) = rend.outline_color {
+                        canvas.draw_rect_outline(rx, ry, dest_w, dest_h, outline_col, rend.outline_width);
+                    }
+                    if is_selected {
+                        canvas.draw_rect_outline(rx - 2, ry - 2, dest_w + 4, dest_h + 4, 0x00FBBF24, 2);
+                        let label = format!("{}: {}", ent.tag.to_uppercase(), ent.name);
+                        canvas.draw_text(rx, ry - 14, &label, 0x00FBBF24, 1);
+                    }
+                }
             }
 
             // Mini barre de vie au-dessus de toute entité blessée (joueur, ennemi, boss)
@@ -7470,6 +7922,110 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         self.editor.guide_close_btn_hitbox = Some((mx + 20, close_btn_y, (mw - 40) as u32, 34));
     }
 
+    /// Rafraîchit le cache des entrées du Hub (scènes officielles + projets utilisateur).
+    fn refresh_welcome_entries(&mut self) {
+        let registry = crate::project_registry::ProjectRegistry::open();
+        let mut entries: Vec<crate::project_registry::ProjectEntry> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // 1. Scènes officielles, dans l'ordre stable d'AVAILABLE_SCENES.
+        for (path, _) in AVAILABLE_SCENES {
+            let resolved = resolve_scene_path(path);
+            let is_recent = registry.recent.iter().any(|r| r.ends_with(path));
+            let entry = crate::project_registry::ProjectEntry::read_from_path(
+                std::path::Path::new(&resolved),
+                is_recent,
+            );
+            seen.insert(entry.path.clone());
+            entries.push(entry);
+        }
+
+        // 2. Projets utilisateur (.karacti) découverts sur disque.
+        for entry in registry.scan_default_sources() {
+            if entry.kind == crate::project_registry::EntryKind::Project
+                && !seen.contains(&entry.path)
+            {
+                seen.insert(entry.path.clone());
+                entries.push(entry);
+            }
+        }
+
+        self.editor.welcome_entries = entries;
+        self.editor.welcome_page = 0;
+    }
+
+    /// Crée un projet depuis le champ « Nom du projet » du Hub et l'ouvre en Studio.
+    fn create_welcome_project(&mut self) {
+        let title = self.editor.welcome_project_name.trim().to_string();
+        if title.is_empty() {
+            self.set_status("Donnez d'abord un nom au projet.");
+            return;
+        }
+        let config = crate::project_registry::NewProjectConfig::new(
+            &title,
+            crate::recipe::GameGenre::Adventure,
+        );
+        let mut registry = crate::project_registry::ProjectRegistry::open();
+        match registry.create_project(&config) {
+            Ok(entry) => match crate::project::KaractiProject::load_from_file(&entry.path) {
+                Ok(proj) => {
+                    self.load_project(proj);
+                    self.editor.mode = EditorMode::Edit;
+                    self.editor.show_welcome_modal = false;
+                    self.editor.welcome_project_name.clear();
+                    self.editor.welcome_name_active = false;
+                    self.editor.welcome_entries.clear();
+                    self.audio.play(SoundType::ItemPickup);
+                    self.set_status(&format!("Projet '{}' créé et ouvert dans le Studio.", entry.title));
+                }
+                Err(e) => self.set_status(&format!("Projet créé mais chargement échoué : {}", e)),
+            },
+            Err(e) => self.set_status(&format!("Création impossible : {}", e)),
+        }
+    }
+
+    /// Exécute une action de la liste de projets de l'onglet 1.2.
+    /// 0 = dossier, 1 = dupliquer, 2 = retirer des récents, 3 = archiver.
+    fn perform_welcome_entry_action(&mut self, idx: usize, action: u8) {
+        if idx >= self.editor.welcome_entries.len() {
+            return;
+        }
+        let entry = self.editor.welcome_entries[idx].clone();
+        let mut registry = crate::project_registry::ProjectRegistry::open();
+        match action {
+            0 => {
+                let dir = std::path::Path::new(&entry.path)
+                    .parent()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| entry.path.clone());
+                self.set_status(&format!("Dossier du projet : {}", dir));
+                self.audio.play(SoundType::UiClick);
+            }
+            1 => match registry.duplicate_project(&entry.path, &format!("{} (copie)", entry.title)) {
+                Ok(_) => {
+                    self.refresh_welcome_entries();
+                    self.set_status("Projet dupliqué avec succès.");
+                }
+                Err(e) => self.set_status(&format!("Duplication impossible : {}", e)),
+            },
+            2 => {
+                registry.remove_recent(&entry.path);
+                let _ = registry.save();
+                self.refresh_welcome_entries();
+                self.audio.play(SoundType::UiClick);
+                self.set_status("Projet retiré des récents (fichier conservé).");
+            }
+            3 => match registry.archive_project(&entry.path) {
+                Ok(_) => {
+                    self.refresh_welcome_entries();
+                    self.set_status("Projet archivé (aucune suppression de données).");
+                }
+                Err(e) => self.set_status(&format!("Archivage impossible : {}", e)),
+            },
+            _ => {}
+        }
+    }
+
     /// Rendu du Hub de Projets & Accueil KaractiRage Unifié (Section 1 de la spécification fonctionnelle)
     fn render_welcome_modal(&mut self, canvas: &mut Canvas, screen_w: i32, screen_h: i32) {
         let mw = 940;
@@ -7491,6 +8047,16 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         self.editor.welcome_guide_btn_hitbox = None;
         self.editor.welcome_recipe_btn_hitbox = None;
         self.editor.welcome_close_btn_hitbox = None;
+        self.editor.welcome_entry_action_hitboxes.clear();
+        self.editor.welcome_create_name_hitbox = None;
+        self.editor.welcome_create_action_hitbox = None;
+        self.editor.welcome_page_prev_hitbox = None;
+        self.editor.welcome_page_next_hitbox = None;
+
+        // Charge paresseusement la liste des projets/scènes (une seule fois par ouverture).
+        if self.editor.welcome_entries.is_empty() {
+            self.refresh_welcome_entries();
+        }
 
         // Ombrage d'arrière-plan et cadre Dark Atelier
         canvas.draw_rect(0, 0, screen_w as u32, screen_h as u32, 0x00060913);
@@ -7557,50 +8123,96 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             canvas.draw_badge(ai_hero_x, ban_y + 22, ai_hero_w as u32, 36, 0x002E1065, 0x0038BDF8, "🤖 INTENTION IA [I]", 0x00F0F9FF, 1);
             self.editor.welcome_hero_ai_btn_hitbox = Some((ai_hero_x, ban_y + 22, ai_hero_w as u32, 36));
 
+            // Barre de création d'un projet sur disque (Section 1.1.D)
+            let create_y = ban_y + 88;
+            canvas.draw_rect(mx + 24, create_y, (mw - 48) as u32, 40, 0x000F172A);
+            canvas.draw_rect_outline(mx + 24, create_y, (mw - 48) as u32, 40, 0x001E293B, 1);
+            canvas.draw_text(mx + 36, create_y + 8, "NOUVEAU PROJET :", 0x00CBD5E1, 1);
+
+            let name_w = 380;
+            let name_x = mx + 160;
+            let name_disp = if self.editor.welcome_project_name.is_empty() {
+                if self.editor.welcome_name_active { "...".to_string() } else { "Nom du projet…".to_string() }
+            } else {
+                self.editor.welcome_project_name.clone()
+            };
+            let name_col = if self.editor.welcome_project_name.is_empty() { 0x0064748B } else { 0x00F3E8FF };
+            canvas.draw_rect(name_x, create_y + 6, name_w as u32, 28, 0x000B0F19);
+            canvas.draw_rect_outline(name_x, create_y + 6, name_w as u32, 28, if self.editor.welcome_name_active { 0x00A855F7 } else { 0x00334155 }, 2);
+            canvas.draw_text(name_x + 8, create_y + 12, &name_disp, name_col, 1);
+            self.editor.welcome_create_name_hitbox = Some((name_x, create_y + 6, name_w as u32, 28));
+
+            let create_btn_w = 190;
+            let create_btn_x = name_x + name_w + 12;
+            canvas.draw_badge(create_btn_x, create_y + 4, create_btn_w as u32, 32, 0x00065F46, 0x0010B981, "[ CRÉER & OUVRIR ]", 0x00ECFDF5, 1);
+            self.editor.welcome_create_action_hitbox = Some((create_btn_x, create_y + 4, create_btn_w as u32, 32));
+
             // Section Démarrage Rapide : 5 Archétypes
-            let sec_y = my + 204;
+            let sec_y = my + 244;
             canvas.draw_text(mx + 26, sec_y, "⚡ OU DÉMARRAGE IMMÉDIAT : 5 ARCHÉTYPES DE JEU EN 1 CLIC", 0x0038BDF8, 2);
-            canvas.draw_text_body(mx + 26, sec_y + 20, "Instancie instantanément la recette, configure les composants ECS et lance la simulation à 60 FPS :", 0x0094A3B8, 12.0);
+            canvas.draw_text_body(mx + 26, sec_y + 20, "Lance instantanément le jeu de référence complet de chaque genre (scène officielle ciselée) :", 0x0094A3B8, 12.0);
 
             let card_y = sec_y + 40;
             let card_w: i32 = 170;
-            let card_h: i32 = 264;
+            let card_h: i32 = 292;
             let spacing = 178;
 
+            // (clé canonique, titre, genre, fichier scène, bg, bordure, fg, bullets)
             let archetypes = [
-                ("rpg_dungeon", "RPG DONJON", "Top-Down 2D", 0x000E1C1A, 0x0010B981, 0x00D1FAE5, [
-                    "• Combat à l'épée",
-                    "• Inventaire 5 slots",
-                    "• Portes & clés",
-                    "• Coffres au trésor",
+                ("rpg", "RPG DONJON", "Top-Down 2D", "level_01.scene.json", 0x000E1C1A, 0x0010B981, 0x00D1FAE5, [
+                    "• Donjon 20 murs",
+                    "• Objectif : 50 or",
+                    "• 2 sentinelles A*",
+                    "• Dalles + porte KVL",
                 ]),
-                ("platformer", "PLATFORMER", "Vue Latérale 2D", 0x00151828, 0x008B5CF6, 0x00EDE9FE, [
-                    "• Gravité & Sauts",
-                    "• Moteurs mobiles",
-                    "• Dalles réactives",
-                    "• Dash cinétique",
+                ("platformer", "PLATFORMER", "Vue Latérale 2D", "platformer_01.scene.json", 0x00151828, 0x008B5CF6, 0x00EDE9FE, [
+                    "• Gravité 920",
+                    "• Saut 480",
+                    "• 3 pièces aériennes",
+                    "• Portail d'arrivée",
                 ]),
-                ("shootemup", "SHMUP SPATIAL", "Action Espace", 0x001C1226, 0x00EC4899, 0x00FCE7F3, [
-                    "• Inertie spatiale",
-                    "• Lasers balistiques",
-                    "• Vagues d'ennemis",
-                    "• Score réactif KVL",
+                ("shmup", "SHMUP SPATIAL", "Action Espace", "space_01.scene.json", 0x001C1226, 0x00EC4899, 0x00FCE7F3, [
+                    "• Inertie newtonienne",
+                    "• 2 astéroïdes",
+                    "• Drone patrouilleur",
+                    "• Capsule stellaire",
                 ]),
-                ("puzzle_sokoban", "PUZZLE SOKOBAN", "Grille Tactique", 0x001A180E, 0x00F59E0B, 0x00FEF3C7, [
-                    "• Poussée de blocs",
-                    "• Dalles de sol",
-                    "• Énigmes logiques",
-                    "• Déplacement case",
+                ("sokoban", "PUZZLE SOKOBAN", "Grille Tactique", "puzzle_01.scene.json", 0x001A180E, 0x00F59E0B, 0x00FEF3C7, [
+                    "• 2 caisses runiques",
+                    "• 2 dalles de pression",
+                    "• Portail logique",
+                    "• 2 orbes ancestrales",
                 ]),
-                ("boss_arena", "TITAN BOSS", "Combat Arène", 0x00220F16, 0x00EF4444, 0x00FEE2E2, [
-                    "• Boss géant KVL",
-                    "• Télégraphie frappe",
-                    "• Barres de santé",
-                    "• Esquives & Dash",
+                ("boss", "TITAN BOSS", "Combat Arène", "boss_01.scene.json", 0x00220F16, 0x00EF4444, 0x00FEE2E2, [
+                    "• Titan Proto-Sentinelle",
+                    "• Télégraphie au sol",
+                    "• 2 cœurs de vie",
+                    "• Arène 8 murs + piliers",
                 ]),
             ];
 
-            for (idx, (arch_key, title, genre_sub, bg, bd, fg, bullet_points)) in archetypes.iter().enumerate() {
+            // Titres réels des jeux par défaut, résolus depuis le scan disque (sans I/O par frame).
+            let fit = |s: &str, max: usize| -> String {
+                if s.chars().count() <= max {
+                    s.to_string()
+                } else {
+                    let t: String = s.chars().take(max.saturating_sub(1)).collect();
+                    format!("{}…", t)
+                }
+            };
+            let default_titles: Vec<String> = archetypes
+                .iter()
+                .map(|(_, _, _, file, ..)| {
+                    self.editor
+                        .welcome_entries
+                        .iter()
+                        .find(|e| e.path.ends_with(file))
+                        .map(|e| e.title.clone())
+                        .unwrap_or_else(|| file.replace(".scene.json", "").to_string())
+                })
+                .collect();
+
+            for (idx, (arch_key, title, genre_sub, _file, bg, bd, fg, bullet_points)) in archetypes.iter().enumerate() {
                 let cx = mx + 24 + (idx as i32 * spacing);
                 canvas.draw_rect(cx, card_y, card_w as u32, card_h as u32, *bg);
                 canvas.draw_rect_outline(cx, card_y, card_w as u32, card_h as u32, *bd, 2);
@@ -7614,10 +8226,12 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                     canvas.draw_text_body(cx + 12, by, pt, 0x00CBD5E1, 11.0);
                     by += 18;
                 }
+                by += 2;
+                canvas.draw_text_body(cx + 12, by, &format!("Jeu : {}", fit(&default_titles[idx], 22)), *fg, 10.5);
 
                 let btn_h = 30;
                 let btn_y = card_y + card_h - btn_h - 12;
-                canvas.draw_badge(cx + 10, btn_y, (card_w - 20) as u32, btn_h as u32, 0x001E293B, *bd, "▶ Lancer", *fg, 1);
+                canvas.draw_badge(cx + 10, btn_y, (card_w - 20) as u32, btn_h as u32, 0x001E293B, *bd, "▶ JOUER", *fg, 1);
 
                 self.editor.welcome_archetype_hitboxes.push((arch_key, cx, card_y, card_w as u32, card_h as u32));
             }
@@ -7627,48 +8241,97 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         // ==========================================
         else if self.editor.welcome_tab == 1 {
             let sec_y = my + 106;
-            canvas.draw_text(mx + 26, sec_y, "PROJETS RÉCENTS ET SCÈNES D'EXEMPLE SUR DISQUE (SECTION 1.2) :", 0x00F8FAFC, 2);
-            canvas.draw_text_body(mx + 26, sec_y + 20, "Sélectionnez un projet pour le lancer immédiatement en Mode Jeu ou l'éditer dans l'Atelier Studio :", 0x0094A3B8, 12.0);
+            canvas.draw_text(mx + 26, sec_y, "PROJETS ET SCÈNES DÉTECTÉS SUR DISQUE (SECTION 1.2) :", 0x00F8FAFC, 2);
+            canvas.draw_text_body(mx + 26, sec_y + 20, "Métadonnées réelles (taille, date, état). Actions : Jouer, Studio, Dossier, Dupliquer, Retirer, Archiver.", 0x0094A3B8, 12.0);
+
+            let page_size = 5usize;
+            let total = self.editor.welcome_entries.len();
+            let total_pages = if total == 0 { 1 } else { (total + page_size - 1) / page_size };
+            if self.editor.welcome_page >= total_pages {
+                self.editor.welcome_page = total_pages - 1;
+            }
+            let start = self.editor.welcome_page * page_size;
+            let page_indices: Vec<usize> = (start..(start + page_size).min(total)).collect();
 
             let row_y_base = sec_y + 42;
             let row_h = 72;
             let row_gap = 78;
 
-            let scenes_meta = [
-                ("Donjon Niveau 1 — Aventure RPG Top-Down", "assets/scenes/level_01.scene.json", "36 Ko", "Aventure • 2D Top-Down • Quêtes, Clés, Portes & Sentinelles"),
-                ("Cyber Platformer 2D — Gravité & Sauts", "assets/scenes/platformer_01.scene.json", "8.8 Ko", "Plateforme • 2D Vue Latérale • Moteurs de saut, Plateformes mobiles"),
-                ("Shmup Stellaire — Shoot'em Up & Vagues Spatiales", "assets/scenes/space_01.scene.json", "5.0 Ko", "Shoot'em Up • 2D Inertie • Tirs lasers, Vagues d'astronefs"),
-                ("Puzzle Sokoban — Énigmes & Poussée de Blocs", "assets/scenes/puzzle_01.scene.json", "9.3 Ko", "Réflexion • 2D Grille • Déplacement case par case, Dalles & Caisses"),
-                ("Arène du Titan — Combat de Boss & Télégraphie", "assets/scenes/boss_01.scene.json", "11.6 Ko", "Combat • 2D Arène • Boss réactif KVL, Télégraphie & Phase 2"),
-            ];
+            if total == 0 {
+                canvas.draw_text_body(mx + 26, row_y_base + 12, "Aucun projet détecté. Créez-en un depuis l'onglet 1.1.", 0x0094A3B8, 12.0);
+            }
 
-            for (idx, (title, path, size, desc)) in scenes_meta.iter().enumerate() {
-                let ry = row_y_base + (idx as i32 * row_gap);
+            for (slot, &idx) in page_indices.iter().enumerate() {
+                // Copie locale des champs pour éviter tout conflit d'emprunt avec `self.editor`.
+                let (title, genre, dimension, size, entities, modified, path_str, is_recent, is_project, missing) = {
+                    let entry = &self.editor.welcome_entries[idx];
+                    (
+                        entry.title.clone(), entry.genre.clone(), entry.dimension.clone(),
+                        entry.size_bytes, entry.entity_count, entry.modified_at,
+                        entry.path.clone(), entry.is_recent,
+                        entry.kind == crate::project_registry::EntryKind::Project,
+                        entry.status == crate::project_registry::EntryStatus::Missing,
+                    )
+                };
+
+                let ry = row_y_base + (slot as i32 * row_gap);
                 let rw = mw - 48;
 
                 canvas.draw_rect(mx + 24, ry, rw as u32, row_h as u32, 0x000F172A);
-                canvas.draw_rect_outline(mx + 24, ry, rw as u32, row_h as u32, 0x001E293B, 1);
-                canvas.draw_corner_brackets(mx + 24, ry, rw as u32, row_h as u32, 10, 0x00334155);
+                canvas.draw_rect_outline(mx + 24, ry, rw as u32, row_h as u32, if missing { 0x00EF4444 } else { 0x001E293B }, 1);
+                canvas.draw_corner_brackets(mx + 24, ry, rw as u32, row_h as u32, 10, if missing { 0x00EF4444 } else { 0x00334155 });
 
                 canvas.draw_badge(mx + 36, ry + 12, 30, 24, 0x001E1B4B, 0x00818CF8, &format!("{}", idx + 1), 0x00E0E7FF, 1);
-                canvas.draw_text(mx + 76, ry + 12, title, 0x00F8FAFC, 1);
-                canvas.draw_text_body(mx + 76, ry + 32, &format!("{} • Taille : {}", path, size), 0x0038BDF8, 11.5);
-                canvas.draw_text_body(mx + 76, ry + 48, desc, 0x0094A3B8, 11.0);
+                canvas.draw_text(mx + 76, ry + 12, &title, 0x00F8FAFC, 1);
+                let meta = format!(
+                    "{} • {} • {} • {} entités • {}",
+                    genre,
+                    dimension,
+                    crate::project_registry::format_bytes(size),
+                    entities,
+                    crate::project_registry::format_timestamp(modified)
+                );
+                canvas.draw_text_body(mx + 76, ry + 32, &meta, 0x0038BDF8, 11.5);
+                canvas.draw_text_body(mx + 76, ry + 48, &path_str, 0x0064748B, 10.5);
 
-                // Badge Statut
-                canvas.draw_badge(mx + rw - 310, ry + 22, 130, 26, 0x00064E3B, 0x0010B981, "✓ SUR DISQUE", 0x00D1FAE5, 1);
+                let (st_txt, st_bg, st_bd, st_fg) = if missing {
+                    ("⚠ INTROUVABLE", 0x003B0A0A, 0x00EF4444, 0x00FECACA)
+                } else {
+                    ("✓ SUR DISQUE", 0x00064E3B, 0x0010B981, 0x00D1FAE5)
+                };
+                canvas.draw_badge(mx + rw - 320, ry + 14, 130, 26, st_bg, st_bd, st_txt, st_fg, 1);
 
-                // Bouton [ ▶ JOUER ]
-                let play_btn_x = mx + rw - 170;
-                let play_btn_w = 78;
-                canvas.draw_badge(play_btn_x, ry + 18, play_btn_w as u32, 34, 0x00065F46, 0x0010B981, "▶ JOUER", 0x00ECFDF5, 1);
-                self.editor.welcome_scene_hitboxes.push((idx, false, play_btn_x, ry + 18, play_btn_w as u32, 34));
+                let play_btn_x = mx + rw - 180;
+                canvas.draw_badge(play_btn_x, ry + 12, 74, 26, 0x00065F46, 0x0010B981, "▶ JOUER", 0x00ECFDF5, 1);
+                self.editor.welcome_scene_hitboxes.push((idx, false, play_btn_x, ry + 12, 74, 26));
+                let studio_btn_x = play_btn_x + 78;
+                canvas.draw_badge(studio_btn_x, ry + 12, 96, 26, 0x003B0764, 0x00A855F7, "★ STUDIO", 0x00F3E8FF, 1);
+                self.editor.welcome_scene_hitboxes.push((idx, true, studio_btn_x, ry + 12, 96, 26));
 
-                // Bouton [ ★ STUDIO ]
-                let studio_btn_x = mx + rw - 84;
-                let studio_btn_w = 80;
-                canvas.draw_badge(studio_btn_x, ry + 18, studio_btn_w as u32, 34, 0x003B0764, 0x00A855F7, "★ STUDIO", 0x00F3E8FF, 1);
-                self.editor.welcome_scene_hitboxes.push((idx, true, studio_btn_x, ry + 18, studio_btn_w as u32, 34));
+                let mut actions: Vec<(u8, &str)> = vec![(0, "[DOSSIER]"), (1, "[DUPLIQ.]")];
+                if is_recent { actions.push((2, "[RETIRER]")); }
+                if is_project { actions.push((3, "[ARCHIVER]")); }
+                let mut act_x = mx + rw - 24;
+                for (aid, label) in actions.iter().rev() {
+                    let aw = (label.chars().count() as i32 * 7) + 14;
+                    act_x -= aw;
+                    canvas.draw_badge(act_x, ry + 44, aw as u32, 24, 0x001E293B, 0x0064748B, label, 0x00CBD5E1, 1);
+                    self.editor.welcome_entry_action_hitboxes.push((idx, *aid, act_x, ry + 44, aw as u32, 24));
+                    act_x -= 8;
+                }
+            }
+
+            if total_pages > 1 {
+                let pag_y = my + mh - 84;
+                let prev_w = 130;
+                let next_w = 130;
+                let prev_x = mx + 24;
+                let next_x = mx + mw - 24 - next_w;
+                canvas.draw_badge(prev_x, pag_y, prev_w as u32, 24, 0x001E293B, 0x0064748B, "[◀ PRÉCÉDENT]", 0x00CBD5E1, 1);
+                self.editor.welcome_page_prev_hitbox = Some((prev_x, pag_y, prev_w as u32, 24));
+                canvas.draw_text(mx + mw / 2 - 40, pag_y + 4, &format!("Page {}/{}", self.editor.welcome_page + 1, total_pages), 0x00CBD5E1, 1);
+                canvas.draw_badge(next_x, pag_y, next_w as u32, 24, 0x001E293B, 0x0064748B, "[SUIVANT ▶]", 0x00CBD5E1, 1);
+                self.editor.welcome_page_next_hitbox = Some((next_x, pag_y, next_w as u32, 24));
             }
         }
         // ==============================================================
@@ -11564,10 +12227,13 @@ mod tests {
                     sprite_archetype: Some("ninja".to_string()),
                     sprite_ascii: None,
                     sprite_palette: None,
+                    sprite_asset: None,
+                    sprite_frame: None,
                     movement: Some("none".to_string()),
                     has_collider: true,
                     has_vision: false,
                     is_flocking: false,
+                    ..Default::default()
                 },
                 crate::ai_client::AiGeneratedEntity {
                     name: "Boss Squelette".to_string(),
@@ -11581,10 +12247,13 @@ mod tests {
                     sprite_archetype: Some("skull".to_string()),
                     sprite_ascii: None,
                     sprite_palette: None,
+                    sprite_asset: None,
+                    sprite_frame: None,
                     movement: Some("patrol".to_string()),
                     has_collider: true,
                     has_vision: true,
                     is_flocking: false,
+                    ..Default::default()
                 },
                 crate::ai_client::AiGeneratedEntity {
                     name: "Coffre Ancien".to_string(),
@@ -11598,10 +12267,13 @@ mod tests {
                     sprite_archetype: Some("chest".to_string()),
                     sprite_ascii: None,
                     sprite_palette: None,
+                    sprite_asset: None,
+                    sprite_frame: None,
                     movement: Some("none".to_string()),
                     has_collider: true,
                     has_vision: false,
                     is_flocking: false,
+                    ..Default::default()
                 },
                 crate::ai_client::AiGeneratedEntity {
                     name: "Portail Cosmique".to_string(),
@@ -11615,10 +12287,13 @@ mod tests {
                     sprite_archetype: Some("portal".to_string()),
                     sprite_ascii: None,
                     sprite_palette: None,
+                    sprite_asset: None,
+                    sprite_frame: None,
                     movement: Some("none".to_string()),
                     has_collider: true,
                     has_vision: false,
                     is_flocking: false,
+                    ..Default::default()
                 },
             ],
             kvl_actions: vec![],
@@ -12409,7 +13084,7 @@ mod tests {
 
         assert_eq!(state.editor.welcome_tab, 1, "L'onglet 1.2 doit être sélectionné");
         state.render(&mut canvas);
-        assert_eq!(state.editor.welcome_scene_hitboxes.len(), 10, "5 scènes x 2 boutons (Jouer + Studio)");
+        assert_eq!(state.editor.welcome_scene_hitboxes.len(), 10, "5 entrées par page x 2 boutons (Jouer + Studio)");
 
         // Sauvegarder un snapshot de l'onglet 1.2
         save_test_ppm(&canvas, "/tmp/desktop_hub_tab2.ppm");
@@ -12449,6 +13124,87 @@ mod tests {
         assert!(!state.editor.show_welcome_modal);
         let p_idx = state.player_index().unwrap();
         assert!(matches!(state.entities[p_idx].movement.as_ref().unwrap().mode, MovementMode::Platformer { .. }), "L'archétype Platformer doit être appliqué avec succès");
+    }
+
+    #[test]
+    fn test_project_hub_lists_real_scenes_from_disk() {
+        let mut state = GameState::load_from_scene(get_test_scene_path()).unwrap();
+        let mut canvas = Canvas::new(1200, 800);
+
+        state.editor.show_welcome_modal = true;
+        state.editor.welcome_tab = 0;
+        state.render(&mut canvas);
+
+        // Le scan disque réel doit découvrir les 6 scènes officielles (dont la démo SVG).
+        assert!(state.editor.welcome_entries.iter().any(|e| e.path.contains("svg_demo_01")), "svg_demo_01 doit être listée");
+        assert!(state.editor.welcome_entries.iter().any(|e| e.path.contains("boss_01")), "boss_01 doit être listée");
+
+        // Les métadonnées (taille réelle) sont lues depuis le disque, pas codées en dur.
+        for entry in &state.editor.welcome_entries {
+            if entry.status == crate::project_registry::EntryStatus::Available && entry.kind == crate::project_registry::EntryKind::Scene {
+                assert!(entry.size_bytes > 0, "La taille de '{}' doit être réelle", entry.title);
+            }
+        }
+    }
+
+    #[test]
+    fn test_default_games_cover_all_five_archetypes() {
+        // Chaque archétype (et ses alias historiques) doit résoudre un jeu de référence jouable.
+        for key in [
+            "rpg", "rpg_dungeon", "dungeon",
+            "platformer",
+            "shmup", "shootemup",
+            "sokoban", "puzzle_sokoban",
+            "boss", "boss_arena",
+        ] {
+            let (path, label) = default_game_for_archetype(key).expect("archétype résolu");
+            assert!(!label.is_empty(), "{} doit avoir un libellé", key);
+
+            let resolved = resolve_scene_path(path);
+            assert!(std::path::Path::new(&resolved).exists(), "La scène '{}' doit exister", resolved);
+
+            let state = GameState::load_from_scene(&resolved).expect("chargement du jeu de référence");
+            assert!(!state.entities.is_empty(), "{} doit avoir des entités", key);
+            assert!(state.scene_objective.is_some(), "{} doit avoir un objectif", key);
+        }
+    }
+
+    #[test]
+    fn test_project_hub_archetype_launches_expected_default_game() {
+        let expectations: &[(&str, &str)] = &[
+            ("rpg", "level_01"),
+            ("platformer", "platformer_01"),
+            ("shmup", "space_01"),
+            ("sokoban", "puzzle_01"),
+            ("boss", "boss_01"),
+        ];
+
+        for (key, expected_file) in expectations {
+            let mut state = GameState::load_from_scene(get_test_scene_path()).unwrap();
+            let mut canvas = Canvas::new(1200, 800);
+
+            state.editor.show_welcome_modal = true;
+            state.editor.welcome_tab = 0;
+            state.render(&mut canvas);
+            assert_eq!(state.editor.welcome_archetype_hitboxes.len(), 5, "5 archétypes affichés");
+
+            let (_, ax, ay, aw, ah) = state.editor.welcome_archetype_hitboxes.iter()
+                .find(|(k, ..)| *k == *key)
+                .cloned()
+                .unwrap_or_else(|| panic!("carte archétype '{}' introuvable", key));
+
+            let mut input = InputState::new();
+            input.on_mouse_move((ax + (aw / 2) as i32) as f32, (ay + (ah / 2) as i32) as f32);
+            input.on_mouse_down();
+            state.update(0.016, &input);
+
+            assert!(!state.editor.show_welcome_modal, "le hub se ferme après '{}'", key);
+            assert!(
+                state.scene_path.contains(expected_file),
+                "'{}' doit charger '{}' (chargé={})", key, expected_file, state.scene_path
+            );
+            assert!(matches!(state.editor.mode, EditorMode::Play), "'{}' doit basculer en mode Jeu", key);
+        }
     }
 
     #[test]
@@ -12549,10 +13305,13 @@ mod tests {
                     sprite_archetype: Some("boss".into()),
                     sprite_ascii: None,
                     sprite_palette: None,
+                    sprite_asset: None,
+                    sprite_frame: None,
                     movement: Some("patrol".into()),
                     has_collider: true,
                     has_vision: true,
                     is_flocking: false,
+                    ..Default::default()
                 }
             ],
             kvl_actions: vec![
@@ -12905,19 +13664,55 @@ mod tests {
             .expect("Chargement initial");
 
         let initial_count = state.entities.len();
-        let target_id = state.entities[0].id;
+        // Cible volontairement une entité non-joueur (l'avatar est protégé).
+        let target_idx = state
+            .entities
+            .iter()
+            .position(|e| !e.movement.as_ref().map_or(false, |m| m.is_player_controlled))
+            .expect("au moins une entité non-joueur");
+        let target_id = state.entities[target_idx].id;
 
-        // Mise à jour
-        let ok = state.update_entity_transform_by_id(target_id, 450.0, 320.0, 60.0, 60.0);
+        // Mise à jour (avec historique)
+        let ok = state.update_entity_transform_by_id(target_id, 450.0, 320.0, 60.0, 60.0, true);
         assert!(ok);
-        assert_eq!(state.entities[0].transform.x, 450.0);
-        assert_eq!(state.entities[0].transform.w, 60.0);
+        let moved = state.entities.iter().find(|e| e.id == target_id).unwrap();
+        assert_eq!(moved.transform.x, 450.0);
+        assert_eq!(moved.transform.w, 60.0);
+        assert!(state.editor.undo_stack.can_undo());
 
-        // Suppression
+        // Suppression (l'avatar joueur est protégé)
+        let player_id = state
+            .entities
+            .iter()
+            .find(|e| e.movement.as_ref().map_or(false, |m| m.is_player_controlled))
+            .map(|e| e.id);
+        if let Some(pid) = player_id {
+            assert!(!state.delete_entity_by_id(pid));
+        }
+
         let del_ok = state.delete_entity_by_id(target_id);
         assert!(del_ok);
         assert_eq!(state.entities.len(), initial_count - 1);
         assert!(!state.entities.iter().any(|e| e.id == target_id));
+    }
+
+    #[test]
+    fn test_editor_state_and_selection_by_id() {
+        let mut state = GameState::load_from_scene(get_test_scene_path())
+            .expect("Chargement initial");
+        state.editor.embedded_mode = true;
+        state.editor.mode = crate::editor::EditorMode::Edit;
+
+        let first_id = state.entities[0].id;
+        assert!(state.select_entity_by_id(first_id));
+        assert_eq!(state.selected_entity_id(), Some(first_id));
+
+        // La sélection stockée est un index, mais l'état sérialisé doit exposer l'id.
+        let json = state.editor_state_json();
+        assert!(json.contains("\"selected_id\""));
+        assert!(json.contains("\"tool\""));
+        assert!(json.contains("\"mode\":\"edit\""));
+        assert!(json.contains("\"can_undo\""));
     }
 }
 

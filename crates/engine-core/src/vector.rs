@@ -513,6 +513,127 @@ fn default_clips(parts: &[RigPart]) -> Vec<AnimClip> {
     clips
 }
 
+// ---------------------------------------------------------------------------
+// PNG pixel-art : chargement à l'import.
+// Les PNG produits par pxl sont en alpha **droit** `0xRRGGBBAA` ; on les
+// convertit en **prémultiplié** `0xAARRGGBB`, directement compatible avec
+// `Canvas::draw_pixel_matrix_alpha`. Décodage unique à l'import, mis en cache
+// (`Arc`) : aucun coût dans le hot path de rendu.
+// ---------------------------------------------------------------------------
+
+/// Décode un buffer PNG RGBA en `RasterImage` prémultiplié (0 = transparent).
+pub fn decode_png(bytes: &[u8]) -> Result<RasterImage, SvgError> {
+    const MAX_DIM: u32 = 4096;
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().map_err(|e| SvgError(e.to_string()))?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).map_err(|e| SvgError(e.to_string()))?;
+    if info.width > MAX_DIM || info.height > MAX_DIM {
+        return Err(SvgError(format!(
+            "PNG trop grand: {}x{} (max {MAX_DIM})",
+            info.width, info.height
+        )));
+    }
+
+    let mut pixels = Vec::with_capacity((info.width * info.height) as usize);
+    for px in buf.chunks_exact(4) {
+        let r = px[0] as u32;
+        let g = px[1] as u32;
+        let b = px[2] as u32;
+        let a = px[3] as u32;
+        // Prémultiplication alpha droit -> prémultiplié (attendu par le blitter).
+        let pr = (r * a + 127) / 255;
+        let pg = (g * a + 127) / 255;
+        let pb = (b * a + 127) / 255;
+        pixels.push((a << 24) | (pr << 16) | (pg << 8) | pb);
+    }
+    Ok(RasterImage {
+        width: info.width,
+        height: info.height,
+        pixels,
+    })
+}
+
+/// Résout un asset PNG : `id` ("coin") ou chemin relatif ("sprites/coin.png").
+/// Cherche depuis le cwd, puis `../../`, puis la racine du dépôt (absolue,
+/// indépendante du cwd — robuste pour `cargo test` et `cargo tauri dev`).
+fn load_png_source(id: &str) -> Result<Vec<u8>, SvgError> {
+    let rel = if id.ends_with(".png") {
+        id.to_string()
+    } else {
+        format!("assets/generated/sprites/{id}.png")
+    };
+    if let Ok(bytes) = std::fs::read(&rel) {
+        return Ok(bytes);
+    }
+    if let Ok(bytes) = std::fs::read(format!("../../{rel}")) {
+        return Ok(bytes);
+    }
+    let abs = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+    if let Ok(bytes) = std::fs::read(format!("{abs}/{rel}")) {
+        return Ok(bytes);
+    }
+    Err(SvgError(format!("asset PNG introuvable: {id}")))
+}
+
+/// Cache d'assets PNG décodés (prémultipliés), indexé par identifiant.
+#[derive(Default)]
+pub struct PngCache {
+    assets: HashMap<String, Arc<RasterImage>>,
+    /// Assets embarqués (export standalone / import de package) : id -> PNG brut.
+    embedded: HashMap<String, Vec<u8>>,
+}
+
+impl PngCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Installe des assets embarqués, prioritaires sur le disque.
+    pub fn install_embedded(&mut self, map: HashMap<String, Vec<u8>>) {
+        self.embedded = map;
+    }
+
+    /// Récupère un asset déjà décodé, ou le charge à la demande (embarqué puis disque).
+    pub fn get_or_load(&mut self, id: &str) -> Result<Arc<RasterImage>, SvgError> {
+        if let Some(img) = self.assets.get(id) {
+            return Ok(img.clone());
+        }
+        let bytes = if let Some(b) = self.embedded.get(id) {
+            b.clone()
+        } else {
+            load_png_source(id)?
+        };
+        let img = Arc::new(decode_png(&bytes)?);
+        self.assets.insert(id.to_string(), img.clone());
+        Ok(img)
+    }
+
+    /// Accès en lecture seule (chemin de rendu) : `None` si absent ou échoué.
+    pub fn get(&self, id: &str) -> Option<&Arc<RasterImage>> {
+        self.assets.get(id)
+    }
+
+    /// Identifiants déjà chargés avec succès.
+    pub fn loaded_ids(&self) -> impl Iterator<Item = &String> {
+        self.assets.keys()
+    }
+}
+
+/// Octets PNG bruts d'un asset identifié (miniature Studio), sans décodage.
+pub fn read_png_source(id: &str) -> Option<Vec<u8>> {
+    load_png_source(id).ok()
+}
+
+/// Dimensions d'un PNG (lecture de l'en-tête uniquement, sans décodage complet).
+pub fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let reader = decoder.read_info().ok()?;
+    let info = reader.info();
+    Some((info.width, info.height))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,6 +727,52 @@ mod tests {
         assert_eq!(clip.sample(0, 1.5).rot, 45.0, "bouclage sur la durée");
         assert_eq!(clip.sample(99, 0.5).rot, 0.0, "part sans piste = identité");
         assert_eq!(clip.sample(0, 0.0).sx, 1.0, "échelle par défaut neutre");
+    }
+
+    fn encode_rgba_png(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, w, h);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut writer = enc.write_header().unwrap();
+            writer.write_image_data(rgba).unwrap();
+        }
+        out
+    }
+
+    #[test]
+    fn decode_png_premultiplies_semi_alpha() {
+        // Alpha droit (r=100, a=128) -> prémultiplié 0xAARRGGBB.
+        let bytes = encode_rgba_png(1, 1, &[100, 0, 0, 128]);
+        let img = decode_png(&bytes).unwrap();
+        assert_eq!((img.width, img.height), (1, 1));
+        let px = img.pixels[0];
+        assert_eq!(px >> 24, 128, "alpha préservé");
+        let pr = (100u32 * 128 + 127) / 255;
+        assert_eq!((px >> 16) & 0xFF, pr, "canal rouge prémultiplié");
+        assert_eq!(px & 0xFF, 0, "canal bleu à zéro");
+    }
+
+    #[test]
+    fn decode_png_opaque_is_identity() {
+        // Alpha plein : la prémultiplication est une identité sur RGB.
+        let bytes = encode_rgba_png(1, 1, &[11, 22, 33, 255]);
+        let img = decode_png(&bytes).unwrap();
+        assert_eq!(img.pixels[0], 0xFF0B1621, "0xAARRGGBB attendu");
+    }
+
+    #[test]
+    fn png_cache_loads_generated_coin_asset() {
+        let mut cache = PngCache::new();
+        let img = cache
+            .get_or_load("coin")
+            .expect("assets/generated/sprites/coin.png doit exister (bash scripts/build_art.sh)");
+        assert!(img.width > 0 && img.height > 0, "coin décodé");
+        // Réutilisation du même buffer sans re-décodage.
+        let again = cache.get("coin").expect("déjà chargé");
+        assert!(Arc::ptr_eq(&img, again));
+        assert!(cache.get("asset_inexistant").is_none());
     }
 }
 

@@ -26,3 +26,6 @@ tinyaudio = "2.0.0"
 fontdue = "0.9.4"
 schemars = "1"
 resvg = { version = "0.48", default-features = false }
+png = "0.17"
+base64 = "0.22"
+glam = { version = "0.34", features = ["serde"] }

@@ -1016,9 +1016,12 @@ checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
 name = "engine-core"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "fontdue",
+ "glam",
  "kvl-core",
  "kvl-runtime",
+ "png 0.17.16",
  "resvg",
  "schemars 1.2.3",
  "serde",
@@ -1027,6 +1030,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "winit",
+]
+
+[[package]]
+name = "engine-wasm"
+version = "0.1.0"
+dependencies = [
+ "engine-core",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1439,6 +1450,15 @@ dependencies = [
  "libc",
  "system-deps",
  "winapi",
+]
+
+[[package]]
+name = "glam"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc148d4ddd3930c52f9e5ae79b89805c6f07e9ff417e7b083e0348cea60a5aba"
+dependencies = [
+ "serde_core",
 ]
 
 [[package]]

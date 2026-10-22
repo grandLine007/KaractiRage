@@ -5,6 +5,7 @@ members = [
     "crates/kvl-runtime",
     "crates/kvl-cli",
     "crates/engine-core",
+    "crates/engine-wasm",
     "apps/studio/src-tauri",
 ]
 

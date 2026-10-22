@@ -87,10 +87,17 @@ class Entity(BaseModel):
     sprite_archetype: Optional[str] = None
     sprite_ascii: Optional[list[str]] = None
     sprite_palette: Optional[dict[str, str]] = None
+    sprite_asset: Optional[str] = None
+    sprite_frame: Optional[str] = None
     movement: Optional[str] = None
     has_collider: bool = False
     has_vision: bool = False
     is_flocking: bool = False
+    mesh_asset: Optional[str] = None
+    mesh_primitive: Optional[str] = None
+    position3d: Optional[list[float]] = None
+    rotation_euler_deg: Optional[list[float]] = None
+    scale3d: Optional[list[float]] = None
 
 
 class KvlAction(BaseModel):

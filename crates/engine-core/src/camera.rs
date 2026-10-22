@@ -1,3 +1,5 @@
+use glam::{Mat4, Vec3};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera2D {
     /// Position X du coin supérieur gauche de la caméra dans le monde
@@ -316,5 +318,95 @@ mod tests {
         assert_eq!(cam.shake_intensity, 0.0);
         assert_eq!(cam.shake_offset_x, 0.0);
         assert_eq!(cam.shake_offset_y, 0.0);
+    }
+}
+
+// ===== Caméra 3D (Lot 3) =====
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CameraProjection {
+    Perspective { fov_deg: f32, near: f32, far: f32 },
+    Orthographic { size: f32, near: f32, far: f32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Camera3D {
+    pub position: Vec3,
+    pub target: Vec3,
+    pub up: Vec3,
+    pub projection: CameraProjection,
+    /// Largeur/hauteur, renseigné à la frame (recalculé par le viewport).
+    pub aspect: f32,
+}
+
+impl Camera3D {
+    pub fn perspective(
+        position: Vec3,
+        target: Vec3,
+        fov_deg: f32,
+        near: f32,
+        far: f32,
+        aspect: f32,
+    ) -> Self {
+        Self {
+            position,
+            target,
+            up: Vec3::Y,
+            projection: CameraProjection::Perspective { fov_deg, near, far },
+            aspect,
+        }
+    }
+
+    pub fn view_matrix(&self) -> Mat4 {
+        glam::camera::rh::view::look_at_mat4(self.position, self.target, self.up)
+    }
+
+    /// Matrice de projection (GL clip, NDC z ∈ [-1, 1]). Utile pour les tests et un
+    /// futur backend natif ; le `RenderPacket` transporte fov/aspect/near/far (c'est le
+    /// renderer three.js qui construit sa propre projection).
+    pub fn projection_matrix(&self) -> Mat4 {
+        match self.projection {
+            CameraProjection::Perspective { fov_deg, near, far } => {
+                glam::camera::rh::proj::opengl::perspective(fov_deg.to_radians(), self.aspect, near, far)
+            }
+            CameraProjection::Orthographic { size, near, far } => {
+                let half_h = size * 0.5;
+                let half_w = half_h * self.aspect;
+                glam::camera::rh::proj::opengl::orthographic(-half_w, half_w, -half_h, half_h, near, far)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod camera3d_tests {
+    use super::*;
+    use glam::{Vec3, Vec4};
+
+    #[test]
+    fn test_look_at_rh_maps_target_to_center() {
+        let cam = Camera3D::perspective(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, 60.0, 0.1, 100.0, 1.0);
+        let view = cam.view_matrix();
+        let origin_cam = view * Vec4::new(0.0, 0.0, 0.0, 1.0);
+        assert!(origin_cam.x.abs() < 1e-5);
+        assert!(origin_cam.y.abs() < 1e-5);
+        assert!((origin_cam.z + 10.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_perspective_focal() {
+        let cam = Camera3D::perspective(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, 60.0, 0.1, 100.0, 1.0);
+        let proj = cam.projection_matrix();
+        let focal = 1.0 / (30.0f32).to_radians().tan();
+        assert!((proj.x_axis.x - focal).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_orthographic_half_extents() {
+        let mut cam = Camera3D::perspective(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, 60.0, 0.1, 100.0, 2.0);
+        cam.projection = CameraProjection::Orthographic { size: 10.0, near: 0.1, far: 100.0 };
+        let proj = cam.projection_matrix();
+        // half_w = (10/2) * aspect 2 = 10 → proj.x_axis.x = 1 / half_w = 0.1.
+        assert!((proj.x_axis.x - 0.1).abs() < 1e-5);
     }
 }

@@ -1,59 +1,142 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { HeaderBar } from './components/HeaderBar';
 import type { StudioMode } from './components/HeaderBar';
 import { GameViewport } from './components/GameViewport';
 import { EntityHierarchy } from './components/EntityHierarchy';
-import type { EntityItem } from './components/EntityHierarchy';
 import { EntityInspector } from './components/EntityInspector';
+import { StudioToolbar } from './components/StudioToolbar';
+import { SpawnPalette } from './components/SpawnPalette';
+import { SuggestionPanel } from './components/SuggestionPanel';
+import { ToastCenter, type Toast } from './components/ToastCenter';
 import { AiAssistantModal } from './components/AiAssistantModal';
 import { ProjectHubModal } from './components/ProjectHubModal';
+import { ArchetypesModal } from './components/ArchetypesModal';
 import { RecipeWizardModal } from './components/RecipeWizardModal';
 import { KvlGraphEditor } from './components/KvlGraphEditor';
+import { PxlArtWorkspace } from './components/PxlArtWorkspace';
+import { useStudioState } from './hooks/useStudioState';
 import {
-  applyArchetype,
-  toggleEditorMode,
+  launchArchetypeGame,
+  launchArchetypeGame3D,
   downloadStandaloneGame,
   applyAiPayload,
   acceptAiPatch,
   rejectAiPatch,
   setActiveTool,
   cycleBrushTile,
+  setBrushTile,
+  selectEntity,
+  updateEntityTransform,
+  duplicateSelectedEntity,
+  deleteSelectedEntity,
+  undo,
+  redo,
+  saveScene,
+  spawnEntityAtScreen,
+  setEditorMode,
+  getEngineStatus,
+  type StudioEntitySummary,
 } from './services/engineBridge';
 import { Check, X } from 'lucide-react';
-
-const INITIAL_ENTITIES: EntityItem[] = [
-  { id: '1', name: 'Héros Ninja', kind: 'player', x: 200, y: 350, health: 5, spriteArchetype: 'ninja' },
-  { id: '2', name: 'Boss Démon Titan', kind: 'boss', x: 850, y: 320, health: 120, spriteArchetype: 'boss' },
-  { id: '3', name: 'Garde Patrouilleur A*', kind: 'enemy', x: 500, y: 360, health: 15, spriteArchetype: 'drone' },
-  { id: '4', name: 'Coffre au Trésor Scellé', kind: 'item', x: 700, y: 370, spriteArchetype: 'chest' },
-  { id: '5', name: 'Clé Dorée de Donjon', kind: 'item', x: 380, y: 370, spriteArchetype: 'key' },
-  { id: '6', name: 'Zone de Lave Ardente', kind: 'hazard', x: 550, y: 384, spriteArchetype: 'spikes' },
-  { id: '7', name: 'Portail Dimensionnel', kind: 'portal', x: 1050, y: 340, spriteArchetype: 'portal' },
-  { id: '8', name: 'Sol de Pierre Principal', kind: 'platform', x: 0, y: 400, spriteArchetype: 'platform' },
-];
+import type { ProjectEntry } from './services/projectBridge';
+import { prewarm3D } from './render3d/prewarm';
 
 export function App() {
   const [currentMode, setCurrentMode] = useState<StudioMode>('play');
-  const [isHubOpen, setIsHubOpen] = useState(false);
+  // Le Hub des Projets est l'écran d'accueil : il s'affiche au lancement (le moteur
+  // boote en arrière-plan derrière l'overlay, la scène n'est pas lancée d'emblée).
+  const [isHubOpen, setIsHubOpen] = useState(true);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
-  const [selectedEntityId, setSelectedEntityId] = useState<string | null>('1');
-  const [entities, setEntities] = useState<EntityItem[]>(INITIAL_ENTITIES);
+  const [isArchetypesOpen, setIsArchetypesOpen] = useState(false);
+  const [view3d, setView3d] = useState(false);
   const [pendingAiPatch, setPendingAiPatch] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
 
   const [metrics, setMetrics] = useState({
     fps: 60,
     cpuUs: 310,
     score: 0,
-    status: 'Moteur KaractiRage Prêt • 60 FPS Déterministe'
+    status: 'Ouverture de KaractiRage Studio…'
   });
 
-  // Bascule instantanée TAB sacrée (Commandement 7)
+  // État d'édition natif (polling suspendu hors mode Studio).
+  const { state: editorState, refresh } = useStudioState(currentMode === 'edit');
+
+  const toastIdRef = useRef(0);
+  const pushToast = useCallback((message: string, kind: Toast['kind'] = 'info') => {
+    const id = ++toastIdRef.current;
+    setToasts(prev => [...prev, { id, message, kind }]);
+    window.setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4200);
+  }, []);
+  const dismissToast = useCallback((id: number) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  // Préchauffe la 3D (chunk three.js + sonde GPU) en tâche de fond : n'affecte pas
+  // l'ouverture, mais rend la première bascule 3D quasi immédiate.
+  useEffect(() => {
+    prewarm3D();
+  }, []);
+
+  // Enrichit le statut avec le temps d'init du moteur (boot non bloquant). Au
+  // montage, le boot est le plus souvent encore `booting` : on interroge jusqu'à
+  // un état terminal (ready/failed) pour ne jamais afficher « Prêt » à tort.
+  useEffect(() => {
+    let active = true;
+    let timer: number | null = null;
+
+    const poll = async () => {
+      try {
+        const s = await getEngineStatus();
+        if (!active) return;
+        if (s.state === 'ready') {
+          setMetrics(prev => ({
+            ...prev,
+            status: `Moteur KaractiRage Prêt (${s.init_ms} ms) • 60 FPS Déterministe`,
+          }));
+          return; // état terminal
+        }
+        if (s.state === 'failed') {
+          setMetrics(prev => ({
+            ...prev,
+            status: `Moteur indisponible : ${s.error ?? 'erreur inconnue'}`,
+          }));
+          return; // état terminal
+        }
+        setMetrics(prev => ({ ...prev, status: 'Préparation du moteur KaractiRage…' }));
+      } catch {
+        /* indisponible temporaire : le prochain tick retentera */
+      }
+      if (active) timer = window.setTimeout(poll, 250);
+    };
+
+    void poll();
+    return () => {
+      active = false;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, []);
+
+  const entities: StudioEntitySummary[] = editorState?.entities ?? [];
+  const selectedEntityId = editorState?.selected_id ?? null;
+  const selectedEntity: StudioEntitySummary | null =
+    entities.find(e => e.id === selectedEntityId) ?? null;
+
+  // Bascule instantanée TAB (Jeu <-> Studio), avec moteur synchronisé.
   const handleToggleTab = useCallback(() => {
     setCurrentMode(prev => {
       const next = prev === 'play' ? 'edit' : 'play';
-      void toggleEditorMode();
+      void setEditorMode(next);
       return next;
+    });
+  }, []);
+
+  const applyMode = useCallback((mode: StudioMode) => {
+    setCurrentMode(prev => {
+      if (prev === mode) return prev;
+      void setEditorMode(mode === 'play' ? 'play' : 'edit');
+      return mode;
     });
   }, []);
 
@@ -112,14 +195,15 @@ export function App() {
       // 3. Raccourcis Outils Atelier Viewport (V, B, X, T)
       if (currentMode === 'edit') {
         if (e.key === 'v' || e.key === 'V') {
-          void setActiveTool('select');
+          void setActiveTool('select').then(() => refresh());
         } else if (e.key === 'b' || e.key === 'B') {
-          void setActiveTool('brush');
+          void setActiveTool('brush').then(() => refresh());
         } else if (e.key === 'x' || e.key === 'X') {
-          void setActiveTool('eraser');
+          void setActiveTool('eraser').then(() => refresh());
         } else if (e.key === 't' || e.key === 'T') {
           void cycleBrushTile().then(tile => {
             if (tile) {
+              refresh();
               setMetrics(prev => ({ ...prev, status: `Tuile du pinceau : ${tile} (T)` }));
             }
           });
@@ -129,46 +213,114 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentMode, pendingAiPatch, handleToggleTab, handleAcceptAi, handleRejectAi]);
+  }, [currentMode, pendingAiPatch, handleToggleTab, handleAcceptAi, handleRejectAi, refresh]);
 
-  const selectedEntity = entities.find(e => e.id === selectedEntityId) || null;
+  // --- Handlers d'édition connectés au moteur natif -------------------------
 
-  const handleUpdateEntity = (updated: EntityItem) => {
-    setEntities(prev => prev.map(e => (e.id === updated.id ? updated : e)));
-  };
+  const handleSelectEntity = useCallback((id: number) => {
+    void selectEntity(id).then(() => refresh());
+  }, [refresh]);
 
-  const handleDeleteEntity = (id: string) => {
-    setEntities(prev => prev.filter(e => e.id !== id));
-    if (selectedEntityId === id) {
-      setSelectedEntityId(null);
+  const handleUpdateTransform = useCallback((id: number, x: number, y: number, w: number, h: number) => {
+    void updateEntityTransform(id, x, y, w, h, true).then(() => {
+      refresh();
+      pushToast('Position enregistrée (Ctrl+Z pour annuler).', 'success');
+    });
+  }, [refresh, pushToast]);
+
+  const handleDuplicate = useCallback((id: number) => {
+    void selectEntity(id)
+      .then(() => duplicateSelectedEntity())
+      .then(() => refresh());
+  }, [refresh]);
+
+  const handleDelete = useCallback((id: number) => {
+    void selectEntity(id)
+      .then(() => deleteSelectedEntity())
+      .then(ok => {
+        refresh();
+        pushToast(
+          ok ? 'Entité supprimée (Ctrl+Z pour annuler).' : 'Suppression refusée : joueur protégé.',
+          ok ? 'info' : 'error'
+        );
+      });
+  }, [refresh, pushToast]);
+
+  const handleTool = useCallback((tool: 'select' | 'brush' | 'eraser') => {
+    void setActiveTool(tool).then(() => refresh());
+  }, [refresh]);
+
+  const handleTile = useCallback((tileId: string) => {
+    void setBrushTile(tileId).then(() => refresh());
+  }, [refresh]);
+
+  const handleUndo = useCallback(() => { void undo().then(() => refresh()); }, [refresh]);
+  const handleRedo = useCallback(() => { void redo().then(() => refresh()); }, [refresh]);
+
+  const handleSave = useCallback(() => {
+    void saveScene().then(ok => {
+      pushToast(
+        ok ? 'Scène ECS et scripts KVL enregistrés.' : "Échec de l'enregistrement sur disque.",
+        ok ? 'success' : 'error'
+      );
+    });
+  }, [pushToast]);
+
+  const handleSpawnAtCenter = useCallback((preset: string) => {
+    void spawnEntityAtScreen(preset, 600, 400).then(() => refresh());
+  }, [refresh]);
+
+  const handleSpawnAtScreen = useCallback((preset: string, sx: number, sy: number) => {
+    void spawnEntityAtScreen(preset, sx, sy).then(() => refresh());
+  }, [refresh]);
+
+  // Lancement d'un des 5 jeux de référence (Archétypes) en 1 clic
+  const handleLaunchArchetype = async (archetypeId: string) => {
+    try {
+      const sceneName = await launchArchetypeGame(archetypeId);
+      setIsHubOpen(false);
+      setIsArchetypesOpen(false);
+      setView3d(false);
+      setCurrentMode('play');
+      setMetrics(prev => ({
+        ...prev,
+        status: `🎮 ${archetypeId.toUpperCase()} — Jeu par défaut lancé : '${sceneName}' • Prêt à jouer !`
+      }));
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
+      console.error(`[KaractiRage] Échec du lancement de l'archétype '${archetypeId}' :`, err);
+      pushToast(`Échec du lancement de l'archétype '${archetypeId}' : ${message}`, 'error');
     }
   };
 
-  const handleAddEntity = () => {
-    const newId = (entities.length + 1).toString();
-    const newEnt: EntityItem = {
-      id: newId,
-      name: `Nouvelle Entité ${newId}`,
-      kind: 'enemy',
-      x: 300,
-      y: 350,
-      health: 10,
-      spriteArchetype: 'slime'
-    };
-    setEntities(prev => [...prev, newEnt]);
-    setSelectedEntityId(newId);
+  // Lancement de la démo 3D thématique d'un archétype (scène procédurale dédiée).
+  const handleLaunchArchetype3D = async (archetypeId: string) => {
+    try {
+      await launchArchetypeGame3D(archetypeId);
+      setIsHubOpen(false);
+      setIsArchetypesOpen(false);
+      setCurrentMode('play');
+      setView3d(true);
+      setMetrics(prev => ({
+        ...prev,
+        status: `🎮 ${archetypeId.toUpperCase()} — Démo 3D lancée • Vue RenderPacket`,
+      }));
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
+      console.error(`[KaractiRage] Échec du lancement 3D de l'archétype '${archetypeId}' :`, err);
+      pushToast(`Échec du lancement 3D de l'archétype '${archetypeId}' : ${message}`, 'error');
+    }
   };
 
-  // Instanciation d'un des 5 Archétypes de Recette
-  const handleLaunchArchetype = async (archetypeId: string) => {
-    const success = await applyArchetype(archetypeId);
+  // Ouverture d'un projet/scène depuis le Hub (registre disque)
+  const handleProjectOpened = (entry: ProjectEntry, mode: 'play' | 'edit') => {
     setIsHubOpen(false);
-    setCurrentMode('play');
+    setView3d(false);
+    setCurrentMode(mode);
+    void setEditorMode(mode);
     setMetrics(prev => ({
       ...prev,
-      status: success
-        ? `Archétype '${archetypeId.toUpperCase()}' généré avec succès • Prêt à jouer !`
-        : `Échec du lancement de l'archétype '${archetypeId}'`
+      status: `Projet '${entry.title}' ouvert • Mode ${mode === 'edit' ? 'Studio' : 'Jeu'} 60 FPS`
     }));
   };
 
@@ -186,10 +338,10 @@ export function App() {
           status: `✨ Niveau IA '${parsed.title}' injecté dans le Viewport (Examinez le halo violet)`
         }));
       } else {
-        alert(`Erreur d'application du payload IA (code ${code}).`);
+        pushToast(`Erreur d'application du payload IA (code ${code}).`, 'error');
       }
     } catch (err: any) {
-      alert(`JSON de niveau invalide : ${err?.message}`);
+      pushToast(`JSON de niveau invalide : ${err?.message}`, 'error');
     }
   };
 
@@ -207,12 +359,7 @@ export function App() {
       {/* 1. Barre Supérieure */}
       <HeaderBar
         currentMode={currentMode}
-        onModeChange={mode => {
-          if (mode !== currentMode) {
-            toggleEditorMode();
-            setCurrentMode(mode);
-          }
-        }}
+        onModeChange={applyMode}
         onOpenHub={() => setIsHubOpen(true)}
         onOpenAiAssistant={() => setIsAiModalOpen(true)}
         onExportStandalone={handleExportStandalone}
@@ -249,28 +396,55 @@ export function App() {
 
       {/* 3. Espace de Travail Central Multi-Panneaux */}
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Panneau Gauche : Hiérarchie (Visible en mode Studio) */}
+        {/* Panneau Gauche : Palette + Hiérarchie (Visible en mode Studio) */}
         {currentMode === 'edit' && (
-          <EntityHierarchy
-            entities={entities}
-            selectedEntityId={selectedEntityId}
-            onSelectEntity={setSelectedEntityId}
-            onAddEntity={handleAddEntity}
-          />
+          <div className="flex flex-col w-64 h-full border-r border-[#2d1b4e]">
+            <SpawnPalette onSpawnAtCenter={handleSpawnAtCenter} />
+            <EntityHierarchy
+              entities={entities}
+              selectedEntityId={selectedEntityId}
+              onSelectEntity={handleSelectEntity}
+            />
+            <SuggestionPanel
+              entities={entities}
+              selectedEntityId={selectedEntityId}
+              onSpawn={handleSpawnAtCenter}
+              onOpenKvl={() => applyMode('kvl')}
+              onTestGame={() => applyMode('play')}
+            />
+          </div>
         )}
 
-        {/* Zone Centrale : Viewport 2D ou Éditeur Nodal KVL */}
+        {/* Zone Centrale : Viewport 2D, Éditeur Nodal KVL ou Atelier Pixel Art */}
         <main className="flex-1 flex flex-col h-full overflow-hidden relative">
           {currentMode === 'kvl' ? (
             <KvlGraphEditor />
+          ) : currentMode === 'pixel' ? (
+            <PxlArtWorkspace />
           ) : (
-            <GameViewport
-              onTelemetryUpdate={setMetrics}
-              onSelectedEntityChange={name => {
-                const found = entities.find(e => e.name === name);
-                if (found) setSelectedEntityId(found.id);
-              }}
-            />
+            <>
+              {currentMode === 'edit' && (
+                <StudioToolbar
+                  tool={editorState?.tool ?? 'select'}
+                  tile={editorState?.tile ?? 'wall'}
+                  canUndo={editorState?.can_undo ?? false}
+                  canRedo={editorState?.can_redo ?? false}
+                  onSelectTool={handleTool}
+                  onSelectTile={handleTile}
+                  onUndo={handleUndo}
+                  onRedo={handleRedo}
+                  onSave={handleSave}
+                />
+              )}
+              <GameViewport
+                onTelemetryUpdate={setMetrics}
+                onSceneChanged={refresh}
+                onSpawnAtScreen={handleSpawnAtScreen}
+                isEditMode={currentMode === 'edit'}
+                view3d={view3d}
+                onView3dChange={setView3d}
+              />
+            </>
           )}
         </main>
 
@@ -278,8 +452,9 @@ export function App() {
         {currentMode === 'edit' && (
           <EntityInspector
             selectedEntity={selectedEntity}
-            onUpdateEntity={handleUpdateEntity}
-            onDeleteEntity={handleDeleteEntity}
+            onUpdateTransform={handleUpdateTransform}
+            onDuplicate={handleDuplicate}
+            onDelete={handleDelete}
           />
         )}
       </div>
@@ -291,8 +466,8 @@ export function App() {
           <span className="font-medium text-[#cbd5e1]">{metrics.status}</span>
         </div>
         <div className="flex items-center gap-4 text-[11px] text-[#64748b]">
-          <span>Touches : [Tab] Jouer/Studio • [W] Assistant 6 Étapes • [H] Hub • [I] IA • [Espace] Saut</span>
-          <span className="text-[#a855f7] font-semibold">KaractiRage Studio v0.1.0</span>
+          <span>Touches : [Tab] Jouer/Studio • [V/B/X] Outils • [T] Tuile • [Suppr] Effacer • [Ctrl+Z/Y] Annuler/Rétablir • [Ctrl+S] Enregistrer</span>
+          <span className="text-[#a855f7] font-semibold">KaractiRage Studio v0.2.0</span>
         </div>
       </footer>
 
@@ -300,7 +475,10 @@ export function App() {
       <ProjectHubModal
         isOpen={isHubOpen}
         onClose={() => setIsHubOpen(false)}
-        onLaunchArchetype={handleLaunchArchetype}
+        onOpenArchetypes={() => {
+          setIsHubOpen(false);
+          setIsArchetypesOpen(true);
+        }}
         onOpenWizard={() => {
           setIsHubOpen(false);
           setIsWizardOpen(true);
@@ -309,6 +487,14 @@ export function App() {
           setIsHubOpen(false);
           setIsAiModalOpen(true);
         }}
+        onProjectOpened={handleProjectOpened}
+      />
+
+      <ArchetypesModal
+        isOpen={isArchetypesOpen}
+        onClose={() => setIsArchetypesOpen(false)}
+        onLaunchArchetype={handleLaunchArchetype}
+        onLaunchArchetype3D={handleLaunchArchetype3D}
       />
 
       <RecipeWizardModal
@@ -328,6 +514,9 @@ export function App() {
         onClose={() => setIsAiModalOpen(false)}
         onApplyGeneratedLevel={handleApplyGeneratedLevel}
       />
+
+      {/* 6. Notifications non bloquantes */}
+      <ToastCenter toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

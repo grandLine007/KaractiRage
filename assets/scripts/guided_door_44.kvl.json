@@ -1,0 +1,87 @@
+{
+  "id": "graph_door_porte",
+  "name": "Logique : Porte",
+  "description": "Mécanique guidée : interaction porte avec vérification des conditions.",
+  "version": 1,
+  "variables": {
+    "door_is_open": {
+      "name": "door_is_open",
+      "data_type": "Bool",
+      "initial_value": {
+        "type": "Bool",
+        "value": false
+      }
+    }
+  },
+  "nodes": {
+    "act_open_door": {
+      "id": "act_open_door",
+      "name": "Ouvrir la porte",
+      "category": "World",
+      "description": "Modifie l'état de la porte dans le monde.",
+      "kind": {
+        "Action": {
+          "action_type": "OpenDoor"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "evt_door_interact": {
+      "id": "evt_door_interact",
+      "name": "Interaction avec Porte",
+      "category": "Interactions",
+      "description": "Déclenché lors de l'appui sur la touche d'action près de la porte.",
+      "kind": {
+        "Event": {
+          "event_type": "OnDoorInteract"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    }
+  },
+  "connections": [
+    {
+      "id": "conn_door",
+      "from_node": "evt_door_interact",
+      "from_pin": "out_trigger",
+      "to_node": "act_open_door",
+      "to_pin": "in_trigger"
+    }
+  ]
+}

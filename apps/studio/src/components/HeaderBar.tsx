@@ -1,6 +1,6 @@
-import { Play, PenTool, GitFork, Bot, FolderOpen, Download, Cpu, Activity, Zap } from 'lucide-react';
+import { Play, PenTool, GitFork, Brush, Bot, FolderOpen, Download, Cpu, Activity, Zap } from 'lucide-react';
 
-export type StudioMode = 'play' | 'edit' | 'kvl';
+export type StudioMode = 'play' | 'edit' | 'kvl' | 'pixel';
 
 interface HeaderBarProps {
   currentMode: StudioMode;
@@ -78,6 +78,18 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         >
           <GitFork size={14} className={currentMode === 'kvl' ? 'text-[#34d399]' : ''} />
           LOGIQUE KVL
+        </button>
+
+        <button
+          onClick={() => onModeChange('pixel')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition ${
+            currentMode === 'pixel'
+              ? 'bg-[#3b0764] text-[#f3e8ff] border border-[#a855f7] shadow-md shadow-purple-950/40'
+              : 'text-[#94a3b8] hover:text-[#f8fafc]'
+          }`}
+        >
+          <Brush size={14} className={currentMode === 'pixel' ? 'text-[#a855f7]' : ''} />
+          PIXEL ART
         </button>
       </div>
 

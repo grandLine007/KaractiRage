@@ -341,6 +341,20 @@ pub struct EditorState {
     pub welcome_ai_provider_hitboxes: Vec<(crate::ai_client::AiProvider, i32, i32, u32, u32)>,
     pub welcome_ai_preset_hitboxes: Vec<(usize, i32, i32, u32, u32)>,
     pub welcome_bottom_ai_btn_hitbox: Option<(i32, i32, u32, u32)>,
+    /// Entrées de projet/scène découvertes sur disque (cache du Hub, onglet 1.2).
+    pub welcome_entries: Vec<crate::project_registry::ProjectEntry>,
+    /// Hitboxes des actions par ligne : (index_entrée, id_action, x, y, w, h).
+    /// id_action : 0 = dossier, 1 = dupliquer, 2 = retirer des récents, 3 = archiver.
+    pub welcome_entry_action_hitboxes: Vec<(usize, u8, i32, i32, u32, u32)>,
+    /// Hitbox + état du champ « Nom du projet » (onglet 1.1).
+    pub welcome_create_name_hitbox: Option<(i32, i32, u32, u32)>,
+    pub welcome_create_action_hitbox: Option<(i32, i32, u32, u32)>,
+    pub welcome_project_name: String,
+    pub welcome_name_active: bool,
+    /// Page courante de la liste (pagination de l'onglet 1.2).
+    pub welcome_page: usize,
+    pub welcome_page_prev_hitbox: Option<(i32, i32, u32, u32)>,
+    pub welcome_page_next_hitbox: Option<(i32, i32, u32, u32)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -666,6 +680,15 @@ impl GameRecipeWizardState {
     }
 
     pub fn apply_archetype(&mut self, key: &'static str) {
+        // Normalise les alias du Hub (rpg_dungeon, puzzle_sokoban, boss_arena, shootemup…)
+        // vers les clés canoniques de l'Assistant.
+        let key = match key {
+            "rpg" | "rpg_dungeon" | "dungeon" => "dungeon",
+            "shmup" | "shootemup" => "shootemup",
+            "puzzle" | "puzzle_sokoban" => "sokoban",
+            "boss_arena" | "titan" => "boss",
+            other => other,
+        };
         self.selected_archetype = Some(key);
         match key {
             "dungeon" => {
@@ -914,6 +937,15 @@ impl EditorState {
             welcome_ai_provider_hitboxes: Vec::new(),
             welcome_ai_preset_hitboxes: Vec::new(),
             welcome_bottom_ai_btn_hitbox: None,
+            welcome_entries: Vec::new(),
+            welcome_entry_action_hitboxes: Vec::new(),
+            welcome_create_name_hitbox: None,
+            welcome_create_action_hitbox: None,
+            welcome_project_name: String::new(),
+            welcome_name_active: false,
+            welcome_page: 0,
+            welcome_page_prev_hitbox: None,
+            welcome_page_next_hitbox: None,
         }
     }
 
@@ -1060,6 +1092,27 @@ impl EditorState {
 
     pub fn is_welcome_recipe_clicked(&self, mx: f32, my: f32) -> bool {
         self.welcome_recipe_btn_hitbox.map_or(false, |(x, y, w, h)| {
+            mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32
+        })
+    }
+
+    pub fn clicked_welcome_entry_action(&self, mx: f32, my: f32) -> Option<(usize, u8)> {
+        for &(idx, action, x, y, w, h) in &self.welcome_entry_action_hitboxes {
+            if mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32 {
+                return Some((idx, action));
+            }
+        }
+        None
+    }
+
+    pub fn is_welcome_create_name_clicked(&self, mx: f32, my: f32) -> bool {
+        self.welcome_create_name_hitbox.map_or(false, |(x, y, w, h)| {
+            mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32
+        })
+    }
+
+    pub fn is_welcome_create_action_clicked(&self, mx: f32, my: f32) -> bool {
+        self.welcome_create_action_hitbox.map_or(false, |(x, y, w, h)| {
             mx >= x as f32 && mx <= (x + w as i32) as f32 && my >= y as f32 && my <= (y + h as i32) as f32
         })
     }

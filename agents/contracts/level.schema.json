@@ -34,6 +34,22 @@
         "kind": {
           "type": "string"
         },
+        "mesh_asset": {
+          "default": null,
+          "description": "Asset de mesh 3D référencé dans le manifest (pillar, rock, platform, …).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mesh_primitive": {
+          "default": null,
+          "description": "Primitive 3D directe : \"cube\", \"sphere\", \"plane\", \"capsule\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "movement": {
           "default": null,
           "type": [
@@ -54,6 +70,48 @@
           "format": "float",
           "type": "number"
         },
+        "position3d": {
+          "default": null,
+          "description": "Position 3D [x, y, z] (sinon dérivée de offset_x/offset_y).",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "rotation_euler_deg": {
+          "default": null,
+          "description": "Rotation d'Euler en degrés [x, y, z].",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "scale3d": {
+          "default": null,
+          "description": "Échelle [sx, sy, sz].",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "sprite_archetype": {
           "default": null,
           "type": [
@@ -68,6 +126,20 @@
           },
           "type": [
             "array",
+            "null"
+          ]
+        },
+        "sprite_asset": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sprite_frame": {
+          "default": null,
+          "type": [
+            "string",
             "null"
           ]
         },
