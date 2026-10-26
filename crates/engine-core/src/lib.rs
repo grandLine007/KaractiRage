@@ -18,6 +18,7 @@ pub mod scene;
 pub mod sheet;
 pub mod spatial;
 pub mod telemetry;
+pub mod trace;
 pub mod vector;
 pub mod exporter;
 pub mod recipe;

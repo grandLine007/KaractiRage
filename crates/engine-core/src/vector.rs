@@ -241,6 +241,11 @@ fn load_svg_source(id: &str) -> Result<String, SvgError> {
     if let Ok(s) = std::fs::read_to_string(format!("../../{rel}")) {
         return Ok(s);
     }
+    // Repli sur la racine du dépôt (indépendant du cwd).
+    let abs = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+    if let Ok(s) = std::fs::read_to_string(format!("{abs}/{rel}")) {
+        return Ok(s);
+    }
     // Repli embarqué (assets de démonstration compilés dans le binaire).
     let embedded = match id {
         "decor_torch" => Some(include_str!("../../../assets/sprites/decor_torch.svg")),

@@ -1,6 +1,6 @@
-import { Play, PenTool, GitFork, Brush, Bot, FolderOpen, Download, Cpu, Activity, Zap } from 'lucide-react';
+import { Play, PenTool, GitFork, Brush, Bot, FolderOpen, Download, Cpu, Activity, Zap, Wand2 } from 'lucide-react';
 
-export type StudioMode = 'play' | 'edit' | 'kvl' | 'pixel';
+export type StudioMode = 'play' | 'edit' | 'kvl' | 'pixel' | 'vector';
 
 interface HeaderBarProps {
   currentMode: StudioMode;
@@ -90,6 +90,18 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         >
           <Brush size={14} className={currentMode === 'pixel' ? 'text-[#a855f7]' : ''} />
           PIXEL ART
+        </button>
+
+        <button
+          onClick={() => onModeChange('vector')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition ${
+            currentMode === 'vector'
+              ? 'bg-[#3b0764] text-[#f3e8ff] border border-[#a855f7] shadow-md shadow-purple-950/40'
+              : 'text-[#94a3b8] hover:text-[#f8fafc]'
+          }`}
+        >
+          <Wand2 size={14} className={currentMode === 'vector' ? 'text-[#38bdf8]' : ''} />
+          VECTORISATION
         </button>
       </div>
 

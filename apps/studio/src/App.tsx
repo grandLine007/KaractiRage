@@ -14,6 +14,7 @@ import { ArchetypesModal } from './components/ArchetypesModal';
 import { RecipeWizardModal } from './components/RecipeWizardModal';
 import { KvlGraphEditor } from './components/KvlGraphEditor';
 import { PxlArtWorkspace } from './components/PxlArtWorkspace';
+import { VectorWorkspace } from './components/VectorWorkspace';
 import { useStudioState } from './hooks/useStudioState';
 import {
   launchArchetypeGame,
@@ -421,6 +422,8 @@ export function App() {
             <KvlGraphEditor />
           ) : currentMode === 'pixel' ? (
             <PxlArtWorkspace />
+          ) : currentMode === 'vector' ? (
+            <VectorWorkspace />
           ) : (
             <>
               {currentMode === 'edit' && (

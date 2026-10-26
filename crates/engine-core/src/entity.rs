@@ -188,6 +188,18 @@ impl Renderable2D {
         }
     }
 
+    /// Sprite vectoriel SVG référencé par identifiant d'asset (résolu à l'import).
+    pub fn svg_ref(asset: impl Into<String>, z_index: i32) -> Self {
+        Self {
+            shape: ShapeKind::SvgRef { asset: asset.into() },
+            color: 0x00FFFFFF,
+            outline_color: None,
+            outline_width: 0,
+            z_index,
+            visible: true,
+        }
+    }
+
     /// Construit un sprite pixel-art à partir d'une grille ASCII et d'une palette de couleurs (0x00000000 = transparent)
     pub fn from_ascii_grid(rows: &[&str], palette: &std::collections::HashMap<char, u32>, z_index: i32) -> Self {
         let height = rows.len() as u32;

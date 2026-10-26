@@ -1397,6 +1397,147 @@ impl NativeEngine {
         crate::sheet::read_sheet_source(id).map(|(png, _json)| png)
     }
 
+    // --- Import d'images & vectorisation --------------------------------------
+
+    fn repo_root(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn valid_id(&self, id: &str) -> Result<(), String> {
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return Err("Identifiant d'asset invalide (lettres, chiffres, _ et - uniquement).".into());
+        }
+        Ok(())
+    }
+
+    /// Importe un PNG (base64) comme sprite pixel-art : écrit
+    /// `assets/generated/sprites/<id>.png` et le rend disponible au spawn.
+    pub fn import_raster_png(&mut self, id: &str, png_base64: &str) -> Result<(u32, u32), String> {
+        use base64::Engine as _;
+        self.valid_id(id)?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(png_base64.trim())
+            .map_err(|e| format!("base64 invalide : {e}"))?;
+        let img = crate::vector::decode_png(&bytes).map_err(|e| e.to_string())?;
+        if img.width > 2048 || img.height > 2048 {
+            return Err("Image trop grande (max 2048×2048)".into());
+        }
+        let path = self.repo_root().join("assets/generated/sprites").join(format!("{id}.png"));
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        let _ = self.game.sprite_cache.get_or_load(id);
+        Ok((img.width, img.height))
+    }
+
+    /// Importe un SVG (texte) : écrit `assets/sprites/<id>.svg` et valide la rastérisation.
+    pub fn import_svg(&mut self, id: &str, svg_text: &str) -> Result<(u32, u32), String> {
+        self.valid_id(id)?;
+        let img = crate::vector::rasterize_svg(svg_text, None).map_err(|e| e.to_string())?;
+        let path = self.repo_root().join("assets/sprites").join(format!("{id}.svg"));
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&path, svg_text).map_err(|e| e.to_string())?;
+        Ok((img.width, img.height))
+    }
+    /// Vectorise un PNG (base64) et écrit le SVG (`assets/sprites/<id>.svg`) ainsi
+    /// que le modèle éditable (`assets/vectors/<id>.vec.json`). Retourne le modèle JSON.
+    pub fn vectorize_raster_asset(&self, id: &str, png_base64: &str, opts_json: &str) -> Result<String, String> {
+        use base64::Engine as _;
+        self.valid_id(id)?;
+        let opts: crate::trace::TraceOptions = serde_json::from_str(opts_json).map_err(|e| e.to_string())?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(png_base64.trim())
+            .map_err(|e| format!("base64 invalide : {e}"))?;
+        let img = crate::vector::decode_png(&bytes).map_err(|e| e.to_string())?;
+        let model = crate::trace::vectorize_raster(&img, &opts)?;
+        let svg = model.to_svg();
+        let svg_path = self.repo_root().join("assets/sprites").join(format!("{id}.svg"));
+        let model_path = self.repo_root().join("assets/vectors").join(format!("{id}.vec.json"));
+        if let Some(p) = svg_path.parent() {
+            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+        }
+        if let Some(p) = model_path.parent() {
+            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&svg_path, &svg).map_err(|e| e.to_string())?;
+        std::fs::write(&model_path, serde_json::to_string_pretty(&model).unwrap()).map_err(|e| e.to_string())?;
+        serde_json::to_string(&model).map_err(|e| e.to_string())
+    }
+
+    /// Liste les vecteurs édités (`assets/vectors/*.vec.json`) sous forme JSON `[{ id, file }]`.
+    pub fn list_vector_assets_json(&self) -> String {
+        let dir = self.repo_root().join("assets/vectors");
+        let mut seen = std::collections::BTreeMap::<String, serde_json::Value>::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                    continue;
+                }
+                let Some(id) = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.strip_suffix(".vec")) else {
+                    continue;
+                };
+                seen.entry(id.to_string()).or_insert_with(|| {
+                    serde_json::json!({ "id": id, "file": path.display().to_string() })
+                });
+            }
+        }
+        serde_json::Value::Array(seen.into_values().collect()).to_string()
+    }
+
+    /// Charge le modèle éditable d'un vecteur (`assets/vectors/<id>.vec.json`).
+    pub fn vector_load_json(&self, id: &str) -> Result<String, String> {
+        self.valid_id(id)?;
+        let path = self.repo_root().join("assets/vectors").join(format!("{id}.vec.json"));
+        std::fs::read_to_string(&path).map_err(|e| format!("Vecteur introuvable : {e}"))
+    }
+
+    /// Enregistre un modèle éditable : réécrit `.vec.json` + le SVG correspondant.
+    pub fn vector_save(&self, id: &str, model_json: &str) -> Result<String, String> {
+        self.valid_id(id)?;
+        let model: crate::trace::VectorModel = serde_json::from_str(model_json).map_err(|e| e.to_string())?;
+        let svg = model.to_svg();
+        let svg_path = self.repo_root().join("assets/sprites").join(format!("{id}.svg"));
+        let model_path = self.repo_root().join("assets/vectors").join(format!("{id}.vec.json"));
+        std::fs::write(&svg_path, &svg).map_err(|e| e.to_string())?;
+        std::fs::write(&model_path, model_json).map_err(|e| e.to_string())?;
+        Ok(svg)
+    }
+
+    /// Instancie une entité `SvgRef` pour un vecteur identifié (rastérisé à l'import).
+    pub fn spawn_vector_asset(&mut self, id: &str) -> Result<usize, String> {
+        let mut svg_cache = crate::vector::SvgCache::new();
+        let loaded = svg_cache.get_or_load(id).map_err(|e| e.to_string())?;
+        let (w, h) = (loaded.width as f32, loaded.height as f32);
+        let next_id = self.game.entities.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+        let mut e = Entity::new(
+            next_id,
+            format!("Vecteur_{id}"),
+            "sprite",
+            Transform2D::new(0.0, 0.0, w, h),
+        );
+        e.renderable = Some(crate::entity::Renderable2D::svg_ref(id, 5));
+        e.vector_sprite = Some(crate::entity::VectorSprite {
+            asset: id.to_string(),
+            image: loaded.image.clone(),
+            rig: loaded.rig.clone(),
+            clip: loaded
+                .rig
+                .as_ref()
+                .and_then(|r| r.clips.first())
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "idle".to_string()),
+            time: 0.0,
+            speed: 1.0,
+            playing: true,
+        });
+        self.game.entities.push(e);
+        Ok(next_id)
+    }
+
 
     /// Instancie une entité selon un préfabriqué (coin, potion, key, chest, door,
     /// platform, wall, spikes, boss, crate, plate).

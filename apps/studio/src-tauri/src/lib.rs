@@ -657,6 +657,41 @@ fn engine_sheet_png(id: String, engine: tauri::State<'_, SharedEngine>) -> tauri
 }
 
 #[tauri::command]
+fn engine_import_raster(id: String, png_base64: String, engine: tauri::State<'_, SharedEngine>) -> Result<(u32, u32), String> {
+    engine.lock().unwrap().import_raster_png(&id, &png_base64)
+}
+
+#[tauri::command]
+fn engine_import_svg(id: String, svg_text: String, engine: tauri::State<'_, SharedEngine>) -> Result<(u32, u32), String> {
+    engine.lock().unwrap().import_svg(&id, &svg_text)
+}
+
+#[tauri::command]
+fn engine_vectorize_raster(id: String, png_base64: String, opts_json: String, engine: tauri::State<'_, SharedEngine>) -> Result<String, String> {
+    engine.lock().unwrap().vectorize_raster_asset(&id, &png_base64, &opts_json)
+}
+
+#[tauri::command]
+fn engine_list_vector_assets(engine: tauri::State<'_, SharedEngine>) -> String {
+    engine.lock().unwrap().list_vector_assets_json()
+}
+
+#[tauri::command]
+fn engine_vector_load(id: String, engine: tauri::State<'_, SharedEngine>) -> Result<String, String> {
+    engine.lock().unwrap().vector_load_json(&id)
+}
+
+#[tauri::command]
+fn engine_vector_save(id: String, model_json: String, engine: tauri::State<'_, SharedEngine>) -> Result<String, String> {
+    engine.lock().unwrap().vector_save(&id, &model_json)
+}
+
+#[tauri::command]
+fn engine_vector_spawn(id: String, engine: tauri::State<'_, SharedEngine>) -> Result<usize, String> {
+    engine.lock().unwrap().spawn_vector_asset(&id)
+}
+
+#[tauri::command]
 fn engine_get_kvl_graphs(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().get_kvl_graphs_json()
 }
@@ -1095,6 +1130,13 @@ pub fn run() {
             engine_list_anim_assets,
             engine_list_sheet_assets,
             engine_sheet_png,
+            engine_import_raster,
+            engine_import_svg,
+            engine_vectorize_raster,
+            engine_list_vector_assets,
+            engine_vector_load,
+            engine_vector_save,
+            engine_vector_spawn,
             pxl_available,
             pxl_build,
             pxl_serve_start,
