@@ -77,7 +77,7 @@ impl EngineState {
     /// Attend la fin du boot puis expose le moteur (même API que `Mutex::lock`).
     pub fn lock(&self) -> Result<EngineGuard<'_>, EngineLockError> {
         let mut guard = self.engine.lock().unwrap_or_else(|e| e.into_inner());
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while guard.is_none() {
             if let Some(err) = self.error.lock().unwrap().as_ref() {
                 return Err(err.clone());
@@ -496,6 +496,22 @@ fn engine_cycle_brush_tile(engine: tauri::State<'_, SharedEngine>) -> String {
 #[tauri::command]
 fn engine_get_active_brush_tile(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().get_active_brush_tile()
+}
+
+#[tauri::command]
+fn engine_kvl_add_node(
+    path: String,
+    type_id: String,
+    x: f32,
+    y: f32,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    engine.lock().unwrap().add_kvl_node(&path, &type_id, x, y)
+}
+
+#[tauri::command]
+fn engine_plugin_catalog(engine: tauri::State<'_, SharedEngine>) -> String {
+    engine.lock().unwrap().plugin_catalog()
 }
 
 #[tauri::command]
@@ -1102,6 +1118,8 @@ pub fn run() {
             engine_get_active_tool,
             engine_cycle_brush_tile,
             engine_get_active_brush_tile,
+            engine_plugin_catalog,
+            engine_kvl_add_node,
             engine_export_standalone_html,
             engine_move_player_to,
             engine_get_player_pos,
