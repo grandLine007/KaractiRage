@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Coins, FlaskConical, KeyRound, Package, DoorOpen, Square, TriangleAlert, Box, CircleDot, Skull, BrickWall, RefreshCw } from 'lucide-react';
+import { Coins, FlaskConical, KeyRound, Package, DoorOpen, Square, TriangleAlert, Box, CircleDot, Skull, BrickWall, RefreshCw, Boxes } from 'lucide-react';
 import {
   listSpriteAssets,
   listAnimAssets,
   listSheetAssets,
+  listMeshAssets,
   getSpritePngUrl,
   getSheetPngUrl,
   type SpriteAsset,
   type AnimAsset,
   type SheetAsset,
+  type MeshAssetSummary,
 } from '../services/engineBridge';
 
 interface SpawnPreset {
@@ -37,24 +39,27 @@ export const SPAWN_PRESET_IDS = PRESETS.map(p => p.id);
 
 interface SpawnPaletteProps {
   onSpawnAtCenter: (preset: string) => void;
+  onSpawn3d: (preset: string) => void;
 }
 
 /**
  * Palette d'ajout rapide : clic = placement au centre du viewport,
  * glisser-déposer = placement à la position exacte du curseur.
  */
-export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter }) => {
-  const [tab, setTab] = useState<'objets' | 'sprites' | 'anims' | 'atlas'>('objets');
+export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onSpawn3d }) => {
+  const [tab, setTab] = useState<'objets' | 'sprites' | 'anims' | 'atlas' | 'mesh'>('objets');
   const [sprites, setSprites] = useState<SpriteAsset[]>([]);
   const [anims, setAnims] = useState<AnimAsset[]>([]);
   const [sheets, setSheets] = useState<SheetAsset[]>([]);
+  const [meshes, setMeshes] = useState<MeshAssetSummary[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async () => {
-    const [s, a, sh] = await Promise.all([listSpriteAssets(), listAnimAssets(), listSheetAssets()]);
+    const [s, a, sh, me] = await Promise.all([listSpriteAssets(), listAnimAssets(), listSheetAssets(), listMeshAssets()]);
     setSprites(s);
     setAnims(a);
     setSheets(sh);
+    setMeshes(me);
     for (const it of s) {
       getSpritePngUrl(it.id).then(u => setThumbnails(prev => ({ ...prev, [it.id]: u }))).catch(() => {});
     }
@@ -75,11 +80,12 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter }) =
     e.dataTransfer.effectAllowed = 'copy';
   };
 
-  const TABS: { id: 'objets' | 'sprites' | 'anims' | 'atlas'; label: string }[] = [
+  const TABS: { id: 'objets' | 'sprites' | 'anims' | 'atlas' | 'mesh'; label: string }[] = [
     { id: 'objets', label: 'Objets' },
     { id: 'sprites', label: 'Sprites' },
     { id: 'anims', label: 'Anims' },
     { id: 'atlas', label: 'Atlas' },
+    { id: 'mesh', label: 'Mesh 3D' },
   ];
 
   return (
@@ -255,6 +261,32 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter }) =
                 </div>
               </div>
             ))
+          )}
+        </div>
+      )}
+
+      {tab === 'mesh' && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between px-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#38bdf8]">Meshes 3D</span>
+            <button onClick={() => void refresh()} title="Recharger" className="text-[#64748b] hover:text-[#f8fafc] transition"><RefreshCw size={12} /></button>
+          </div>
+          {meshes.length === 0 ? (
+            <span className="text-[10px] text-[#64748b] px-1">Aucun mesh.</span>
+          ) : (
+            <div className="grid grid-cols-3 gap-1.5">
+              {meshes.map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => onSpawn3d(m.id)}
+                  title={`${m.id} — ${m.parts} partie(s)`}
+                  className="flex flex-col items-center gap-1 p-1.5 bg-[#150d27] hover:bg-[#1e1338] border border-[#2d1b4e] hover:border-[#38bdf8] rounded-lg transition group"
+                >
+                  <Boxes size={16} className="text-[#38bdf8]" />
+                  <span className="text-[9px] font-semibold text-[#cbd5e1] group-hover:text-[#f8fafc] truncate max-w-full">{m.id}</span>
+                </button>
+              ))}
+            </div>
           )}
         </div>
       )}

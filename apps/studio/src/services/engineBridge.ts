@@ -329,6 +329,11 @@ export async function listMeshAssets(): Promise<MeshAssetSummary[]> {
   }
 }
 
+/** Instancie un preset 3D (primitive ou asset du manifest) à une position. */
+export async function spawn3dPreset(preset: string, x: number, y: number, z: number): Promise<number> {
+  return await invoke<number>('engine_spawn_3d_preset', { preset, x, y, z });
+}
+
 /** Octets PNG bruts d'un sprite (miniature). */
 export async function getSpritePngBytes(id: string): Promise<ArrayBuffer> {
   return await invoke<ArrayBuffer>('engine_sprite_png', { id });

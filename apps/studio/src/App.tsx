@@ -34,6 +34,7 @@ import {
   redo,
   saveScene,
   spawnEntityAtScreen,
+  spawn3dPreset,
   setEditorMode,
   getEngineStatus,
   type StudioEntitySummary,
@@ -271,6 +272,13 @@ export function App() {
     void spawnEntityAtScreen(preset, 600, 400).then(() => refresh());
   }, [refresh]);
 
+  const handleSpawn3d = useCallback((preset: string) => {
+    void spawn3dPreset(preset, 0, 1, 0).then(() => {
+      refresh();
+      setView3d(true);
+    });
+  }, [refresh]);
+
   const handleSpawnAtScreen = useCallback((preset: string, sx: number, sy: number) => {
     void spawnEntityAtScreen(preset, sx, sy).then(() => refresh());
   }, [refresh]);
@@ -400,7 +408,7 @@ export function App() {
         {/* Panneau Gauche : Palette + Hiérarchie (Visible en mode Studio) */}
         {currentMode === 'edit' && (
           <div className="flex flex-col w-64 h-full border-r border-[#2d1b4e]">
-            <SpawnPalette onSpawnAtCenter={handleSpawnAtCenter} />
+            <SpawnPalette onSpawnAtCenter={handleSpawnAtCenter} onSpawn3d={handleSpawn3d} />
             <EntityHierarchy
               entities={entities}
               selectedEntityId={selectedEntityId}

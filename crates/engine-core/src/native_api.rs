@@ -319,12 +319,23 @@ impl NativeEngine {
                 Vec3::new(40.0, 40.0, 1.0),
                 Vec3::new(-90.0, 0.0, 0.0),
             ),
-            _ => (
-                MeshRef::Cube,
-                MaterialRef::Solid { color: 0xFF38BDF8, roughness: 0.4, metalness: 0.1 },
-                Vec3::splat(0.9),
-                Vec3::ZERO,
-            ),
+            _ => {
+                if crate::mesh_assets::MeshManifest::builtin().resolve(preset).is_some() {
+                    (
+                        MeshRef::Asset { id: preset.to_string(), node: None },
+                        MaterialRef::Solid { color: 0xFFFFFFFF, roughness: 0.4, metalness: 0.0 },
+                        Vec3::ONE,
+                        Vec3::ZERO,
+                    )
+                } else {
+                    (
+                        MeshRef::Cube,
+                        MaterialRef::Solid { color: 0xFF38BDF8, roughness: 0.4, metalness: 0.1 },
+                        Vec3::splat(0.9),
+                        Vec3::ZERO,
+                    )
+                }
+            }
         };
         self.spawn_3d_entity(mesh, material, Vec3::new(x, y, z), scale, rotation)
     }
