@@ -14,6 +14,32 @@
     }
   },
   "nodes": {
+    "evt_door_interact": {
+      "id": "evt_door_interact",
+      "name": "Interaction avec Porte",
+      "category": "Interactions",
+      "description": "Déclenché lors de l'appui sur la touche d'action près de la porte.",
+      "kind": {
+        "Event": {
+          "event_type": "OnDoorInteract"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
     "act_open_door": {
       "id": "act_open_door",
       "name": "Ouvrir la porte",
@@ -33,32 +59,6 @@
           "default_value": null
         }
       ],
-      "outputs": [
-        {
-          "id": "out_trigger",
-          "name": "Exécution",
-          "direction": "Output",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "ui": {
-        "position_x": 0.0,
-        "position_y": 0.0,
-        "color_tag": null
-      }
-    },
-    "evt_door_interact": {
-      "id": "evt_door_interact",
-      "name": "Interaction avec Porte",
-      "category": "Interactions",
-      "description": "Déclenché lors de l'appui sur la touche d'action près de la porte.",
-      "kind": {
-        "Event": {
-          "event_type": "OnDoorInteract"
-        }
-      },
-      "inputs": [],
       "outputs": [
         {
           "id": "out_trigger",

@@ -247,6 +247,8 @@ pub struct GameState {
     pub sheet_cache: crate::sheet::SheetCache,
     /// État d'avancement des animations par frames, indexé par id d'entité.
     pub anim_states: HashMap<usize, crate::sheet::AnimState>,
+    /// Hôte de plugins : catalogue de nœuds, handlers et packs de contenu.
+    pub plugins: crate::plugin::PluginHost,
 }
 
 impl GameState {
@@ -474,7 +476,7 @@ impl GameState {
         if let ItemUseResult::KeyActivated { ref item_id } = res {
             self.kvl_context.set_var(format!("used_key_{}", item_id), Value::Bool(true));
             for graph in self.kvl_graphs.values() {
-                let _ = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnItemUse");
+                let _ = Interpreter::trigger_event_with(graph, &mut self.kvl_context, "OnItemUse", self.plugins.handlers());
             }
         }
 
@@ -1070,6 +1072,14 @@ impl GameState {
             entities.push(Entity::spawn_item_pickup(next_id + 1, 280.0, 320.0, Item::energy_crystal("crystal_01", "Cristal Bleu"), 1));
         }
 
+        // Chargement des packs de contenu (plugins/) : aucune erreur n'est bloquante,
+        // les diagnostics sont exposés au Studio via le catalogue.
+        let mut plugins = crate::plugin::PluginHost::with_builtins();
+        let plugin_report = plugins.load_workspace();
+        for issue in &plugin_report.issues {
+            tracing::warn!(plugin = %issue.plugin, "plugin : {}", issue.message);
+        }
+
         let mut state = Self {
             scene_path: path.to_string(),
             scene_name: scene_data.name,
@@ -1107,6 +1117,7 @@ impl GameState {
             sprite_cache,
             sheet_cache,
             anim_states,
+            plugins,
         };
         state.rebuild_static_spatial_grid();
         Ok(state)
@@ -3107,7 +3118,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
 
                     // Déclencher l'événement KVL OnDialogueChoice sur tous les graphes chargés
                     for graph in self.kvl_graphs.values() {
-                        if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnDialogueChoice") {
+                        if let Ok(steps) = Interpreter::trigger_event_with(graph, &mut self.kvl_context, "OnDialogueChoice", self.plugins.handlers()) {
                             kvl_steps_this_frame += steps;
                         }
                     }
@@ -3119,7 +3130,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                     self.status_message = "Discussion terminée.".into();
 
                     for graph in self.kvl_graphs.values() {
-                        if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnDialogueClose") {
+                        if let Ok(steps) = Interpreter::trigger_event_with(graph, &mut self.kvl_context, "OnDialogueClose", self.plugins.handlers()) {
                             kvl_steps_this_frame += steps;
                         }
                     }
@@ -4418,7 +4429,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                             if let Some(ref script) = self.entities[target_idx].script.clone() {
                                 if let Some(ref evt) = script.on_seen_event {
                                     if let Some(graph) = self.kvl_graphs.get(&script.script_path) {
-                                        let _ = Interpreter::trigger_event(graph, &mut self.kvl_context, evt);
+                                        let _ = Interpreter::trigger_event_with(graph, &mut self.kvl_context, evt, self.plugins.handlers());
                                     }
                                 }
                             }
@@ -4435,7 +4446,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                             if let Some(ref script) = self.entities[target_idx].script.clone() {
                                 if let Some(ref evt) = script.on_seen_event {
                                     if let Some(graph) = self.kvl_graphs.get(&script.script_path) {
-                                        let _ = Interpreter::trigger_event(graph, &mut self.kvl_context, evt);
+                                        let _ = Interpreter::trigger_event_with(graph, &mut self.kvl_context, evt, self.plugins.handlers());
                                     }
                                 }
                             }
@@ -4449,7 +4460,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                             self.status_message = "TRIOMPHE TOTAL ! Le Titan KVL-MK3 a été terrassé ! Victoire !".into();
                             if let Some(ref script) = self.entities[target_idx].script.clone() {
                                 if let Some(graph) = self.kvl_graphs.get(&script.script_path) {
-                                    let _ = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnBossDefeated");
+                                    let _ = Interpreter::trigger_event_with(graph, &mut self.kvl_context, "OnBossDefeated", self.plugins.handlers());
                                 }
                             }
                         } else {
@@ -5243,7 +5254,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                         self.kvl_context.set_var("last_picked_item", Value::String(pickup.item.id.clone()));
 
                         for graph in self.kvl_graphs.values() {
-                            if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnItemPickup") {
+                            if let Ok(steps) = Interpreter::trigger_event_with(graph, &mut self.kvl_context, "OnItemPickup", self.plugins.handlers()) {
                                 kvl_steps_this_frame += steps;
                             }
                         }
@@ -5333,7 +5344,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                 if let Some(ref script_comp) = script_opt {
                     if let Some(ref evt) = script_comp.on_overlap_event {
                         if let Some(graph) = self.kvl_graphs.get(&script_comp.script_path) {
-                            if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, evt) {
+                            if let Ok(steps) = Interpreter::trigger_event_with(graph, &mut self.kvl_context, evt, self.plugins.handlers()) {
                                 kvl_steps_this_frame += steps;
                             }
                         }
@@ -5466,7 +5477,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                                 self.kvl_context.set_var("access_denied", Value::Bool(false));
 
                                 if let Some(graph) = self.kvl_graphs.get(&script_comp.script_path) {
-                                    if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, interact_evt) {
+                                    if let Ok(steps) = Interpreter::trigger_event_with(graph, &mut self.kvl_context, interact_evt, self.plugins.handlers()) {
                                         kvl_steps_this_frame += steps;
                                     }
                                 }
@@ -5560,7 +5571,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                                 self.status_message = format!("Discussion engagée avec {} (ESPACE / E : passer)", dlg_comp.speaker);
 
                                 for graph in self.kvl_graphs.values() {
-                                    if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, "OnDialogueStart") {
+                                    if let Ok(steps) = Interpreter::trigger_event_with(graph, &mut self.kvl_context, "OnDialogueStart", self.plugins.handlers()) {
                                         kvl_steps_this_frame += steps;
                                     }
                                 }
@@ -5743,7 +5754,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                                 if let Some(ref script_comp) = ent.script {
                                     if let Some(ref seen_evt) = script_comp.on_seen_event {
                                         if let Some(graph) = self.kvl_graphs.get(&script_comp.script_path) {
-                                            if let Ok(steps) = Interpreter::trigger_event(graph, &mut self.kvl_context, seen_evt) {
+                                            if let Ok(steps) = Interpreter::trigger_event_with(graph, &mut self.kvl_context, seen_evt, self.plugins.handlers()) {
                                                 kvl_steps_this_frame += steps;
                                             }
                                         }
@@ -5819,9 +5830,28 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         }
         self.camera.update(dt);
 
+        // Les actions KVL `PlaySound` déposent une demande dans le contexte ;
+        // elle est consommée ici, une seule fois par frame, après tous les systèmes.
+        self.drain_sound_request();
+
         // Le temps complet de frame (update + render + transport) est mesuré côté
         // `NativeEngine::render_frame` puis injecté via `finish_frame_telemetry`.
         self.last_kvl_steps = kvl_steps_this_frame;
+    }
+
+    /// Joue l'effet sonore demandé par KVL (`PlaySound:identifiant`), puis efface la
+    /// demande. Une clé inconnue est ignorée silencieusement (compatibilité ascendante).
+    fn drain_sound_request(&mut self) {
+        let requested = match self.kvl_context.get_var("sound_request") {
+            Some(Value::String(name)) => name.clone(),
+            _ => return,
+        };
+        self.kvl_context
+            .set_var("sound_request", Value::String(String::new()));
+
+        if let Some(sound) = SoundType::from_key(&requested) {
+            self.audio.play(sound);
+        }
     }
 
     /// Enregistre la télémétrie d'une frame complète et déclenche l'adaptation

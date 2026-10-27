@@ -1,0 +1,16 @@
+{
+  "id": "karacti.pack.platformer",
+  "name": "Pack Plateforme — bonus de pièce",
+  "version": "0.1.0",
+  "api": 1,
+  "kind": "content",
+  "description": "Pack de contenu de référence : un graphe KVL qui crédite le score puis donne deux pièces à l'inventaire. Aucun code, uniquement des données validées par le catalogue de nœuds.",
+  "capabilities": ["content-read"],
+  "deterministic": true,
+  "budget_us": 0,
+  "dependencies": [],
+  "enabled": true,
+  "content": {
+    "graphs": ["graphs/bonus_coin.kvl.json"]
+  }
+}

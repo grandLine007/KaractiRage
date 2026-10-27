@@ -1026,6 +1026,7 @@ dependencies = [
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "thiserror 1.0.69",
  "tinyaudio",
  "tracing",
  "tracing-subscriber",

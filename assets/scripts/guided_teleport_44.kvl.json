@@ -5,32 +5,6 @@
   "version": 1,
   "variables": {},
   "nodes": {
-    "evt_teleport_overlap": {
-      "id": "evt_teleport_overlap",
-      "name": "Entrée dans le portail",
-      "category": "Interactions",
-      "description": "Déclenché lors du passage du joueur dans le vortex.",
-      "kind": {
-        "Event": {
-          "event_type": "OnPlayerOverlap"
-        }
-      },
-      "inputs": [],
-      "outputs": [
-        {
-          "id": "out_trigger",
-          "name": "Exécution",
-          "direction": "Output",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "ui": {
-        "position_x": 0.0,
-        "position_y": 0.0,
-        "color_tag": null
-      }
-    },
     "act_teleport": {
       "id": "act_teleport",
       "name": "Téléporter vers (400, 300)",
@@ -50,6 +24,32 @@
           "default_value": null
         }
       ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "evt_teleport_overlap": {
+      "id": "evt_teleport_overlap",
+      "name": "Entrée dans le portail",
+      "category": "Interactions",
+      "description": "Déclenché lors du passage du joueur dans le vortex.",
+      "kind": {
+        "Event": {
+          "event_type": "OnPlayerOverlap"
+        }
+      },
+      "inputs": [],
       "outputs": [
         {
           "id": "out_trigger",

@@ -19,6 +19,7 @@ kvl-core = { path = "../kvl-core" }
 kvl-runtime = { path = "../kvl-runtime" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 winit = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

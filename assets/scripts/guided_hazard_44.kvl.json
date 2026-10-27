@@ -31,6 +31,32 @@
         "color_tag": null
       }
     },
+    "evt_hazard_overlap": {
+      "id": "evt_hazard_overlap",
+      "name": "Contact avec Lave",
+      "category": "Interactions",
+      "description": "Déclenché quand le joueur entre dans la zone du piège.",
+      "kind": {
+        "Event": {
+          "event_type": "OnPlayerOverlap"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
     "act_hazard_damage": {
       "id": "act_hazard_damage",
       "name": "Infliger 15 Dégâts",
@@ -50,32 +76,6 @@
           "default_value": null
         }
       ],
-      "outputs": [
-        {
-          "id": "out_trigger",
-          "name": "Exécution",
-          "direction": "Output",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "ui": {
-        "position_x": 0.0,
-        "position_y": 0.0,
-        "color_tag": null
-      }
-    },
-    "evt_hazard_overlap": {
-      "id": "evt_hazard_overlap",
-      "name": "Contact avec Lave",
-      "category": "Interactions",
-      "description": "Déclenché quand le joueur entre dans la zone du piège.",
-      "kind": {
-        "Event": {
-          "event_type": "OnPlayerOverlap"
-        }
-      },
-      "inputs": [],
       "outputs": [
         {
           "id": "out_trigger",

@@ -31,6 +31,44 @@ pub enum SoundType {
     BossSlam,
 }
 
+impl SoundType {
+    /// Traduit un identifiant KVL (`PlaySound:coin`) en effet sonore.
+    ///
+    /// Les clés inconnues sont ignorées : un pack peut nommer un son que cette
+    /// version du moteur ne connaît pas sans casser le graphe.
+    pub fn from_key(key: &str) -> Option<Self> {
+        Some(match key {
+            "coin" | "coin_pickup" => Self::Coin,
+            "door_open" => Self::DoorOpen,
+            "door_close" => Self::DoorClose,
+            "access_denied" | "denied" => Self::AccessDenied,
+            "fanfare" | "victory" | "victory_bell" => Self::BonusFanfare,
+            "speed" | "boost" | "speed_boost" => Self::SpeedBoost,
+            "sparkles" | "sparkle" => Self::Sparkles,
+            "ui" | "click" | "ui_click" => Self::UiClick,
+            "wire_cut" | "cut" => Self::WireCut,
+            "alarm" | "alert" => Self::Alarm,
+            "radar" | "ping" => Self::RadarPing,
+            "teleport" => Self::Teleport,
+            "jump" => Self::PlayerJump,
+            "laser" | "shoot" => Self::LaserShoot,
+            "push" | "block_push" => Self::BlockPush,
+            "impact" | "damage" | "hit" => Self::PlayerDamage,
+            "heal" | "heal_pickup" => Self::HealPickup,
+            "death" | "player_death" => Self::PlayerDeath,
+            "typewriter" | "text" => Self::Typewriter,
+            "quest" | "quest_success" => Self::QuestSuccess,
+            "item" | "item_pickup" | "pickup" => Self::ItemPickup,
+            "potion" | "potion_drink" | "drink" => Self::PotionDrink,
+            "key" | "key_unlock" | "unlock" => Self::KeyUnlock,
+            "boss_roar" | "roar" => Self::BossRoar,
+            "boss_telegraph" | "telegraph" => Self::BossTelegraph,
+            "boss_slam" | "slam" => Self::BossSlam,
+            _ => return None,
+        })
+    }
+}
+
 struct ActiveVoice {
     sound: SoundType,
     cursor: usize,

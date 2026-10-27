@@ -26,3 +26,4 @@ pub mod ai_client;
 pub mod project;
 pub mod project_registry;
 pub mod native_api;
+pub mod plugin;

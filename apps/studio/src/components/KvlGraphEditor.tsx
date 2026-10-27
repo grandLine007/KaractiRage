@@ -6,12 +6,13 @@ import type { Node, Edge, NodeChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
   Coins, Flame, Zap, CircleDot, Package, DoorOpen, CheckCircle2, AlertTriangle,
-  Link2, GitFork, Wand2,
+  Link2, GitFork, Wand2, Boxes, Search, Plus,
 } from 'lucide-react';
 import {
   getKvlGraphs, getKvlGraph, buildGuidedGraph, attachScript, getSelectedEntity,
-  getEditorState, validateKvlGraph,
+  getEditorState, validateKvlGraph, getPluginCatalog, addKvlNode,
   type KvlGraphSummary, type GuidedGraphResult, type KvlDiagnostic,
+  type PluginCatalog, type KvlNodeSchema,
 } from '../services/engineBridge';
 
 interface KvlNodeData {
@@ -148,7 +149,7 @@ function defaultParams(recipe: Recipe): Record<string, string | number> {
 }
 
 export const KvlGraphEditor: React.FC = () => {
-  const [tab, setTab] = useState<'recipes' | 'graphs'>('recipes');
+  const [tab, setTab] = useState<'recipes' | 'graphs' | 'nodes'>('recipes');
   const [graphs, setGraphs] = useState<KvlGraphSummary[]>([]);
   const [formValues, setFormValues] = useState<Record<string, Record<string, string | number>>>({});
   const [graph, setGraph] = useState<KvlGraph | null>(null);
@@ -159,6 +160,8 @@ export const KvlGraphEditor: React.FC = () => {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [scriptPath, setScriptPath] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<KvlDiagnostic[]>([]);
+  const [catalog, setCatalog] = useState<PluginCatalog | null>(null);
+  const [nodeQuery, setNodeQuery] = useState('');
 
   const refreshGraphs = useCallback(async () => {
     try {
@@ -190,9 +193,29 @@ export const KvlGraphEditor: React.FC = () => {
     }
   }, []);
 
+  // Le catalogue peut arriver après le montage (boot moteur asynchrone) : on retente
+  // à l'ouverture de l'onglet Nœuds s'il est encore absent.
+  useEffect(() => {
+    if (tab !== 'nodes' || catalog) return;
+    void (async () => {
+      try {
+        setCatalog(await getPluginCatalog());
+      } catch {
+        /* catalogue indisponible */
+      }
+    })();
+  }, [tab, catalog]);
+
   // À l'ouverture : charge le graphe de l'objet sélectionné, sinon le premier graphe.
   useEffect(() => {
     void refreshGraphs();
+    void (async () => {
+      try {
+        setCatalog(await getPluginCatalog());
+      } catch {
+        /* catalogue indisponible */
+      }
+    })();
     void (async () => {
       try {
         const state = await getEditorState();
@@ -269,12 +292,51 @@ export const KvlGraphEditor: React.FC = () => {
     setFeedback(ok ? `Script attaché à l'objet #${id}.` : "Échec de l'attachement.");
   };
 
+  const addNode = async (schema: KvlNodeSchema) => {
+    if (!graph || !scriptPath) {
+      setFeedback("Chargez d'abord un graphe (onglet Graphes) pour insérer un nœud.");
+      return;
+    }
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const count = Object.keys(graph.nodes).length;
+      const x = 40 + (count % 3) * 280;
+      const y = 40 + Math.floor(count / 3) * 110;
+      const json = await addKvlNode(scriptPath, schema.id, x, y);
+      const next = JSON.parse(json) as KvlGraph;
+      setGraph(next);
+      setNodes(layoutNodes(next));
+      setEdges(layoutEdges(next));
+      setDiagnostics(await validateKvlGraph(json));
+      setFeedback(`Nœud « ${schema.label} » ajouté (${schema.id}).`);
+      void refreshGraphs();
+    } catch (e) {
+      setFeedback(typeof e === 'string' ? e : "Échec de l'ajout du nœud.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setNodes(nds => applyNodeChanges(changes, nds));
   }, []);
 
   const errCount = diagnostics.filter(d => d.severity === 'error').length;
   const warnCount = diagnostics.filter(d => d.severity === 'warning').length;
+
+  const catalogNodes = catalog?.nodes ?? [];
+  const normalizedQuery = nodeQuery.trim().toLowerCase();
+  const filteredSchemas = normalizedQuery
+    ? catalogNodes.filter(schema =>
+        `${schema.id} ${schema.label} ${schema.description}`.toLowerCase().includes(normalizedQuery))
+    : catalogNodes;
+  const groupedSchemas = filteredSchemas.reduce<Record<string, KvlNodeSchema[]>>((acc, schema) => {
+    const key = categoryLabel(schema.category);
+    (acc[key] ??= []).push(schema);
+    return acc;
+  }, {});
+  const orderedGroups = Object.entries(groupedSchemas).sort(([a], [b]) => a.localeCompare(b));
 
   return (
     <div className="flex flex-col h-full bg-[#07040d] overflow-hidden select-none">
@@ -318,9 +380,62 @@ export const KvlGraphEditor: React.FC = () => {
               <GitFork size={12} className="inline mr-1" />
               Graphes ({graphs.length})
             </button>
+            <button
+              onClick={() => setTab('nodes')}
+              title="Palette générée depuis le catalogue de nœuds du moteur"
+              className={`flex-1 px-2 py-2 text-xs font-semibold transition ${tab === 'nodes' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#64748b] hover:text-[#cbd5e1]'}`}
+            >
+              <Boxes size={12} className="inline mr-1" />
+              Nœuds ({catalog?.node_count ?? 0})
+            </button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
+            {tab === 'nodes' && (
+              <div className="flex flex-col gap-2">
+                <div className="relative">
+                  <Search size={12} className="absolute left-2 top-2.5 text-[#64748b]" />
+                  <input
+                    value={nodeQuery}
+                    onChange={e => setNodeQuery(e.target.value)}
+                    placeholder="Rechercher un nœud…"
+                    className="w-full text-[11px] py-1.5 pl-7 pr-2 bg-[#07040d] border border-[#2d1b4e] rounded focus:border-[#a855f7]"
+                  />
+                </div>
+                {!scriptPath && (
+                  <p className="text-[10px] text-[#f59e0b] leading-relaxed">
+                    Chargez un graphe dans l'onglet « Graphes » pour activer l'insertion.
+                  </p>
+                )}
+                {orderedGroups.map(([category, schemas]) => (
+                  <div key={category} className="space-y-1">
+                    <div className="text-[10px] uppercase tracking-wide text-[#64748b] px-0.5">{category}</div>
+                    {schemas.map(schema => (
+                      <button
+                        key={schema.id}
+                        onClick={() => void addNode(schema)}
+                        disabled={busy || !scriptPath}
+                        title={schema.description}
+                        className="w-full text-left px-2 py-1.5 rounded bg-[#150d27] hover:bg-[#2d1b4e] border border-[#2d1b4e] hover:border-[#a855f7] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[9px] px-1 rounded bg-[#2e1065] text-[#c084fc] uppercase">{schema.flavor}</span>
+                          <span className="text-[11px] text-[#f8fafc] truncate">{schema.label}</span>
+                          <Plus size={10} className="ml-auto text-[#a855f7] shrink-0" />
+                        </div>
+                        <div className="text-[9px] text-[#64748b] truncate mt-0.5">
+                          {schema.id}{schema.default_argument ? `:${schema.default_argument}` : ''}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+                {filteredSchemas.length === 0 && (
+                  <p className="p-3 text-center text-[11px] text-[#64748b]">Aucun nœud ne correspond.</p>
+                )}
+              </div>
+            )}
+
             {tab === 'recipes' && RECIPES.map(r => (
               <div key={r.id} className="p-2.5 bg-[#150d27] border border-[#2d1b4e] rounded-lg space-y-2">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-[#f8fafc]">

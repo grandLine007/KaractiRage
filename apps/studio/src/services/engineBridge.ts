@@ -516,6 +516,47 @@ export async function saveKvlGraph(path: string, json: string): Promise<boolean>
   return await invoke('engine_save_kvl_graph', { path, json });
 }
 
+/** Schéma d'un type de nœud exposé par le catalogue de plugins du moteur. */
+export interface KvlNodeSchema {
+  id: string;
+  flavor: 'event' | 'condition' | 'action' | 'composite';
+  label: string;
+  category: unknown;
+  description: string;
+  params: Array<{ name: string; label: string; param_type: unknown; default?: unknown }>;
+  aliases: string[];
+  prefixes: string[];
+  default_argument: string;
+  flow_input: boolean;
+  flow_outputs: string[];
+  plugin: string | null;
+}
+
+export interface PluginCatalog {
+  api_version: number;
+  plugin_count: number;
+  node_count: number;
+  load_order: string[];
+  plugins: unknown[];
+  nodes: KvlNodeSchema[];
+  issues: Array<{ plugin: string; kind: string; message: string }>;
+}
+
+/** Catalogue des plugins et des nœuds (page Extensions / palette KVL). */
+export async function getPluginCatalog(): Promise<PluginCatalog | null> {
+  try {
+    const raw: string = await invoke('engine_plugin_catalog');
+    return JSON.parse(raw) as PluginCatalog;
+  } catch {
+    return null;
+  }
+}
+
+/** Insère un nœud du catalogue dans un graphe et renvoie le graphe sérialisé. */
+export async function addKvlNode(path: string, typeId: string, x: number, y: number): Promise<string> {
+  return await invoke('engine_kvl_add_node', { path, typeId, x, y });
+}
+
 /**
  * Construit et attache un graphe KVL guidé à partir d'une recette + paramètres.
  */

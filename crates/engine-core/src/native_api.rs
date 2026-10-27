@@ -860,6 +860,15 @@ impl NativeEngine {
         self.game.editor.brush_tile.label().to_string()
     }
 
+    /// Catalogue JSON des plugins, nœuds et diagnostics (alimente la page Extensions
+    /// du Studio). Ne panique jamais : une erreur de sérialisation devient un objet
+    /// JSON `{ "error": ... }`.
+    pub fn plugin_catalog(&self) -> String {
+        self.game.plugins.catalog_json().unwrap_or_else(|error| {
+            serde_json::json!({ "error": error.to_string() }).to_string()
+        })
+    }
+
     // --- Navigation / interaction ----------------------------------------------
 
     pub fn move_player_to(&mut self, target_x: f32, target_y: f32) -> bool {
@@ -1126,6 +1135,36 @@ impl NativeEngine {
         self.game.kvl_graphs.insert(path.to_string(), graph.clone());
         self.persist_kvl_graph_to_disk(path, &graph);
         true
+    }
+
+    /// Ajoute un nœud du catalogue à un graphe existant, le persiste et renvoie le
+    /// graphe sérialisé. Le type concret est matérialisé par `PluginHost::instantiate`
+    /// (`SetVar` → `SetVar:score:0`), pour que le nœud soit exécutable immédiatement.
+    pub fn add_kvl_node(
+        &mut self,
+        path: &str,
+        type_id: &str,
+        x: f32,
+        y: f32,
+    ) -> Result<String, String> {
+        let (schema, concrete) = self
+            .game
+            .plugins
+            .instantiate(type_id)
+            .ok_or_else(|| format!("Type de nœud inconnu du catalogue : {}", type_id))?;
+
+        let graph = self
+            .game
+            .kvl_graphs
+            .get_mut(path)
+            .ok_or_else(|| format!("Graphe introuvable : {}", path))?;
+
+        crate::plugin::insert_schema_node(graph, &schema, &concrete, x, y)
+            .map_err(|error| error.to_string())?;
+        let snapshot = graph.clone();
+        let json = snapshot.to_json().map_err(|error| error.to_string())?;
+        self.persist_kvl_graph_to_disk(path, &snapshot);
+        Ok(json)
     }
 
     /// Attache un script KVL existant à une entité (par id) avec un événement de recouvrement.

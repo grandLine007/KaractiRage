@@ -1,9 +1,9 @@
 # Scénario de démarrage & d'utilisation — KaractiRage Studio
 
-> **Version 1.1** · 22/10/2026 · Périmètre : studio desktop **Tauri v2** (React 19 + moteur Rust natif).
-> **Révision 1.1** — revue croisée code/doc du 22/10 : arbitrage des incohérences internes.
+> **Version 1.2** · 27/10/2026 · Périmètre : studio desktop **Tauri v2** (React 19 + moteur Rust natif).
+> **Révision 1.2** — ajout des parcours Vectoriel & Mesh 3D (§6), carte des fichiers (§8.3), plafond boot 60 s.
 > **Périmètre de la machine à états (§4)** : boot moteur + cycle de vie du viewport uniquement.
-> Export (§6.I) et IA (§6.H) sont des **parcours**, volontairement hors de ce tableau.
+> Export (§6.J) et IA (§6.I) sont des **parcours**, volontairement hors de ce tableau.
 
 ## 1. Les trois promesses (contrat d'expérience)
 
@@ -50,7 +50,7 @@ T+0..300   WEBVIEW   index.html → main.tsx → <App/>                      [sh
                      └─ effet 2 : getEngineStatus() → POLLING 250 ms jusqu'à ready/failed
 T+0..300   VIEWPORT  montage GameViewport
                      ├─ invoke('engine_canvas_width') ← attend la fin du boot
-                     │   (≈ init_ms en nominal ; plafond 10 s en cas de panne) — P0-3
+                     │   (≈ init_ms en nominal ; plafond 60 s en cas de panne, démarrage à froid) — P0-3
                      └─ detectRenderCapabilities() ← sonde mémoïsée (1/session)
 T+0..1200  RUST      locate_scene + load_from_scene + SvgCache + Canvas::new(1200×800)
                      + warmup_glyph_cache                                → finish_boot()
@@ -128,16 +128,21 @@ glisser-déposer = spawn ; `Pause` fige la boucle ; radar/grille à la demande.
 sélection ; inspecteur (transform, dupliquer, supprimer) ; `Ctrl+S`, `Ctrl+Z/Y`, `Suppr`.
 **E. Logique** — *LOGIQUE KVL* : graphe nodal plein écran (viewport démonté → P0-2).
 **F. Pixel Art** — *PIXEL ART* : atelier plein écran (viewport démonté → P0-2).
-**G. 3D** — bouton **Box** : 1re fois « Compilation GPU… » puis scène instanciée ; le **badge
+**G. Vectoriel** — *VECTORIEL* : import d'image PNG → vectorisation native (median-cut +
+marching squares + Douglas-Peucker → SVG), ou import SVG direct ; éditeur de courbes par
+nœuds (drag&drop, édition de points), sauvegarde du modèle éditable (`assets/vectors/*.vec.json`)
+et spawn dans la scène.
+**H. 3D** — bouton **Box** : 1re fois « Compilation GPU… » puis scène instanciée ; le **badge
 affiche le backend réellement actif** (`GPU WEBGPU` ou `GPU WEBGL2`) — sur macOS (WKWebView),
 WebGPU est récent/variable : **WebGL2 est souvent le nominal**. Clic = picking, glisser sur le
-plan XZ = déplacement d'entité ; retours 2D↔3D instantanés (device conservé).
-**H. Boucle de confiance IA** — génération → bandeau « Patch IA en révision » → `Entrée` accepte / `Échap` rejette (rollback).
-**I. Export** — bouton export → **un fichier HTML unique autonome** téléchargé : logique +
+plan XZ = déplacement d'entité ; retours 2D↔3D instantanés (device conservé). Palette
+**Mesh 3D** : meshes procéduraux (assemblages de primitives) à spawner puis bascule vue 3D.
+**I. Boucle de confiance IA** — génération → bandeau « Patch IA en révision » → `Entrée` accepte / `Échap` rejette (rollback).
+**J. Export** — bouton export → **un fichier HTML unique autonome** téléchargé : logique +
 assets **inline** (aucune dépendance au système de fichiers) ; les polices Google sont
 chargées en ligne (repli polices système hors ligne). Ouvert en **`file://` (double-clic)**
 sur Chrome/Firefox.
-**J. Fermeture** — serveur pxl tué (pas d'orphelin), device 3D libéré.
+**K. Fermeture** — serveur pxl tué (pas d'orphelin), device 3D libéré.
 
 ## 7. Recette d'acceptation (prérequis + 10 étapes)
 
@@ -187,6 +192,11 @@ Sans eux, les étapes 1, 2, 3 et 9 ne sont pas exécutables.
 | `apps/studio/src/render3d/capabilities.ts` | sonde GPU mémoïsée |
 | `apps/studio/src/render3d/scene3d.ts` | renderer, init, interpolation, pause/resume |
 | `apps/studio/src/services/engineBridge.ts` | `getEngineStatus` / `retryEngineBoot` |
+| `apps/studio/src/components/PixelEditor.tsx` / `PxlArtWorkspace.tsx` | atelier Pixel Art (grille, sauvegarde+build) |
+| `apps/studio/src/components/VectorWorkspace.tsx` + `services/vectorBridge.ts` | éditeur vectoriel + pont Tauri (import / vectorisation / spawn) |
+| `apps/studio/src/components/SpawnPalette.tsx` + `services/archetypes.ts` | palette de spawn 2D/3D/Mesh et galerie d'archétypes |
+| `crates/engine-core/src/trace.rs` + `vector.rs` | vectorisation (median-cut, marching squares, Douglas-Peucker) + modèle vectoriel éditable |
+| `crates/engine-core/src/mesh_assets.rs` | bibliothèque de meshes 3D procéduraux |
 
 ### 8.4 Définitions
 

@@ -1,8 +1,16 @@
+pub mod actions;
+mod actions_batch;
 pub mod context;
+pub mod handlers;
 pub mod interpreter;
 
+pub use actions::{
+    builtin_handlers as builtin_action_handlers, builtin_node_schemas, core_event_schemas,
+    CORE_NODE_PACK,
+};
 pub use context::{ExecutionContext, ExecutionTraceStep};
-pub use interpreter::{Interpreter, RuntimeError};
+pub use handlers::{ActionHandler, HandlerError, HandlerRegistry, NodeCall};
+pub use interpreter::{builtin_handlers, Interpreter, RuntimeError};
 
 #[cfg(test)]
 mod tests {
@@ -549,5 +557,173 @@ mod tests {
         assert_eq!(ctx.get_var("swarm_scatter_1"), Some(&Value::Float(3.5)));
         assert_eq!(ctx.get_var("swarm_target_x_1"), Some(&Value::Int(400)));
         assert_eq!(ctx.get_var("swarm_target_y_1"), Some(&Value::Int(300)));
+    }
+
+    #[test]
+    fn migrated_actions_preserve_legacy_trace_and_variables() {
+        let mut graph = Graph::new("g_migrated", "Migration", "AddScore + DamagePlayer + GiveItem");
+
+        let event = Node::new(
+            "e",
+            "Contact",
+            Category::Interactions,
+            "",
+            NodeKind::Event {
+                event_type: "OnPlayerOverlap".into(),
+            },
+        )
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        let score = Node::new(
+            "a1",
+            "Score",
+            Category::Progression,
+            "",
+            NodeKind::Action {
+                action_type: "AddScore".into(),
+            },
+        )
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        let damage = Node::new(
+            "a2",
+            "Dégâts 2",
+            Category::Combat,
+            "",
+            NodeKind::Action {
+                action_type: "DamagePlayer:2".into(),
+            },
+        )
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input))
+        .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output));
+
+        let give = Node::new(
+            "a3",
+            "Deux pièces",
+            Category::World,
+            "",
+            NodeKind::Action {
+                action_type: "GiveItem:coin:2".into(),
+            },
+        )
+        .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input));
+
+        graph.add_node(event);
+        graph.add_node(score);
+        graph.add_node(damage);
+        graph.add_node(give);
+        graph.connect_pins("e", "out_trigger", "a1", "in_trigger").unwrap();
+        graph.connect_pins("a1", "out_trigger", "a2", "in_trigger").unwrap();
+        graph.connect_pins("a2", "out_trigger", "a3", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        ctx.set_var("player_hp", Value::Int(3));
+
+        let steps = Interpreter::trigger_event(&graph, &mut ctx, "OnPlayerOverlap").unwrap();
+        assert_eq!(steps, 4);
+        assert_eq!(ctx.get_var("score"), Some(&Value::Int(1)));
+        assert_eq!(ctx.get_var("player_hp"), Some(&Value::Int(1)));
+        assert_eq!(ctx.get_var("item_count_coin"), Some(&Value::Int(2)));
+        assert_eq!(ctx.get_var("has_coin"), Some(&Value::Bool(true)));
+
+        let messages: Vec<&str> = ctx
+            .execution_log
+            .iter()
+            .map(|step| step.message.as_str())
+            .collect();
+        assert!(messages.iter().any(|m| m.contains("-2 PV")));
+        assert!(messages.iter().any(|m| m.contains("Objet 'coin'")));
+    }
+
+    #[test]
+    fn every_action_in_asset_graphs_is_catalogued_and_handled() {
+        use std::fs;
+        use std::path::Path;
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/scripts");
+        if !dir.is_dir() {
+            return;
+        }
+
+        let handlers = builtin_handlers();
+        let mut schemas = kvl_core::NodeRegistry::new();
+        for schema in builtin_node_schemas() {
+            schemas.register(schema).expect("schéma unique");
+        }
+
+        let mut inspected = 0;
+        for entry in fs::read_dir(&dir).expect("dossier des scripts") {
+            let path = entry.expect("entrée").path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let raw = fs::read_to_string(&path).expect("lecture du graphe");
+            let graph = match Graph::from_json(&raw) {
+                Ok(graph) => graph,
+                Err(_) => continue,
+            };
+            for node in graph.nodes.values() {
+                if let NodeKind::Action { action_type } = &node.kind {
+                    assert!(
+                        handlers.is_registered(action_type),
+                        "handler manquant pour '{}' ({})",
+                        action_type,
+                        path.display()
+                    );
+                    assert!(
+                        schemas.resolve(action_type).is_some(),
+                        "schéma manquant pour '{}' ({})",
+                        action_type,
+                        path.display()
+                    );
+                    inspected += 1;
+                }
+            }
+        }
+
+        assert!(inspected > 0, "aucune action inspectée");
+    }
+
+    #[test]
+    fn custom_registry_can_override_a_builtin_action() {
+        fn jackpot(ctx: &mut ExecutionContext, _call: &NodeCall) -> Result<(), RuntimeError> {
+            ctx.set_var("score", Value::Int(999));
+            Ok(())
+        }
+
+        let mut handlers = builtin_handlers().clone();
+        handlers.replace("AddScore", jackpot);
+
+        let mut graph = Graph::new("g_override", "Override", "");
+        graph.add_node(
+            Node::new(
+                "e",
+                "Contact",
+                Category::Interactions,
+                "",
+                NodeKind::Event {
+                    event_type: "OnPlayerOverlap".into(),
+                },
+            )
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output)),
+        );
+        graph.add_node(
+            Node::new(
+                "a1",
+                "Score",
+                Category::Progression,
+                "",
+                NodeKind::Action {
+                    action_type: "AddScore".into(),
+                },
+            )
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input)),
+        );
+        graph.connect_pins("e", "out_trigger", "a1", "in_trigger").unwrap();
+
+        let mut ctx = ExecutionContext::new();
+        Interpreter::trigger_event_with(&graph, &mut ctx, "OnPlayerOverlap", &handlers).unwrap();
+        assert_eq!(ctx.get_var("score"), Some(&Value::Int(999)));
     }
 }
