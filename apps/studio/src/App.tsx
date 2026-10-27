@@ -476,7 +476,7 @@ export function App() {
           <span className="w-2 h-2 rounded-full bg-[#34d399] animate-pulse" />
           <span className="font-medium text-[#cbd5e1]">{metrics.status}</span>
         </div>
-        <div className="flex items-center gap-4 text-[11px] text-[#64748b]">
+        <div className="flex items-center gap-4 text-[11px] text-[#94a3b8]">
           <span>Touches : [Tab] Jouer/Studio • [V/B/X] Outils • [T] Tuile • [Suppr] Effacer • [Ctrl+Z/Y] Annuler/Rétablir • [Ctrl+S] Enregistrer</span>
           <span className="text-[#a855f7] font-semibold">KaractiRage Studio v0.2.0</span>
         </div>

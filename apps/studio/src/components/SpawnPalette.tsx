@@ -91,10 +91,10 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
   return (
     <div className="flex flex-col gap-2 p-2.5 bg-[#0d0819] border-b border-[#2d1b4e]">
       <div className="flex items-center justify-between px-0.5">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-[#94a3b8]">
           Ajouter un objet
         </span>
-        <span className="text-[10px] text-[#64748b]">
+        <span className="text-[10px] text-[#94a3b8]">
           clic = centre · glisser = libre
         </span>
       </div>
@@ -144,7 +144,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
             <button
               onClick={() => void refresh()}
               title="Recharger"
-              className="text-[#64748b] hover:text-[#f8fafc] transition"
+              className="text-[#94a3b8] hover:text-[#f8fafc] transition"
             >
               <RefreshCw size={12} />
             </button>
@@ -167,7 +167,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
                     style={{ imageRendering: 'pixelated' }}
                   />
                 ) : (
-                  <span className="w-8 h-8 flex items-center justify-center text-[#64748b] text-[8px]">…</span>
+                  <span className="w-8 h-8 flex items-center justify-center text-[#94a3b8] text-[8px]">…</span>
                 )}
                 <span className="text-[9px] font-semibold text-[#cbd5e1] group-hover:text-[#f8fafc] truncate max-w-full">
                   {s.id}
@@ -187,13 +187,13 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
             <button
               onClick={() => void refresh()}
               title="Recharger"
-              className="text-[#64748b] hover:text-[#f8fafc] transition"
+              className="text-[#94a3b8] hover:text-[#f8fafc] transition"
             >
               <RefreshCw size={12} />
             </button>
           </div>
           {anims.length === 0 ? (
-            <span className="text-[10px] text-[#64748b] px-1">Aucune animation.</span>
+            <span className="text-[10px] text-[#94a3b8] px-1">Aucune animation.</span>
           ) : (
             <div className="grid grid-cols-4 gap-1.5">
               {anims.map(a => (
@@ -213,7 +213,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
                       style={{ imageRendering: 'pixelated' }}
                     />
                   ) : (
-                    <span className="w-8 h-8 flex items-center justify-center text-[#64748b] text-[8px]">…</span>
+                    <span className="w-8 h-8 flex items-center justify-center text-[#94a3b8] text-[8px]">…</span>
                   )}
                   <span className="text-[9px] font-semibold text-[#cbd5e1] group-hover:text-[#f8fafc] truncate max-w-full">
                     {a.id}
@@ -228,7 +228,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
       {tab === 'atlas' && (
         <div className="flex flex-col gap-2">
           {sheets.length === 0 ? (
-            <span className="text-[10px] text-[#64748b] px-1">Aucun atlas.</span>
+            <span className="text-[10px] text-[#94a3b8] px-1">Aucun atlas.</span>
           ) : (
             sheets.map(sh => (
               <div key={sh.id} className="flex flex-col gap-1 bg-[#150d27] border border-[#2d1b4e] rounded-lg p-1.5">
@@ -241,7 +241,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
                       style={{ imageRendering: 'pixelated' }}
                     />
                   ) : (
-                    <span className="w-8 h-8 flex items-center justify-center text-[#64748b] text-[8px]">…</span>
+                    <span className="w-8 h-8 flex items-center justify-center text-[#94a3b8] text-[8px]">…</span>
                   )}
                   <span className="text-[10px] font-bold text-[#cbd5e1]">{sh.id}</span>
                 </div>
@@ -269,10 +269,10 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between px-0.5">
             <span className="text-[10px] font-bold uppercase tracking-wider text-[#38bdf8]">Meshes 3D</span>
-            <button onClick={() => void refresh()} title="Recharger" className="text-[#64748b] hover:text-[#f8fafc] transition"><RefreshCw size={12} /></button>
+            <button onClick={() => void refresh()} title="Recharger" className="text-[#94a3b8] hover:text-[#f8fafc] transition"><RefreshCw size={12} /></button>
           </div>
           {meshes.length === 0 ? (
-            <span className="text-[10px] text-[#64748b] px-1">Aucun mesh.</span>
+            <span className="text-[10px] text-[#94a3b8] px-1">Aucun mesh.</span>
           ) : (
             <div className="grid grid-cols-3 gap-1.5">
               {meshes.map(m => (

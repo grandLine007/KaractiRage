@@ -51,7 +51,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
 
   if (!selectedEntity) {
     return (
-      <aside className="w-72 flex flex-col items-center justify-center h-full bg-[#0d0819] border-l border-[#2d1b4e] p-6 text-center text-xs text-[#64748b] select-none">
+      <aside className="w-72 flex flex-col items-center justify-center h-full bg-[#0d0819] border-l border-[#2d1b4e] p-6 text-center text-xs text-[#94a3b8] select-none">
         <Sliders size={28} className="text-[#2d1b4e] mb-2" />
         <span className="font-semibold text-[#94a3b8] mb-1">Aucune Entité Sélectionnée</span>
         <p className="text-[11px] leading-relaxed">
@@ -99,7 +99,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
           <span className="badge-tag" style={{ backgroundColor: `${tagColor}1a`, color: tagColor }}>
             {selectedEntity.tag}
           </span>
-          <span className="text-[11px] text-[#64748b] font-mono">ID #{selectedEntity.id}</span>
+          <span className="text-[11px] text-[#94a3b8] font-mono">ID #{selectedEntity.id}</span>
         </div>
 
         {/* Transform (éditable, commit au blur / Entrée) */}
@@ -109,7 +109,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
               <Move size={12} />
               Transform
             </span>
-            <span className="text-[9px] text-[#64748b] font-normal normal-case">Entrée pour valider</span>
+            <span className="text-[9px] text-[#94a3b8] font-normal normal-case">Entrée pour valider</span>
           </div>
           <div className="grid grid-cols-2 gap-2">
             {[
@@ -163,7 +163,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
 
             <div className="flex items-center justify-between">
               <span className="text-[#94a3b8]">Collision</span>
-              <span className={`badge-tag ${selectedEntity.is_solid ? 'bg-[#064e3b] text-[#34d399]' : selectedEntity.is_trigger ? 'bg-[#2e1065] text-[#c084fc]' : 'bg-[#150d27] text-[#64748b]'}`}>
+              <span className={`badge-tag ${selectedEntity.is_solid ? 'bg-[#064e3b] text-[#34d399]' : selectedEntity.is_trigger ? 'bg-[#2e1065] text-[#c084fc]' : 'bg-[#150d27] text-[#94a3b8]'}`}>
                 {selectedEntity.is_solid ? 'Solide' : selectedEntity.is_trigger ? 'Déclencheur' : 'Aucune'}
               </span>
             </div>

@@ -52,7 +52,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
         >
           <MousePointer2 size={14} />
           <span className="hidden sm:inline">Sélection</span>
-          <kbd className="ml-0.5 text-[9px] font-mono text-[#64748b]">V</kbd>
+          <kbd className="ml-0.5 text-[9px] font-mono text-[#94a3b8]">V</kbd>
         </button>
 
         <button
@@ -66,7 +66,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
         >
           <Paintbrush size={14} />
           <span className="hidden sm:inline">Pinceau</span>
-          <kbd className="ml-0.5 text-[9px] font-mono text-[#64748b]">B</kbd>
+          <kbd className="ml-0.5 text-[9px] font-mono text-[#94a3b8]">B</kbd>
         </button>
 
         <button
@@ -80,7 +80,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
         >
           <Eraser size={14} />
           <span className="hidden sm:inline">Gomme</span>
-          <kbd className="ml-0.5 text-[9px] font-mono text-[#64748b]">X</kbd>
+          <kbd className="ml-0.5 text-[9px] font-mono text-[#94a3b8]">X</kbd>
         </button>
       </div>
 
@@ -96,7 +96,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
             className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition border ${
               tile === t.id
                 ? 'bg-[#150d27] text-[#f8fafc] border-[#a855f7]'
-                : 'text-[#64748b] border-transparent hover:bg-[#1e1338] hover:text-[#cbd5e1]'
+                : 'text-[#94a3b8] border-transparent hover:bg-[#1e1338] hover:text-[#cbd5e1]'
             }`}
           >
             <span

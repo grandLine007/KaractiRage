@@ -317,7 +317,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                   <h3 className="font-bold text-sm text-[#f8fafc] flex items-center gap-2">
                     <Clock size={15} className="text-[#c084fc]" />
                     Derniers projets
-                    <span className="text-[10px] font-medium text-[#64748b]">({recents.length})</span>
+                    <span className="text-[10px] font-medium text-[#94a3b8]">({recents.length})</span>
                   </h3>
                   <button
                     onClick={() => { setFilter('recent'); setActiveTab(1); }}
@@ -489,7 +489,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
             <>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="relative flex-1 min-w-[200px]">
-                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#64748b]" />
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94a3b8]" />
                   <input
                     value={query}
                     onChange={e => setQuery(e.target.value)}
@@ -591,7 +591,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                         <div className="text-[11px] text-[#94a3b8]">
                           {entry.genre} • {entry.dimension} • {entry.entity_count} entités • {formatBytes(entry.size_bytes)} • {formatDate(entry.modified_at)}
                         </div>
-                        <div className="text-[10px] text-[#64748b] truncate" title={entry.path}>{entry.path}</div>
+                        <div className="text-[10px] text-[#94a3b8] truncate" title={entry.path}>{entry.path}</div>
                       </div>
                       <div className="shrink-0">
                         {entry.status === 'missing'
@@ -708,7 +708,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
 
         {/* Barre d'action inférieure */}
         <div className="flex items-center justify-between px-6 py-3.5 bg-[#150d27] border-t border-[#2d1b4e]">
-          <span className="text-xs text-[#64748b]">
+          <span className="text-xs text-[#94a3b8]">
             {isTauri()
               ? 'Projets persistés dans ~/.karactirage — Échap pour fermer'
               : 'Mode web (lecture seule) — Échap pour fermer'}
@@ -777,7 +777,7 @@ function Diag({ label, value, wide }: { label: string; value: string; wide?: boo
     <div
       className={`${wide ? 'col-span-2 md:col-span-4' : ''} px-3 py-2 bg-[#0f172a] border border-[#1e293b] rounded`}
     >
-      <div className="text-[10px] uppercase text-[#64748b]">{label}</div>
+      <div className="text-[10px] uppercase text-[#94a3b8]">{label}</div>
       <div className="text-[#f8fafc] font-medium truncate">{value}</div>
     </div>
   );

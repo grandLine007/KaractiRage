@@ -47,7 +47,7 @@ export default function Spike3D() {
           <span className="text-xs font-bold uppercase tracking-wide text-[#f8fafc]">
             Spike 3D — three.js
           </span>
-          <span className="text-[10px] font-mono text-[#64748b]">
+          <span className="text-[10px] font-mono text-[#94a3b8]">
             Lot 0 · WebGPURenderer + TSL{forceWebGL ? ' · WebGL2 forcé' : ''}
           </span>
         </div>

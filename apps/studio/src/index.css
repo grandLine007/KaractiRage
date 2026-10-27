@@ -32,8 +32,14 @@
   --accent-amber: #f59e0b;
   --accent-rose: #f43f5e;
   --text-main: #f8fafc;
-  --text-muted: #94a3b8;
-  --text-faint: #64748b;
+  --text-muted: #94a3b8;   /* texte secondaire (≥ 4,5:1 sur panneaux sombres) */
+  --text-faint: #64748b;   /* décoratif uniquement (icônes), jamais du texte informatif */
+  /* Tokens sémantiques (UX-102) — 1 accent = 1 rôle. */
+  --accent-primary: #a855f7;
+  --success: #34d399;
+  --warning: #f59e0b;
+  --danger: #f43f5e;
+  --info: #38bdf8;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color-scheme: dark;
 }
