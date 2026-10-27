@@ -492,6 +492,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
         {!view3d && (
           <canvas
             ref={canvasRef}
+            data-testid="canvas-viewport"
             width={1200}
             height={800}
             onMouseMove={handleMouseMove}

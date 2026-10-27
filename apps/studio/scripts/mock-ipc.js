@@ -211,7 +211,25 @@
     pxl_write_source: () => '/tmp/audit.px.js',
   };
 
+  const FAULT = new URLSearchParams(window.location.search).get('fault') || null;
+
   function handle(cmd, args) {
+    // Injection de pannes (UX-005) : ?fault=null|timeout|slow|empty
+    if (FAULT === 'null' && (cmd === 'engine_canvas_width' || cmd === 'engine_canvas_height' || cmd === 'engine_frame')) {
+      return Promise.reject(new Error('IPC indisponible (panne simulée)'));
+    }
+    if (FAULT === 'null' && cmd === 'engine_status') {
+      return { state: 'failed', error: 'Moteur indisponible (panne simulée)', init_ms: 0 };
+    }
+    if (FAULT === 'timeout' && (cmd === 'engine_canvas_width' || cmd === 'engine_canvas_height')) {
+      return new Promise(() => {}); // ne résout jamais → spinner « Préparation du moteur… »
+    }
+    if (FAULT === 'slow' && cmd === 'engine_canvas_width') {
+      return new Promise((res) => setTimeout(() => res(CANVAS_W), 2500));
+    }
+    if (FAULT === 'empty' && cmd === 'engine_plugin_catalog') {
+      return JSON.stringify({ api_version: 1, plugin_count: 0, node_count: 0, load_order: [], plugins: [], nodes: [], issues: [] });
+    }
     const h = HANDLERS[cmd];
     if (h) return h(args || {});
     if (cmd.startsWith('engine_on_')) return undefined;
@@ -220,7 +238,13 @@
   }
 
   window.__TAURI_INTERNALS__ = {
-    invoke: (cmd, args) => Promise.resolve(handle(cmd, args)),
+    invoke: (cmd, args) => {
+      try {
+        return Promise.resolve(handle(cmd, args));
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    },
     transformCallback: () => 0,
     convertFileSrc: (p) => p,
   };

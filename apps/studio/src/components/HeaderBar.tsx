@@ -25,7 +25,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   metrics,
 }) => {
   return (
-    <header className="flex items-center justify-between px-4 py-2.5 bg-[#0d0819] border-b border-[#2d1b4e] select-none">
+    <header data-testid="header" className="flex items-center justify-between px-4 py-2.5 bg-[#0d0819] border-b border-[#2d1b4e] select-none">
       {/* Marque et Logo */}
       <div className="flex items-center gap-3">
         <div className="flex items-center justify-center w-8 h-8 rounded bg-gradient-to-br from-[#7e22ce] to-[#2e1065] border border-[#a855f7] shadow-lg shadow-purple-950/50">
@@ -43,7 +43,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
       </div>
 
       {/* Sélecteur de Mode Segmenté */}
-      <div className="flex items-center p-1 bg-[#07040d] border border-[#2d1b4e] rounded-lg">
+      <div data-testid="header-modes" className="flex items-center p-1 bg-[#07040d] border border-[#2d1b4e] rounded-lg">
         <button
           onClick={() => onModeChange('play')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition ${

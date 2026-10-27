@@ -8,8 +8,9 @@
 
 ```bash
 cd apps/studio
-npm run audit:ui            # build + capture de tous les écrans (mode mesure)
-npm run audit:ui -- --strict  # idem, échoue (code 1) si violations critical/serious
+npm run audit:ui               # build + capture de tous les écrans (mode mesure)
+npm run audit:ui -- --strict   # idem, échoue (code 1) si violations critical/serious
+npm run audit:ui:update        # régénère la baseline visuelle (audit/baseline/)
 ```
 
 Le script effectue :
@@ -21,7 +22,8 @@ Le script effectue :
    définit `window.__TAURI_INTERNALS__.invoke`, basculant le frontend en mode
    Tauri sans backend natif (frame 1200×800, 12 entités, catalogue de nœuds,
    4 projets de démo) ;
-5. capture de **7 écrans** × **2 tailles** (1440×900, 1024×720) = **14 captures** ;
+5. capture de **7 écrans** × **2 tailles** (1440×900, 1024×720) = **14 captures**
+   + **3 scénarios de pannes** (1440×900) = **17 captures** ;
 6. pour chaque écran : mesure du **header** (hauteur, plus petite cible), du
    **canvas** (dimensions/ratio) et des **violations axe-core** (WCAG A/AA).
 
@@ -47,13 +49,42 @@ Résumé imprimé en console, ex. :
 Les autres KPIs (K3 contrastes détaillés, K9 clavier, K10 labels) sont couverts
 partiellement par axe-core ; les scripts dédiés viendront dans les lots WS4/WS12.
 
-## Mettre à jour la baseline (UX-003, à venir)
+## Mettre à jour la baseline (UX-003)
 
-Le dossier `apps/studio/audit/` est **ignoré** par git (sorties régénérées).
-Une baseline versionnée sera ajoutée dans `apps/studio/audit/baseline/` (avec
-négation dans `.gitignore`) une fois la reproduction validée à ≤ 0,5 % d'écart.
+- `npm run audit:ui:update` (ou `--update-baseline`) copie les captures courantes
+  dans `apps/studio/audit/baseline/` (versionnées par git, `.gitignore` négocié).
+- En mode normal, chaque capture est comparée pixel à pixel à la baseline ; l'écart
+  est reporté dans `report.json` (`baseline_diff_pct`) et un avertissement est émis
+  au-delà de **0,5 %**.
+- Toute différence justifiée doit être documentée dans la PR.
+
+## Scénarios de pannes (UX-005)
+
+Le mock lit `?fault=<valeur>` :
+
+| Valeur | Effet | Écran attendu |
+|---|---|---|
+| `null` | `engine_status` → `failed`, `engine_canvas_width`/`frame` rejetés | panneau « Erreur du moteur » + Réessayer (pas d'écran noir) |
+| `timeout` | `engine_canvas_width` ne résout jamais | spinner « Préparation du moteur… » |
+| `slow` | `engine_canvas_width` résout après 2,5 s | spinner puis frame |
+| `empty` | `engine_plugin_catalog` → catalogue vide | onglet Nœuds vide |
+
+3 captures sont produites : `fault-null`, `fault-timeout`, `fault-empty`.
+
+## data-testid stables (UX-004)
+
+| `data-testid` | Composant |
+|---|---|
+| `header` / `header-modes` | `HeaderBar` (barre + sélecteur de mode) |
+| `canvas-viewport` | canvas 2D (`GameViewport`) |
+| `inspector` | `EntityInspector` |
+| `hub` | `ProjectHubModal` |
+| `kv-palette` / `kv-canvas` | `KvlGraphEditor` (palette + canevas React Flow) |
+
+`audit-node-<id>` (nœuds KVL) est différé au lot WS6 (éditeur KVL) — le graphe de
+démo est vide, aucune cible à instrumenter aujourd'hui.
 
 ## Dépendances
 
-- `playwright-core` + `axe-core` (devDependencies uniquement, aucune dépendance runtime).
+- `playwright-core`, `axe-core`, `pngjs` (devDependencies uniquement, aucune dépendance runtime).
 - Nécessite un **Chrome** système (aucun navigateur téléchargé par Playwright).

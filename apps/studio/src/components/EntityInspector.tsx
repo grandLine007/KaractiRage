@@ -51,7 +51,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
 
   if (!selectedEntity) {
     return (
-      <aside className="w-72 flex flex-col items-center justify-center h-full bg-[#0d0819] border-l border-[#2d1b4e] p-6 text-center text-xs text-[#64748b] select-none">
+      <aside data-testid="inspector" className="w-72 flex flex-col items-center justify-center h-full bg-[#0d0819] border-l border-[#2d1b4e] p-6 text-center text-xs text-[#64748b] select-none">
         <Sliders size={28} className="text-[#2d1b4e] mb-2" />
         <span className="font-semibold text-[#94a3b8] mb-1">Aucune Entité Sélectionnée</span>
         <p className="text-[11px] leading-relaxed">
@@ -68,7 +68,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
   const tagColor = TAG_COLORS[selectedEntity.tag] ?? '#94a3b8';
 
   return (
-    <aside className="w-72 flex flex-col h-full bg-[#0d0819] border-l border-[#2d1b4e] overflow-y-auto select-none">
+    <aside data-testid="inspector" className="w-72 flex flex-col h-full bg-[#0d0819] border-l border-[#2d1b4e] overflow-y-auto select-none">
       <div className="flex items-center justify-between px-3 py-2.5 bg-[#150d27] border-b border-[#2d1b4e]">
         <div className="flex items-center gap-2 truncate">
           <Sliders size={14} className="text-[#a855f7]" />
