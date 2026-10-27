@@ -175,6 +175,21 @@ export function App() {
         return;
       }
 
+      // 1bis. Raccourcis de mode Ctrl+1..5 / F6 (UX-202)
+      if ((e.ctrlKey || e.metaKey) && ['1', '2', '3', '4', '5'].includes(e.key)) {
+        e.preventDefault();
+        const order: StudioMode[] = ['play', 'edit', 'kvl', 'pixel', 'vector'];
+        applyMode(order[Number(e.key) - 1]);
+        return;
+      }
+      if (e.key === 'F6') {
+        e.preventDefault();
+        const order: StudioMode[] = ['play', 'edit', 'kvl', 'pixel', 'vector'];
+        const idx = order.indexOf(currentMode);
+        applyMode(order[(idx + 1) % order.length]);
+        return;
+      }
+
       // 2. Gestion des modales
       if (e.key === 'h' || e.key === 'H') {
         setIsHubOpen(prev => !prev);
@@ -215,7 +230,7 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentMode, pendingAiPatch, handleToggleTab, handleAcceptAi, handleRejectAi, refresh]);
+  }, [currentMode, pendingAiPatch, handleToggleTab, handleAcceptAi, handleRejectAi, refresh, applyMode]);
 
   // --- Handlers d'édition connectés au moteur natif -------------------------
 
@@ -372,7 +387,6 @@ export function App() {
         onOpenHub={() => setIsHubOpen(true)}
         onOpenAiAssistant={() => setIsAiModalOpen(true)}
         onExportStandalone={handleExportStandalone}
-        metrics={metrics}
       />
 
       {/* 2. Bandeau Flottant de Révision IA (Boucle de Confiance & Rollback en 1 clic) */}
