@@ -435,7 +435,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
       </div>
 
       {/* Conteneur du Canvas */}
-      <div className="relative flex-1 flex items-center justify-center p-2 bg-[#050308] overflow-hidden">
+      <div className="relative flex-1 grid place-items-center min-h-0 p-2 bg-[#050308] overflow-hidden">
         {loadError && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center bg-[#050308]/90">
             <span className="text-[#f43f5e] font-bold text-base mb-2">Erreur du moteur</span>
@@ -501,7 +501,9 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
             onDrop={handleDrop}
             onContextMenu={e => e.preventDefault()}
             tabIndex={0}
-            className={`w-full h-full object-contain shadow-2xl rounded border focus:outline-none transition-colors ${isEditMode ? 'border-[#a855f7] shadow-purple-950/60' : 'border-[#2d1b4e]'}`}
+            role="img"
+            aria-label="Viewport du jeu — 1200×800"
+            className={`aspect-[1200/800] max-w-full max-h-full w-auto h-auto object-contain shadow-2xl rounded border focus:outline-none transition-colors ${isEditMode ? 'border-[#a855f7] shadow-purple-950/60' : 'border-[#2d1b4e]'}`}
             style={{ imageRendering: 'pixelated' }}
           />
         )}
