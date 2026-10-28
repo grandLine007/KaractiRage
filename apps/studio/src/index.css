@@ -134,3 +134,12 @@ input:focus, textarea:focus, select:focus {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
+
+/* Mouvement réduit (UX-407) — désactive les animations quand le système le demande. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin,
+  .animate-pulse,
+  .animate-bounce {
+    animation: none !important;
+  }
+}
