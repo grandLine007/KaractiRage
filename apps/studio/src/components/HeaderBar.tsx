@@ -32,7 +32,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         <div className="flex items-center justify-center w-8 h-8 rounded bg-gradient-to-br from-[#7e22ce] to-[#2e1065] border border-[#a855f7] shadow-md shadow-purple-950/50">
           <span className="font-extrabold text-sm text-[#f8fafc] tracking-wider">KR</span>
         </div>
-        <h1 className="font-bold text-sm tracking-wide text-[#f8fafc] whitespace-nowrap">KARACTIRAGE STUDIO</h1>
+        <h1 className="font-bold text-sm tracking-wide text-[#f8fafc] whitespace-nowrap hidden sm:inline">KARACTIRAGE STUDIO</h1>
       </div>
 
       {/* Zone centre : modes (libellés courts + ARIA) */}
@@ -52,7 +52,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               }`}
             >
               {m.icon}
-              {m.label}
+              <span className="hidden md:inline">{m.label}</span>
             </button>
           );
         })}

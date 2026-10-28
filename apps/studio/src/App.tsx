@@ -39,7 +39,7 @@ import {
   getEngineStatus,
   type StudioEntitySummary,
 } from './services/engineBridge';
-import { Check, X } from 'lucide-react';
+import { Check, X, HelpCircle } from 'lucide-react';
 import type { ProjectEntry } from './services/projectBridge';
 import { prewarm3D } from './render3d/prewarm';
 
@@ -54,6 +54,7 @@ export function App() {
   const [view3d, setView3d] = useState(false);
   const [pendingAiPatch, setPendingAiPatch] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const [metrics, setMetrics] = useState({
     fps: 60,
@@ -204,6 +205,7 @@ export function App() {
           setIsHubOpen(false);
           setIsAiModalOpen(false);
           setIsWizardOpen(false);
+          setIsHelpOpen(false);
         }
       } else if (e.key === 'Enter' && pendingAiPatch) {
         handleAcceptAi();
@@ -485,16 +487,56 @@ export function App() {
       </div>
 
       {/* 4. Barre de Statut Inférieure */}
-      <footer className="flex items-center justify-between px-4 py-1.5 bg-[#0d0819] border-t border-[#2d1b4e] text-xs text-[#94a3b8]">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[#34d399] animate-pulse" />
-          <span className="font-medium text-[#cbd5e1]">{metrics.status}</span>
+      <footer className="flex items-center justify-between gap-3 px-4 py-1.5 bg-[#0d0819] border-t border-[#2d1b4e] text-xs text-[#94a3b8] shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-2 h-2 rounded-full bg-[#34d399] animate-pulse shrink-0" />
+          <span className="font-medium text-[#cbd5e1] truncate">{metrics.status}</span>
         </div>
-        <div className="flex items-center gap-4 text-[11px] text-[#94a3b8]">
-          <span>Touches : [Tab] Jouer/Studio • [V/B/X] Outils • [T] Tuile • [Suppr] Effacer • [Ctrl+Z/Y] Annuler/Rétablir • [Ctrl+S] Enregistrer</span>
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            onClick={() => setIsHelpOpen(true)}
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338] transition"
+            title="Aide clavier (raccourcis)"
+            aria-label="Aide clavier (raccourcis)"
+          >
+            <HelpCircle size={13} />
+            Aide clavier
+          </button>
           <span className="text-[#a855f7] font-semibold">KaractiRage Studio v0.2.0</span>
         </div>
       </footer>
+
+      {/* 4bis. Aide clavier (popover) */}
+      {isHelpOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm select-none"
+          onClick={() => setIsHelpOpen(false)}
+        >
+          <div
+            className="w-full max-w-md bg-[#0d0819] border border-[#2d1b4e] rounded-xl shadow-2xl shadow-purple-950/90 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 bg-[#150d27] border-b border-[#2d1b4e]">
+              <h2 className="font-bold text-sm text-[#f8fafc]">Aide clavier</h2>
+              <button onClick={() => setIsHelpOpen(false)} className="p-1 text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338] rounded" aria-label="Fermer">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4 text-xs text-[#94a3b8] font-mono space-y-1.5">
+              <div className="flex justify-between"><span>Bascule Jouer ↔ Studio</span><kbd>Tab</kbd></div>
+              <div className="flex justify-between"><span>Changer de mode</span><kbd>Ctrl+1…5</kbd></div>
+              <div className="flex justify-between"><span>Mode suivant</span><kbd>F6</kbd></div>
+              <div className="flex justify-between"><span>Hub / IA / Recette</span><kbd>H / I / W</kbd></div>
+              <div className="flex justify-between"><span>Outils sélection / pinceau / gomme</span><kbd>V / B / X</kbd></div>
+              <div className="flex justify-between"><span>Cycle tuile</span><kbd>T</kbd></div>
+              <div className="flex justify-between"><span>Enregistrer / annuler / rétablir</span><kbd>Ctrl+S / Z / Y</kbd></div>
+              <div className="flex justify-between"><span>Effacer la sélection</span><kbd>Suppr</kbd></div>
+              <div className="flex justify-between"><span>Saut / interaction (jeu)</span><kbd>Espace / E</kbd></div>
+              <div className="flex justify-between"><span>Accepter / rejeter un patch IA</span><kbd>Entrée / Échap</kbd></div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 5. Modales Flottantes */}
       <ProjectHubModal
