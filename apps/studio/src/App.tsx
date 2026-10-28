@@ -125,15 +125,6 @@ export function App() {
   const selectedEntity: StudioEntitySummary | null =
     entities.find(e => e.id === selectedEntityId) ?? null;
 
-  // Bascule instantanée TAB (Jeu <-> Studio), avec moteur synchronisé.
-  const handleToggleTab = useCallback(() => {
-    setCurrentMode(prev => {
-      const next = prev === 'play' ? 'edit' : 'play';
-      void setEditorMode(next);
-      return next;
-    });
-  }, []);
-
   const applyMode = useCallback((mode: StudioMode) => {
     setCurrentMode(prev => {
       if (prev === mode) return prev;
@@ -168,10 +159,12 @@ export function App() {
         return;
       }
 
-      // 1. Bascule Sacrée TAB (16ms)
-      if (e.key === 'Tab') {
+      // 1. Raccourcis de mode : F6 (cycle). Tab est laissé au navigateur (UX-401).
+      if (e.key === 'F6') {
         e.preventDefault();
-        handleToggleTab();
+        const order: StudioMode[] = ['play', 'edit', 'kvl', 'pixel', 'vector'];
+        const idx = order.indexOf(currentMode);
+        applyMode(order[(idx + 1) % order.length]);
         return;
       }
 
@@ -215,7 +208,7 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentMode, pendingAiPatch, handleToggleTab, handleAcceptAi, handleRejectAi, refresh]);
+  }, [currentMode, pendingAiPatch, handleAcceptAi, handleRejectAi, refresh, applyMode]);
 
   // --- Handlers d'édition connectés au moteur natif -------------------------
 
@@ -477,7 +470,7 @@ export function App() {
           <span className="font-medium text-[#cbd5e1]">{metrics.status}</span>
         </div>
         <div className="flex items-center gap-4 text-[11px] text-[#64748b]">
-          <span>Touches : [Tab] Jouer/Studio • [V/B/X] Outils • [T] Tuile • [Suppr] Effacer • [Ctrl+Z/Y] Annuler/Rétablir • [Ctrl+S] Enregistrer</span>
+          <span>Touches : [F6] Mode suivant • [V/B/X] Outils • [T] Tuile • [Suppr] Effacer • [Ctrl+Z/Y] Annuler/Rétablir • [Ctrl+S] Enregistrer</span>
           <span className="text-[#a855f7] font-semibold">KaractiRage Studio v0.2.0</span>
         </div>
       </footer>

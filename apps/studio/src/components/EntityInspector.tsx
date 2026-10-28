@@ -113,14 +113,15 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
           </div>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { label: 'X', value: x, set: setX },
-              { label: 'Y', value: y, set: setY },
-              { label: 'Larg.', value: w, set: setW },
-              { label: 'Haut.', value: h, set: setH },
+              { id: 'x', label: 'X', value: x, set: setX },
+              { id: 'y', label: 'Y', value: y, set: setY },
+              { id: 'w', label: 'Larg.', value: w, set: setW },
+              { id: 'h', label: 'Haut.', value: h, set: setH },
             ].map(field => (
-              <div key={field.label}>
-                <label className="text-[10px] text-[#94a3b8] block mb-0.5">{field.label} :</label>
+              <div key={field.id}>
+                <label htmlFor={`transform-${field.id}`} className="text-[10px] text-[#94a3b8] block mb-0.5">{field.label} :</label>
                 <input
+                  id={`transform-${field.id}`}
                   type="number"
                   value={Math.round(field.value)}
                   onChange={e => field.set(parseFloat(e.target.value) || 0)}

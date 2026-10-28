@@ -44,6 +44,12 @@
   padding: 0;
 }
 
+/* Focus visible global (UX-402) — 2 px accent + offset, jamais d'outline supprimé sans remplacement. */
+:focus-visible {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
 body {
   background-color: var(--bg-deep);
   color: var(--text-main);
