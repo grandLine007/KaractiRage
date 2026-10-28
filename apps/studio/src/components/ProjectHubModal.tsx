@@ -285,13 +285,13 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
         {/* Barre d'onglets */}
         <div className="flex items-center px-6 pt-3 bg-[#0d0819] border-b border-[#2d1b4e] gap-2">
           <TabButton active={activeTab === 0} onClick={() => setActiveTab(0)} icon={<Sparkles size={14} />}>
-            1.1 NOUVEAU PROJET
+            Nouveau projet
           </TabButton>
           <TabButton active={activeTab === 1} onClick={() => setActiveTab(1)} icon={<FolderOpen size={14} />}>
-            1.2 PROJETS SUR DISQUE
+            Projets sur disque
           </TabButton>
           <TabButton active={activeTab === 2} onClick={() => setActiveTab(2)} icon={<Bot size={14} />}>
-            1.3 OUTILS & IA
+            Outils & IA
           </TabButton>
         </div>
 
