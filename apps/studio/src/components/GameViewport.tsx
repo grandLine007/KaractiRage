@@ -87,6 +87,10 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
   const [isPaused, setIsPaused] = useState(false);
   const [showRadar, setShowRadar] = useState(true);
   const [showGrid, setShowGrid] = useState(false);
+  const [zoom, setZoom] = useState<'fit' | '1x' | '2x' | '3x'>(() => {
+    const saved = localStorage.getItem('karactirage.viewportZoom');
+    return saved === '1x' || saved === '2x' || saved === '3x' ? saved : 'fit';
+  });
   const [capabilities, setCapabilities] = useState<RenderCapabilities | null>(null);
   const [selected3dId, setSelected3dId] = useState<number | null>(null);
 
@@ -363,6 +367,10 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
 
   // Actions de la barre d'outils du viewport
   const togglePause = () => setIsPaused(prev => !prev);
+  const setZoomMode = (z: 'fit' | '1x' | '2x' | '3x') => {
+    setZoom(z);
+    localStorage.setItem('karactirage.viewportZoom', z);
+  };
   const toggleRadarAction = () => {
     void invoke('engine_toggle_radar');
     setShowRadar(prev => !prev);
@@ -405,31 +413,53 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
         <div className="flex items-center gap-1.5">
           <button
             onClick={togglePause}
-            className={`p-1.5 rounded transition ${isPaused ? 'bg-[#f59e0b] text-black font-bold' : 'hover:bg-[#1e1338] text-[#f8fafc]'}`}
+            className={`flex items-center justify-center w-8 h-8 rounded transition ${isPaused ? 'bg-[#f59e0b] text-black font-bold' : 'hover:bg-[#1e1338] text-[#f8fafc]'}`}
             title={isPaused ? "Reprendre (Pause active)" : "Mettre en pause"}
+            aria-label={isPaused ? "Reprendre" : "Mettre en pause"}
           >
-            {isPaused ? <Play size={15} /> : <Pause size={15} />}
+            {isPaused ? <Play size={16} /> : <Pause size={16} />}
           </button>
           <button
             onClick={toggleRadarAction}
-            className={`p-1.5 rounded transition ${showRadar ? 'bg-[#2e1065] text-[#38bdf8] border border-[#38bdf8]/40' : 'hover:bg-[#1e1338] text-[#64748b]'}`}
+            className={`flex items-center justify-center w-8 h-8 rounded transition ${showRadar ? 'bg-[#2e1065] text-[#38bdf8] border border-[#38bdf8]/40' : 'hover:bg-[#1e1338] text-[#94a3b8]'}`}
             title="Minicarte Radar [M]"
+            aria-label="Minicarte Radar"
           >
-            <Crosshair size={15} />
+            <Crosshair size={16} />
           </button>
           <button
             onClick={toggleGridAction}
-            className={`p-1.5 rounded transition ${showGrid ? 'bg-[#2e1065] text-[#a855f7] border border-[#a855f7]/40' : 'hover:bg-[#1e1338] text-[#64748b]'}`}
+            className={`flex items-center justify-center w-8 h-8 rounded transition ${showGrid ? 'bg-[#2e1065] text-[#a855f7] border border-[#a855f7]/40' : 'hover:bg-[#1e1338] text-[#94a3b8]'}`}
             title="Grille Spatiale [G]"
+            aria-label="Grille Spatiale"
           >
-            <Grid3X3 size={15} />
+            <Grid3X3 size={16} />
           </button>
+
+          {/* Zoom (UX-302) */}
+          <div className="flex items-center gap-0.5 ml-1 p-0.5 bg-[#07040d] border border-[#2d1b4e] rounded">
+            {(['fit', '1x', '2x', '3x'] as const).map((z) => (
+              <button
+                key={z}
+                onClick={() => setZoomMode(z)}
+                aria-pressed={zoom === z}
+                className={`flex items-center justify-center h-7 px-1.5 rounded text-[10px] font-bold transition ${
+                  zoom === z ? 'bg-[#3b0764] text-[#f3e8ff] border border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#150d27]'
+                }`}
+                title={z === 'fit' ? 'Ajuster à la fenêtre' : `Échelle ${z}`}
+              >
+                {z === 'fit' ? 'Fit' : z}
+              </button>
+            ))}
+          </div>
+
           <button
             onClick={() => onView3dChange(!view3d)}
-            className={`p-1.5 rounded transition ${view3d ? 'bg-[#2e1065] text-[#c084fc] border border-[#a855f7]' : 'hover:bg-[#1e1338] text-[#64748b]'}`}
+            className={`flex items-center justify-center w-8 h-8 rounded transition ${view3d ? 'bg-[#2e1065] text-[#c084fc] border border-[#a855f7]' : 'hover:bg-[#1e1338] text-[#94a3b8]'}`}
             title={view3d ? "Revenir à la vue 2D" : "Basculer en vue 3D (RenderPacket)"}
+            aria-label={view3d ? "Revenir à la vue 2D" : "Basculer en vue 3D (RenderPacket)"}
           >
-            <Box size={15} />
+            <Box size={16} />
           </button>
         </div>
       </div>
@@ -503,8 +533,8 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
             tabIndex={0}
             role="img"
             aria-label="Viewport du jeu — 1200×800"
-            className={`aspect-[1200/800] max-w-full max-h-full w-auto h-auto object-contain shadow-2xl rounded border focus:outline-none transition-colors ${isEditMode ? 'border-[#a855f7] shadow-purple-950/60' : 'border-[#2d1b4e]'}`}
-            style={{ imageRendering: 'pixelated' }}
+            className={`${zoom === 'fit' ? 'aspect-[1200/800] max-w-full max-h-full w-auto h-auto' : zoom === '1x' ? 'w-[1200px] h-[800px]' : zoom === '2x' ? 'w-[2400px] h-[1600px]' : 'w-[3600px] h-[2400px]'} object-contain shadow-2xl rounded border focus:outline-none transition-colors ${isEditMode ? 'border-[#a855f7] shadow-purple-950/60' : 'border-[#2d1b4e]'}`}
+            style={{ imageRendering: zoom === 'fit' ? 'auto' : 'pixelated' }}
           />
         )}
       </div>
