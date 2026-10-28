@@ -180,6 +180,7 @@ export const KvlGraphEditor: React.FC = () => {
         setNodes(layoutNodes(g));
         setEdges(layoutEdges(g));
         setScriptPath(path);
+        localStorage.setItem('karactirage.lastGraph', path);
         setResult(null);
         setFeedback(null);
         try {
@@ -229,7 +230,10 @@ export const KvlGraphEditor: React.FC = () => {
       }
       try {
         const list = await getKvlGraphs();
-        if (list.length > 0) await loadGraph(list[0].path);
+        if (list.length === 0) return;
+        const last = localStorage.getItem('karactirage.lastGraph');
+        const target = list.find((g) => g.path === last)?.path ?? list[0].path;
+        await loadGraph(target);
       } catch {
         /* aucun graphe */
       }
