@@ -44,7 +44,10 @@ import type { ProjectEntry } from './services/projectBridge';
 import { prewarm3D } from './render3d/prewarm';
 
 export function App() {
-  const [currentMode, setCurrentMode] = useState<StudioMode>('play');
+  const [currentMode, setCurrentMode] = useState<StudioMode>(() => {
+    const saved = localStorage.getItem('karactirage.lastMode');
+    return saved === 'edit' || saved === 'kvl' || saved === 'pixel' || saved === 'vector' ? saved : 'play';
+  });
   // Le Hub des Projets est l'écran d'accueil : il s'affiche au lancement (le moteur
   // boote en arrière-plan derrière l'overlay, la scène n'est pas lancée d'emblée).
   const [isHubOpen, setIsHubOpen] = useState(true);
@@ -65,6 +68,17 @@ export function App() {
 
   // État d'édition natif (polling suspendu hors mode Studio).
   const { state: editorState, refresh } = useStudioState(currentMode === 'edit');
+
+  // Références stables pour l'autosauvegarde (UX-204) sans recréer les callbacks.
+  const currentModeRef = useRef(currentMode);
+  const editorStateRef = useRef<{ can_undo?: boolean } | null>(null);
+  useEffect(() => {
+    currentModeRef.current = currentMode;
+    localStorage.setItem('karactirage.lastMode', currentMode);
+  }, [currentMode]);
+  useEffect(() => {
+    editorStateRef.current = editorState;
+  }, [editorState]);
 
   const toastIdRef = useRef(0);
   const pushToast = useCallback((message: string, kind: Toast['kind'] = 'info') => {
@@ -128,19 +142,25 @@ export function App() {
 
   // Bascule instantanée TAB (Jeu <-> Studio), avec moteur synchronisé.
   const handleToggleTab = useCallback(() => {
-    setCurrentMode(prev => {
-      const next = prev === 'play' ? 'edit' : 'play';
-      void setEditorMode(next);
-      return next;
-    });
+    const prev = currentModeRef.current;
+    const next = prev === 'play' ? 'edit' : 'play';
+    // Autosauvegarde avant de quitter l'édition (UX-204)
+    if (prev === 'edit' && editorStateRef.current?.can_undo) {
+      void saveScene().then(() => setMetrics((m) => ({ ...m, status: "💾 Scène autosauvegardée avant de quitter l'atelier" })));
+    }
+    void setEditorMode(next);
+    setCurrentMode(next);
   }, []);
 
   const applyMode = useCallback((mode: StudioMode) => {
-    setCurrentMode(prev => {
-      if (prev === mode) return prev;
-      void setEditorMode(mode === 'play' ? 'play' : 'edit');
-      return mode;
-    });
+    const prev = currentModeRef.current;
+    if (prev === mode) return;
+    // Autosauvegarde avant de quitter l'édition si des modifications sont en attente (UX-204)
+    if (prev === 'edit' && editorStateRef.current?.can_undo) {
+      void saveScene().then(() => setMetrics((m) => ({ ...m, status: "💾 Scène autosauvegardée avant de quitter l'atelier" })));
+    }
+    void setEditorMode(mode === 'play' ? 'play' : 'edit');
+    setCurrentMode(mode);
   }, []);
 
   // Validation ou Rollback du Patch IA
