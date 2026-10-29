@@ -14,6 +14,100 @@
     }
   },
   "nodes": {
+    "node_navchaseplayer_1": {
+      "id": "node_navchaseplayer_1",
+      "name": "Traquer le joueur (A*)",
+      "category": "ArtificialIntelligence",
+      "description": "Action historique migrée vers le registre.",
+      "kind": {
+        "Action": {
+          "action_type": "NavChasePlayer"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 320.0,
+        "position_y": 150.0,
+        "color_tag": null
+      }
+    },
+    "evt_player_seen": {
+      "id": "evt_player_seen",
+      "name": "Joueur Repéré",
+      "category": "Interactions",
+      "description": "Déclenché quand le joueur entre dans le cône de vision non occulté.",
+      "kind": {
+        "Event": {
+          "event_type": "OnPlayerSeen"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "node_navchaseplayer_2": {
+      "id": "node_navchaseplayer_2",
+      "name": "Traquer le joueur (A*)",
+      "category": "ArtificialIntelligence",
+      "description": "Action historique migrée vers le registre.",
+      "kind": {
+        "Action": {
+          "action_type": "NavChasePlayer"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 600.0,
+        "position_y": 150.0,
+        "color_tag": null
+      }
+    },
     "act_trigger_alarm": {
       "id": "act_trigger_alarm",
       "name": "Activer Alerte",
@@ -44,32 +138,6 @@
       ],
       "ui": {
         "position_x": 200.0,
-        "position_y": 0.0,
-        "color_tag": null
-      }
-    },
-    "evt_player_seen": {
-      "id": "evt_player_seen",
-      "name": "Joueur Repéré",
-      "category": "Interactions",
-      "description": "Déclenché quand le joueur entre dans le cône de vision non occulté.",
-      "kind": {
-        "Event": {
-          "event_type": "OnPlayerSeen"
-        }
-      },
-      "inputs": [],
-      "outputs": [
-        {
-          "id": "out_trigger",
-          "name": "Exécution",
-          "direction": "Output",
-          "data_type": "Trigger",
-          "default_value": null
-        }
-      ],
-      "ui": {
-        "position_x": 0.0,
         "position_y": 0.0,
         "color_tag": null
       }

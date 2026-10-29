@@ -140,18 +140,6 @@ export function App() {
   const selectedEntity: StudioEntitySummary | null =
     entities.find(e => e.id === selectedEntityId) ?? null;
 
-  // Bascule instantanée TAB (Jeu <-> Studio), avec moteur synchronisé.
-  const handleToggleTab = useCallback(() => {
-    const prev = currentModeRef.current;
-    const next = prev === 'play' ? 'edit' : 'play';
-    // Autosauvegarde avant de quitter l'édition (UX-204)
-    if (prev === 'edit' && editorStateRef.current?.can_undo) {
-      void saveScene().then(() => setMetrics((m) => ({ ...m, status: "💾 Scène autosauvegardée avant de quitter l'atelier" })));
-    }
-    void setEditorMode(next);
-    setCurrentMode(next);
-  }, []);
-
   const applyMode = useCallback((mode: StudioMode) => {
     const prev = currentModeRef.current;
     if (prev === mode) return;
@@ -189,10 +177,12 @@ export function App() {
         return;
       }
 
-      // 1. Bascule Sacrée TAB (16ms)
-      if (e.key === 'Tab') {
+      // 1. Raccourcis de mode : F6 (cycle). Tab est laissé au navigateur (UX-401).
+      if (e.key === 'F6') {
         e.preventDefault();
-        handleToggleTab();
+        const order: StudioMode[] = ['play', 'edit', 'kvl', 'pixel', 'vector'];
+        const idx = order.indexOf(currentMode);
+        applyMode(order[(idx + 1) % order.length]);
         return;
       }
 
@@ -252,7 +242,7 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentMode, pendingAiPatch, handleToggleTab, handleAcceptAi, handleRejectAi, refresh, applyMode]);
+  }, [currentMode, pendingAiPatch, handleAcceptAi, handleRejectAi, refresh, applyMode]);
 
   // --- Handlers d'édition connectés au moteur natif -------------------------
 
@@ -543,7 +533,6 @@ export function App() {
               </button>
             </div>
             <div className="p-4 text-xs text-[#94a3b8] font-mono space-y-1.5">
-              <div className="flex justify-between"><span>Bascule Jouer ↔ Studio</span><kbd>Tab</kbd></div>
               <div className="flex justify-between"><span>Changer de mode</span><kbd>Ctrl+1…5</kbd></div>
               <div className="flex justify-between"><span>Mode suivant</span><kbd>F6</kbd></div>
               <div className="flex justify-between"><span>Hub / IA / Recette</span><kbd>H / I / W</kbd></div>
