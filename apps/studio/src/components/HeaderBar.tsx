@@ -110,19 +110,19 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#150d27] border border-[#2d1b4e] rounded text-xs">
           <Activity size={13} className={metrics.fps >= 55 ? 'text-[#34d399]' : 'text-[#f59e0b]'} />
           <span className="font-mono font-bold text-[#f8fafc]">{metrics.fps || 60}</span>
-          <span className="text-[10px] text-[#64748b]">FPS</span>
+          <span className="text-[10px] text-[#94a3b8]">FPS</span>
         </div>
 
         <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#150d27] border border-[#2d1b4e] rounded text-xs">
           <Cpu size={13} className="text-[#38bdf8]" />
           <span className="font-mono font-bold text-[#f8fafc]">{metrics.cpuUs || 320}</span>
-          <span className="text-[10px] text-[#64748b]">µs CPU</span>
+          <span className="text-[10px] text-[#94a3b8]">µs CPU</span>
         </div>
 
         <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#150d27] border border-[#2d1b4e] rounded text-xs">
           <Zap size={13} className="text-[#f59e0b]" />
           <span className="font-mono font-bold text-[#f8fafc]">{metrics.score || 0}</span>
-          <span className="text-[10px] text-[#64748b]">SCORE</span>
+          <span className="text-[10px] text-[#94a3b8]">SCORE</span>
         </div>
       </div>
 

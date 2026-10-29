@@ -225,7 +225,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
 
           {/* 4. Suggestions rapides de génération */}
           <div>
-            <span className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-2.5">
+            <span className="block text-xs font-semibold text-[#94a3b8] uppercase tracking-wider mb-2.5">
               Ou sélectionnez une suggestion rapide du Studio :
             </span>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -277,7 +277,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
 
         {/* Pied de page */}
         <div className="flex items-center justify-between px-6 py-4 bg-[#150d27] border-t border-[#2d1b4e]">
-          <span className="text-xs text-[#64748b]">
+          <span className="text-xs text-[#94a3b8]">
             Clavier Français AZERTY & Touches de raccourci supportés nativement
           </span>
           <div className="flex items-center gap-3">

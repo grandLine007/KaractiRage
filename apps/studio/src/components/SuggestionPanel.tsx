@@ -119,7 +119,7 @@ export const SuggestionPanel: React.FC<SuggestionPanelProps> = ({
                 ) : (
                   <Circle size={13} className="text-[#2d1b4e] shrink-0" />
                 )}
-                <span className={item.done ? 'text-[#94a3b8]' : 'text-[#64748b]'}>{item.label}</span>
+                <span className={item.done ? 'text-[#94a3b8]' : 'text-[#94a3b8]'}>{item.label}</span>
               </div>
             ))}
 

@@ -412,21 +412,21 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
           </button>
           <button
             onClick={toggleRadarAction}
-            className={`p-1.5 rounded transition ${showRadar ? 'bg-[#2e1065] text-[#38bdf8] border border-[#38bdf8]/40' : 'hover:bg-[#1e1338] text-[#64748b]'}`}
+            className={`p-1.5 rounded transition ${showRadar ? 'bg-[#2e1065] text-[#38bdf8] border border-[#38bdf8]/40' : 'hover:bg-[#1e1338] text-[#94a3b8]'}`}
             title="Minicarte Radar [M]"
           >
             <Crosshair size={15} />
           </button>
           <button
             onClick={toggleGridAction}
-            className={`p-1.5 rounded transition ${showGrid ? 'bg-[#2e1065] text-[#a855f7] border border-[#a855f7]/40' : 'hover:bg-[#1e1338] text-[#64748b]'}`}
+            className={`p-1.5 rounded transition ${showGrid ? 'bg-[#2e1065] text-[#a855f7] border border-[#a855f7]/40' : 'hover:bg-[#1e1338] text-[#94a3b8]'}`}
             title="Grille Spatiale [G]"
           >
             <Grid3X3 size={15} />
           </button>
           <button
             onClick={() => onView3dChange(!view3d)}
-            className={`p-1.5 rounded transition ${view3d ? 'bg-[#2e1065] text-[#c084fc] border border-[#a855f7]' : 'hover:bg-[#1e1338] text-[#64748b]'}`}
+            className={`p-1.5 rounded transition ${view3d ? 'bg-[#2e1065] text-[#c084fc] border border-[#a855f7]' : 'hover:bg-[#1e1338] text-[#94a3b8]'}`}
             title={view3d ? "Revenir à la vue 2D" : "Basculer en vue 3D (RenderPacket)"}
           >
             <Box size={15} />

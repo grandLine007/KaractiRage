@@ -354,7 +354,7 @@ export const KvlGraphEditor: React.FC = () => {
           <button
             onClick={attach}
             disabled={!scriptPath}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition ${scriptPath ? 'bg-[#1e1338] hover:bg-[#2d1b4e] border border-[#a855f7] text-[#c084fc]' : 'bg-[#150d27] text-[#64748b] cursor-not-allowed'}`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition ${scriptPath ? 'bg-[#1e1338] hover:bg-[#2d1b4e] border border-[#a855f7] text-[#c084fc]' : 'bg-[#150d27] text-[#94a3b8] cursor-not-allowed'}`}
             title="Attacher ce script à l'objet sélectionné"
           >
             <Link2 size={13} />
@@ -368,14 +368,14 @@ export const KvlGraphEditor: React.FC = () => {
           <div className="flex border-b border-[#2d1b4e]">
             <button
               onClick={() => setTab('recipes')}
-              className={`flex-1 px-3 py-2 text-xs font-semibold transition ${tab === 'recipes' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#64748b] hover:text-[#cbd5e1]'}`}
+              className={`flex-1 px-3 py-2 text-xs font-semibold transition ${tab === 'recipes' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#cbd5e1]'}`}
             >
               <Wand2 size={12} className="inline mr-1" />
               Recettes
             </button>
             <button
               onClick={() => setTab('graphs')}
-              className={`flex-1 px-3 py-2 text-xs font-semibold transition ${tab === 'graphs' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#64748b] hover:text-[#cbd5e1]'}`}
+              className={`flex-1 px-3 py-2 text-xs font-semibold transition ${tab === 'graphs' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#cbd5e1]'}`}
             >
               <GitFork size={12} className="inline mr-1" />
               Graphes ({graphs.length})
@@ -383,7 +383,7 @@ export const KvlGraphEditor: React.FC = () => {
             <button
               onClick={() => setTab('nodes')}
               title="Palette générée depuis le catalogue de nœuds du moteur"
-              className={`flex-1 px-2 py-2 text-xs font-semibold transition ${tab === 'nodes' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#64748b] hover:text-[#cbd5e1]'}`}
+              className={`flex-1 px-2 py-2 text-xs font-semibold transition ${tab === 'nodes' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#cbd5e1]'}`}
             >
               <Boxes size={12} className="inline mr-1" />
               Nœuds ({catalog?.node_count ?? 0})
@@ -394,7 +394,7 @@ export const KvlGraphEditor: React.FC = () => {
             {tab === 'nodes' && (
               <div className="flex flex-col gap-2">
                 <div className="relative">
-                  <Search size={12} className="absolute left-2 top-2.5 text-[#64748b]" />
+                  <Search size={12} className="absolute left-2 top-2.5 text-[#94a3b8]" />
                   <input
                     value={nodeQuery}
                     onChange={e => setNodeQuery(e.target.value)}
@@ -409,7 +409,7 @@ export const KvlGraphEditor: React.FC = () => {
                 )}
                 {orderedGroups.map(([category, schemas]) => (
                   <div key={category} className="space-y-1">
-                    <div className="text-[10px] uppercase tracking-wide text-[#64748b] px-0.5">{category}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-[#94a3b8] px-0.5">{category}</div>
                     {schemas.map(schema => (
                       <button
                         key={schema.id}
@@ -423,7 +423,7 @@ export const KvlGraphEditor: React.FC = () => {
                           <span className="text-[11px] text-[#f8fafc] truncate">{schema.label}</span>
                           <Plus size={10} className="ml-auto text-[#a855f7] shrink-0" />
                         </div>
-                        <div className="text-[9px] text-[#64748b] truncate mt-0.5">
+                        <div className="text-[9px] text-[#94a3b8] truncate mt-0.5">
                           {schema.id}{schema.default_argument ? `:${schema.default_argument}` : ''}
                         </div>
                       </button>
@@ -431,7 +431,7 @@ export const KvlGraphEditor: React.FC = () => {
                   </div>
                 ))}
                 {filteredSchemas.length === 0 && (
-                  <p className="p-3 text-center text-[11px] text-[#64748b]">Aucun nœud ne correspond.</p>
+                  <p className="p-3 text-center text-[11px] text-[#94a3b8]">Aucun nœud ne correspond.</p>
                 )}
               </div>
             )}
@@ -441,7 +441,7 @@ export const KvlGraphEditor: React.FC = () => {
                 <div className="flex items-center gap-1.5 text-xs font-bold text-[#f8fafc]">
                   <span className="text-[#a855f7]">{r.icon}</span>
                   {r.title}
-                  <span className="text-[10px] text-[#64748b] font-normal ml-auto">{r.desc}</span>
+                  <span className="text-[10px] text-[#94a3b8] font-normal ml-auto">{r.desc}</span>
                 </div>
                 <div className="space-y-1.5">
                   {r.fields.map(f => {
@@ -491,13 +491,13 @@ export const KvlGraphEditor: React.FC = () => {
                 className="w-full text-left p-2.5 bg-[#150d27] hover:bg-[#1e1338] border border-[#2d1b4e] hover:border-[#a855f7] rounded-lg transition"
               >
                 <div className="text-xs font-bold text-[#f8fafc] truncate">{g.name}</div>
-                <div className="text-[10px] text-[#64748b] truncate mt-0.5">{g.path}</div>
+                <div className="text-[10px] text-[#94a3b8] truncate mt-0.5">{g.path}</div>
                 <div className="text-[10px] text-[#94a3b8] mt-1">{g.node_count} nœuds · {g.connection_count} liens</div>
               </button>
             ))}
 
             {tab === 'graphs' && graphs.length === 0 && (
-              <div className="p-4 text-center text-xs text-[#64748b] leading-relaxed">
+              <div className="p-4 text-center text-xs text-[#94a3b8] leading-relaxed">
                 Aucun graphe chargé. Générez une recette pour en créer un.
               </div>
             )}
@@ -563,7 +563,7 @@ export const KvlGraphEditor: React.FC = () => {
                           <span>{st.emoji}</span>
                           {n.name}
                         </div>
-                        <div className="text-[10px] text-[#64748b] mt-0.5">
+                        <div className="text-[10px] text-[#94a3b8] mt-0.5">
                           {categoryLabel(n.category)} · {n.description}
                         </div>
                       </div>
@@ -573,7 +573,7 @@ export const KvlGraphEditor: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full p-6 text-center text-xs text-[#64748b] gap-2">
+            <div className="flex flex-col items-center justify-center h-full p-6 text-center text-xs text-[#94a3b8] gap-2">
               <GitFork size={28} className="text-[#2d1b4e]" />
               <span className="font-semibold text-[#94a3b8]">Aucun graphe affiché</span>
               <p className="leading-relaxed">

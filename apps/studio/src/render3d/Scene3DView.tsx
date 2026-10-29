@@ -42,7 +42,7 @@ export default function Scene3DView() {
           <span className="text-xs font-bold uppercase tracking-wide text-[#f8fafc]">
             Scène 3D — Rust → three.js
           </span>
-          <span className="text-[10px] font-mono text-[#64748b]">
+          <span className="text-[10px] font-mono text-[#94a3b8]">
             Lot 4 · RenderPacket
           </span>
         </div>
