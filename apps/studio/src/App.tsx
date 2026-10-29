@@ -39,12 +39,15 @@ import {
   getEngineStatus,
   type StudioEntitySummary,
 } from './services/engineBridge';
-import { Check, X } from 'lucide-react';
+import { Check, X, HelpCircle } from 'lucide-react';
 import type { ProjectEntry } from './services/projectBridge';
 import { prewarm3D } from './render3d/prewarm';
 
 export function App() {
-  const [currentMode, setCurrentMode] = useState<StudioMode>('play');
+  const [currentMode, setCurrentMode] = useState<StudioMode>(() => {
+    const saved = localStorage.getItem('karactirage.lastMode');
+    return saved === 'edit' || saved === 'kvl' || saved === 'pixel' || saved === 'vector' ? saved : 'play';
+  });
   // Le Hub des Projets est l'écran d'accueil : il s'affiche au lancement (le moteur
   // boote en arrière-plan derrière l'overlay, la scène n'est pas lancée d'emblée).
   const [isHubOpen, setIsHubOpen] = useState(true);
@@ -54,6 +57,7 @@ export function App() {
   const [view3d, setView3d] = useState(false);
   const [pendingAiPatch, setPendingAiPatch] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const [metrics, setMetrics] = useState({
     fps: 60,
@@ -64,6 +68,17 @@ export function App() {
 
   // État d'édition natif (polling suspendu hors mode Studio).
   const { state: editorState, refresh } = useStudioState(currentMode === 'edit');
+
+  // Références stables pour l'autosauvegarde (UX-204) sans recréer les callbacks.
+  const currentModeRef = useRef(currentMode);
+  const editorStateRef = useRef<{ can_undo?: boolean } | null>(null);
+  useEffect(() => {
+    currentModeRef.current = currentMode;
+    localStorage.setItem('karactirage.lastMode', currentMode);
+  }, [currentMode]);
+  useEffect(() => {
+    editorStateRef.current = editorState;
+  }, [editorState]);
 
   const toastIdRef = useRef(0);
   const pushToast = useCallback((message: string, kind: Toast['kind'] = 'info') => {
@@ -127,19 +142,25 @@ export function App() {
 
   // Bascule instantanée TAB (Jeu <-> Studio), avec moteur synchronisé.
   const handleToggleTab = useCallback(() => {
-    setCurrentMode(prev => {
-      const next = prev === 'play' ? 'edit' : 'play';
-      void setEditorMode(next);
-      return next;
-    });
+    const prev = currentModeRef.current;
+    const next = prev === 'play' ? 'edit' : 'play';
+    // Autosauvegarde avant de quitter l'édition (UX-204)
+    if (prev === 'edit' && editorStateRef.current?.can_undo) {
+      void saveScene().then(() => setMetrics((m) => ({ ...m, status: "💾 Scène autosauvegardée avant de quitter l'atelier" })));
+    }
+    void setEditorMode(next);
+    setCurrentMode(next);
   }, []);
 
   const applyMode = useCallback((mode: StudioMode) => {
-    setCurrentMode(prev => {
-      if (prev === mode) return prev;
-      void setEditorMode(mode === 'play' ? 'play' : 'edit');
-      return mode;
-    });
+    const prev = currentModeRef.current;
+    if (prev === mode) return;
+    // Autosauvegarde avant de quitter l'édition si des modifications sont en attente (UX-204)
+    if (prev === 'edit' && editorStateRef.current?.can_undo) {
+      void saveScene().then(() => setMetrics((m) => ({ ...m, status: "💾 Scène autosauvegardée avant de quitter l'atelier" })));
+    }
+    void setEditorMode(mode === 'play' ? 'play' : 'edit');
+    setCurrentMode(mode);
   }, []);
 
   // Validation ou Rollback du Patch IA
@@ -175,6 +196,21 @@ export function App() {
         return;
       }
 
+      // 1bis. Raccourcis de mode Ctrl+1..5 / F6 (UX-202)
+      if ((e.ctrlKey || e.metaKey) && ['1', '2', '3', '4', '5'].includes(e.key)) {
+        e.preventDefault();
+        const order: StudioMode[] = ['play', 'edit', 'kvl', 'pixel', 'vector'];
+        applyMode(order[Number(e.key) - 1]);
+        return;
+      }
+      if (e.key === 'F6') {
+        e.preventDefault();
+        const order: StudioMode[] = ['play', 'edit', 'kvl', 'pixel', 'vector'];
+        const idx = order.indexOf(currentMode);
+        applyMode(order[(idx + 1) % order.length]);
+        return;
+      }
+
       // 2. Gestion des modales
       if (e.key === 'h' || e.key === 'H') {
         setIsHubOpen(prev => !prev);
@@ -189,6 +225,7 @@ export function App() {
           setIsHubOpen(false);
           setIsAiModalOpen(false);
           setIsWizardOpen(false);
+          setIsHelpOpen(false);
         }
       } else if (e.key === 'Enter' && pendingAiPatch) {
         handleAcceptAi();
@@ -215,7 +252,7 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentMode, pendingAiPatch, handleToggleTab, handleAcceptAi, handleRejectAi, refresh]);
+  }, [currentMode, pendingAiPatch, handleToggleTab, handleAcceptAi, handleRejectAi, refresh, applyMode]);
 
   // --- Handlers d'édition connectés au moteur natif -------------------------
 
@@ -372,7 +409,6 @@ export function App() {
         onOpenHub={() => setIsHubOpen(true)}
         onOpenAiAssistant={() => setIsAiModalOpen(true)}
         onExportStandalone={handleExportStandalone}
-        metrics={metrics}
       />
 
       {/* 2. Bandeau Flottant de Révision IA (Boucle de Confiance & Rollback en 1 clic) */}
@@ -471,16 +507,56 @@ export function App() {
       </div>
 
       {/* 4. Barre de Statut Inférieure */}
-      <footer className="flex items-center justify-between px-4 py-1.5 bg-[#0d0819] border-t border-[#2d1b4e] text-xs text-[#94a3b8]">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[#34d399] animate-pulse" />
-          <span className="font-medium text-[#cbd5e1]">{metrics.status}</span>
+      <footer className="flex items-center justify-between gap-3 px-4 py-1.5 bg-[#0d0819] border-t border-[#2d1b4e] text-xs text-[#94a3b8] shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-2 h-2 rounded-full bg-[#34d399] animate-pulse shrink-0" />
+          <span className="font-medium text-[#cbd5e1] truncate">{metrics.status}</span>
         </div>
-        <div className="flex items-center gap-4 text-[11px] text-[#94a3b8]">
-          <span>Touches : [Tab] Jouer/Studio • [V/B/X] Outils • [T] Tuile • [Suppr] Effacer • [Ctrl+Z/Y] Annuler/Rétablir • [Ctrl+S] Enregistrer</span>
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            onClick={() => setIsHelpOpen(true)}
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338] transition"
+            title="Aide clavier (raccourcis)"
+            aria-label="Aide clavier (raccourcis)"
+          >
+            <HelpCircle size={13} />
+            Aide clavier
+          </button>
           <span className="text-[#a855f7] font-semibold">KaractiRage Studio v0.2.0</span>
         </div>
       </footer>
+
+      {/* 4bis. Aide clavier (popover) */}
+      {isHelpOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm select-none"
+          onClick={() => setIsHelpOpen(false)}
+        >
+          <div
+            className="w-full max-w-md bg-[#0d0819] border border-[#2d1b4e] rounded-xl shadow-2xl shadow-purple-950/90 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 bg-[#150d27] border-b border-[#2d1b4e]">
+              <h2 className="font-bold text-sm text-[#f8fafc]">Aide clavier</h2>
+              <button onClick={() => setIsHelpOpen(false)} className="p-1 text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338] rounded" aria-label="Fermer">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4 text-xs text-[#94a3b8] font-mono space-y-1.5">
+              <div className="flex justify-between"><span>Bascule Jouer ↔ Studio</span><kbd>Tab</kbd></div>
+              <div className="flex justify-between"><span>Changer de mode</span><kbd>Ctrl+1…5</kbd></div>
+              <div className="flex justify-between"><span>Mode suivant</span><kbd>F6</kbd></div>
+              <div className="flex justify-between"><span>Hub / IA / Recette</span><kbd>H / I / W</kbd></div>
+              <div className="flex justify-between"><span>Outils sélection / pinceau / gomme</span><kbd>V / B / X</kbd></div>
+              <div className="flex justify-between"><span>Cycle tuile</span><kbd>T</kbd></div>
+              <div className="flex justify-between"><span>Enregistrer / annuler / rétablir</span><kbd>Ctrl+S / Z / Y</kbd></div>
+              <div className="flex justify-between"><span>Effacer la sélection</span><kbd>Suppr</kbd></div>
+              <div className="flex justify-between"><span>Saut / interaction (jeu)</span><kbd>Espace / E</kbd></div>
+              <div className="flex justify-between"><span>Accepter / rejeter un patch IA</span><kbd>Entrée / Échap</kbd></div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 5. Modales Flottantes */}
       <ProjectHubModal
