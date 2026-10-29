@@ -8,6 +8,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { safeInvokeJson } from './ipc';
 
 export interface EngineBootStatus {
   state: 'booting' | 'ready' | 'failed';
@@ -135,12 +136,7 @@ export async function exportProjectJson(): Promise<string> {
  * Récupère en temps réel la liste exacte de toutes les entités du moteur Rust
  */
 export async function getEntitiesSummary(): Promise<LiveEntitySummary[]> {
-  const raw: string = await invoke('engine_get_entities_summary');
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  return safeInvokeJson<LiveEntitySummary[]>('engine_get_entities_summary', undefined, []);
 }
 
 /**
@@ -222,22 +218,17 @@ export interface StudioEditorState {
  * Récupère un instantané complet de l'éditeur (entités + sélection + outil + tuile).
  */
 export async function getEditorState(): Promise<StudioEditorState> {
-  const raw: string = await invoke('engine_editor_state');
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {
-      entities: [],
-      selected_id: null,
-      tool: 'select',
-      tile: 'wall',
-      tile_label: 'Mur Solide',
-      can_undo: false,
-      can_redo: false,
-      status: '',
-      mode: 'edit',
-    };
-  }
+  return safeInvokeJson<StudioEditorState>('engine_editor_state', undefined, {
+    entities: [],
+    selected_id: null,
+    tool: 'select',
+    tile: 'wall',
+    tile_label: 'Mur Solide',
+    can_undo: false,
+    can_redo: false,
+    status: '',
+    mode: 'edit',
+  });
 }
 
 export async function selectEntity(id: number): Promise<boolean> {
@@ -273,12 +264,7 @@ export async function setBrushTile(tileId: string): Promise<string> {
 }
 
 export async function getBrushTiles(): Promise<BrushTileInfo[]> {
-  const raw: string = await invoke('engine_get_brush_tiles');
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  return safeInvokeJson<BrushTileInfo[]>('engine_get_brush_tiles', undefined, []);
 }
 
 /**
@@ -305,12 +291,7 @@ export interface SpriteAsset {
 
 /** Liste des sprites pixel-art disponibles (assets/generated/sprites/*.png). */
 export async function listSpriteAssets(): Promise<SpriteAsset[]> {
-  const raw: string = await invoke('engine_list_sprite_assets');
-  try {
-    return JSON.parse(raw) as SpriteAsset[];
-  } catch {
-    return [];
-  }
+  return safeInvokeJson<SpriteAsset[]>('engine_list_sprite_assets', undefined, []);
 }
 
 export interface MeshAssetSummary {
@@ -321,12 +302,7 @@ export interface MeshAssetSummary {
 
 /** Liste des assets de mesh 3D (manifest procédural + références glTF). */
 export async function listMeshAssets(): Promise<MeshAssetSummary[]> {
-  const raw: string = await invoke('engine_list_mesh_assets');
-  try {
-    return JSON.parse(raw) as MeshAssetSummary[];
-  } catch {
-    return [];
-  }
+  return safeInvokeJson<MeshAssetSummary[]>('engine_list_mesh_assets', undefined, []);
 }
 
 /** Instancie un preset 3D (primitive ou asset du manifest) à une position. */
@@ -366,22 +342,12 @@ export interface SheetAsset {
 
 /** Liste des animations pxl (assets/generated/anims/*.json). */
 export async function listAnimAssets(): Promise<AnimAsset[]> {
-  const raw: string = await invoke('engine_list_anim_assets');
-  try {
-    return JSON.parse(raw) as AnimAsset[];
-  } catch {
-    return [];
-  }
+  return safeInvokeJson<AnimAsset[]>('engine_list_anim_assets', undefined, []);
 }
 
 /** Liste des atlas pxl (assets/generated/<sheet>.json). */
 export async function listSheetAssets(): Promise<SheetAsset[]> {
-  const raw: string = await invoke('engine_list_sheet_assets');
-  try {
-    return JSON.parse(raw) as SheetAsset[];
-  } catch {
-    return [];
-  }
+  return safeInvokeJson<SheetAsset[]>('engine_list_sheet_assets', undefined, []);
 }
 
 /** Octets PNG bruts d'un atlas / bande d'animation (miniature). */
@@ -490,12 +456,7 @@ export interface GuidedGraphResult {
 }
 
 export async function getKvlGraphs(): Promise<KvlGraphSummary[]> {
-  const raw: string = await invoke('engine_get_kvl_graphs');
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  return safeInvokeJson<KvlGraphSummary[]>('engine_get_kvl_graphs', undefined, []);
 }
 
 export async function getKvlGraph(path: string): Promise<string | null> {
