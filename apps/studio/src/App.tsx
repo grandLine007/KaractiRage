@@ -15,6 +15,7 @@ import { RecipeWizardModal } from './components/RecipeWizardModal';
 import { KvlGraphEditor } from './components/KvlGraphEditor';
 import { PxlArtWorkspace } from './components/PxlArtWorkspace';
 import { VectorWorkspace } from './components/VectorWorkspace';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useStudioState } from './hooks/useStudioState';
 import {
   launchArchetypeGame,
@@ -426,6 +427,7 @@ export function App() {
 
         {/* Zone Centrale : Viewport 2D, Éditeur Nodal KVL ou Atelier Pixel Art */}
         <main className="flex-1 flex flex-col h-full overflow-hidden relative">
+          <ErrorBoundary key={currentMode} label="Panneau central">
           {currentMode === 'kvl' ? (
             <KvlGraphEditor />
           ) : currentMode === 'pixel' ? (
@@ -457,6 +459,7 @@ export function App() {
               />
             </>
           )}
+          </ErrorBoundary>
         </main>
 
         {/* Panneau Droit : Inspecteur (Visible en mode Studio) */}
