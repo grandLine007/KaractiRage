@@ -364,7 +364,7 @@ export const KvlGraphEditor: React.FC = () => {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-72 flex flex-col h-full bg-[#0d0819] border-r border-[#2d1b4e] shrink-0">
+        <aside data-testid="kv-palette" className="w-72 flex flex-col h-full bg-[#0d0819] border-r border-[#2d1b4e] shrink-0">
           <div className="flex border-b border-[#2d1b4e]">
             <button
               onClick={() => setTab('recipes')}
@@ -504,7 +504,7 @@ export const KvlGraphEditor: React.FC = () => {
           </div>
         </aside>
 
-        <main className="flex-1 h-full">
+        <main data-testid="kv-canvas" className="flex-1 h-full">
           <ReactFlow
             nodes={nodes}
             edges={edges}

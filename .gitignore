@@ -41,3 +41,8 @@ tools/pxl/docs/
 
 # Build WASM généré (reconstruit par scripts/build_wasm.sh)
 dist/
+
+# Sorties du harnais d'audit UX (report.json + captures, régénérés par `npm run audit:ui`)
+apps/studio/audit/*
+# …sauf la baseline visuelle versionnée (UX-003)
+!apps/studio/audit/baseline/
