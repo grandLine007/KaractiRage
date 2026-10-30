@@ -352,7 +352,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                             <SceneThumbnail entry={entry} />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="font-semibold text-sm text-[#f8fafc] truncate">{entry.title}</div>
+                            <div className="font-semibold text-sm text-[#f8fafc] truncate" title={entry.title}>{entry.title}</div>
                             <div className="text-[11px] text-[#94a3b8]">
                               {entry.genre} • {entry.dimension} • {formatDate(entry.modified_at)}
                             </div>
@@ -580,7 +580,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm text-[#f8fafc] truncate">{entry.title}</span>
+                          <span className="font-semibold text-sm text-[#f8fafc] truncate" title={entry.title}>{entry.title}</span>
                           {entry.is_recent && (
                             <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-[#2e1065] text-[#c084fc]">Récent</span>
                           )}

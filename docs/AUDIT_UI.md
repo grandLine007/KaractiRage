@@ -22,10 +22,12 @@ Le script effectue :
    définit `window.__TAURI_INTERNALS__.invoke`, basculant le frontend en mode
    Tauri sans backend natif (frame 1200×800, 12 entités, catalogue de nœuds,
    4 projets de démo) ;
-5. capture de **7 écrans** × **2 tailles** (1440×900, 1024×720) = **14 captures**
-   + **3 scénarios de pannes** (1440×900) = **17 captures** ;
+5. capture de **7 écrans** × **4 tailles** (1024×720, 1280×800, 1440×900,
+   1920×1080) = **28 captures** + **3 scénarios de pannes** (1440×900) =
+   **31 captures** ;
 6. pour chaque écran : mesure du **header** (hauteur, plus petite cible), du
-   **canvas** (dimensions/ratio) et des **violations axe-core** (WCAG A/AA).
+   **canvas** (dimensions/ratio), de l'**overflow horizontal**, du **texte
+   tronqué** et des **violations axe-core** (WCAG A/AA).
 
 ## Lire les résultats
 
@@ -54,6 +56,27 @@ Résumé imprimé en console, ex. :
 
 Les autres KPIs (K3 contrastes détaillés, K9 clavier, K10 labels) sont couverts
 partiellement par axe-core ; les scripts dédiés viendront dans les lots WS4/WS12.
+
+## Matrice de tailles (UX-206 / UX-306)
+
+L'audit couvre **4 largeurs** : 1024×720, 1280×800, 1440×900, 1920×1080.
+
+| Largeur | Header | Canvas | Cibles header |
+|---|---|---|---|
+| 1024×720 | 56 px | 1,5 | ≥ 32 px |
+| 1280×800 | 56 px | 1,5 | ≥ 32 px |
+| 1440×900 | 56 px | 1,5 | ≥ 32 px |
+| 1920×1080 | 56 px | 1,5 | ≥ 32 px |
+
+`--strict` échoue si l'un des trois seuils est dépassé : violations axe
+`critical`/`serious` > 0, overflow horizontal > 0, ou **texte tronqué sans
+info-bulle** > 0 (un ellipsis avec `title` est un motif accepté).
+
+## Audit final (UX-410)
+
+Le socle automatisé est `npm run audit:ui -- --strict` (exit 1 en cas de
+régression). Reste manuel (hors headless) : **parcours clavier complet** et
+**lecture VoiceOver** sur Hub, Édition, KVL — à consigner dans le rapport de PR.
 
 ## Mettre à jour la baseline (UX-003)
 

@@ -36,8 +36,10 @@ const UPDATE_BASELINE = process.argv.includes('--update-baseline');
 const BASELINE_DIR = path.join(AUDIT_DIR, 'baseline');
 
 const VIEWPORTS = [
-  { name: '1440x900', width: 1440, height: 900 },
   { name: '1024x720', width: 1024, height: 720 },
+  { name: '1280x800', width: 1280, height: 800 },
+  { name: '1440x900', width: 1440, height: 900 },
+  { name: '1920x1080', width: 1920, height: 1080 },
 ];
 
 // Séquence de navigation linéaire (état persistant dans la page) :
@@ -106,6 +108,20 @@ function measure(page) {
     const heights = targets.map((b) => b.getBoundingClientRect().height).filter((h) => h > 0);
     const canvas = document.querySelector('[data-testid="canvas-viewport"]');
     const cr = canvas ? canvas.getBoundingClientRect() : null;
+    // UX-206/306 : 0 overflow horizontal, 0 texte tronqué (ellipsis effectif).
+    const truncated = [...document.querySelectorAll('*')]
+      .filter((el) => {
+        const cs = getComputedStyle(el);
+        if (cs.textOverflow !== 'ellipsis' || el.scrollWidth <= el.clientWidth + 1) return false;
+        // Ellipsis assumé si un `title` (info-bulle) est disponible sur l'élément ou un ancêtre proche.
+        let node = el;
+        for (let i = 0; i < 3 && node; i++, node = node.parentElement) {
+          if (node.getAttribute && node.getAttribute('title')) return false;
+        }
+        return true;
+      })
+      .map((el) => (typeof el.className === 'string' ? el.className.split(' ').slice(0, 2).join('.') : el.tagName))
+      .slice(0, 8);
     return {
       header_height: hr ? Math.round(hr.height) : null,
       header_target_count: heights.length,
@@ -113,6 +129,9 @@ function measure(page) {
       canvas: cr && cr.height > 0
         ? { width: Math.round(cr.width), height: Math.round(cr.height), ratio: Number((cr.width / cr.height).toFixed(3)) }
         : null,
+      overflow_x: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
+      truncated_count: truncated.length,
+      truncated_examples: truncated,
     };
   });
 }
@@ -211,7 +230,7 @@ async function main() {
             screenshot: path.relative(ROOT, shot),
           });
           console.log(
-            `[audit] ${step.id} @${vp.name} header=${metrics.header_height ?? '—'}px cible_min=${metrics.header_target_min ?? '—'}px canvas_ratio=${metrics.canvas ? metrics.canvas.ratio : '—'} axe_crit/serious=${serious}`,
+            `[audit] ${step.id} @${vp.name} header=${metrics.header_height ?? '—'}px cible_min=${metrics.header_target_min ?? '—'}px canvas_ratio=${metrics.canvas ? metrics.canvas.ratio : '—'} axe_crit/serious=${serious} overflow=${metrics.overflow_x}px tronqué=${metrics.truncated_count}`,
           );
           logViolations(axe);
         }
@@ -234,7 +253,7 @@ async function main() {
         await page.screenshot({ path: shot, fullPage: false });
         const serious = axe.filter((v) => v.impact === 'critical' || v.impact === 'serious').reduce((n, v) => n + v.count, 0);
         results.push({ scenario: fault.id, label: fault.label, viewport: '1440x900', ...metrics, axe, screenshot: path.relative(ROOT, shot) });
-        console.log(`[audit] ${fault.id} @1440x900 axe_crit/serious=${serious}`);
+        console.log(`[audit] ${fault.id} @1440x900 axe_crit/serious=${serious} overflow=${metrics.overflow_x}px tronqué=${metrics.truncated_count}`);
         logViolations(axe);
         await page.close();
       }
@@ -272,9 +291,15 @@ async function main() {
       (n, r) => n + r.axe.filter((v) => v.impact === 'critical' || v.impact === 'serious').reduce((m, v) => m + v.count, 0),
       0,
     );
-    console.log(`[audit] terminé en ${report.duration_ms} ms — ${results.length} captures, ${serious} violation(s) critical/serious (axe).`);
-    if (STRICT && serious > 0) {
-      console.error('[audit] --strict : échec (violations critical/serious détectées).');
+    const overflowPages = results.filter((r) => (r.overflow_x || 0) > 0).map((r) => `${r.scenario}@${r.viewport}`);
+    const truncatedTotal = results.reduce((n, r) => n + (r.truncated_count || 0), 0);
+    console.log(
+      `[audit] terminé en ${report.duration_ms} ms — ${results.length} captures, ${serious} violation(s) critical/serious, ${overflowPages.length} page(s) en overflow, ${truncatedTotal} texte(s) tronqué(s).`,
+    );
+    if (STRICT && (serious > 0 || overflowPages.length > 0 || truncatedTotal > 0)) {
+      console.error(
+        `[audit] --strict : échec — violations=${serious}, overflow=${overflowPages.join(', ') || 'aucune'}, tronqué=${truncatedTotal}`,
+      );
       process.exitCode = 1;
     }
   } finally {
