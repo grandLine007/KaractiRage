@@ -56,10 +56,10 @@ woff2 auto-hébergées) ou assumer la police système ?
 > **Recommandation : A** — c'est le cœur de la promesse « éditeur visuel » ; à séquencer
 > (câblage d'abord, puis undo, puis params).
 
-> ✅ **Décision prise : A.** WS6 séquencé en 3 vagues : **① UX-601+602 fait** (palette filtrable
-> Tout/Événements/Conditions/Actions + compteurs, catégories repliables mémorisées, cartes
-> lisibles : emoji + libellé FR + ID mono + badge « requis » + tooltip) → ② UX-604 (câblage +
-> undo) → ③ UX-603+605+606 (inspecteur + insérer/câbler + gestion des graphes).
+> ✅ **Décision prise : A.** WS6 séquencé en 3 vagues : **① UX-601+602 fait**, **② UX-604 fait**
+> (câblage des pins sortie→entrée, suppression arête/nœud, undo/redo Ctrl+Z/Y, commandes backend
+> `engine_kvl_add_connection` / `engine_kvl_remove_connection` / `engine_kvl_remove_node`) →
+> ③ UX-603+605+606 (inspecteur + insérer/câbler + gestion des graphes).
 
 ---
 

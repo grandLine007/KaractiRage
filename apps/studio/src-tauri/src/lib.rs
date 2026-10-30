@@ -510,6 +510,36 @@ fn engine_kvl_add_node(
 }
 
 #[tauri::command]
+fn engine_kvl_add_connection(
+    path: String,
+    from_node: String,
+    from_pin: String,
+    to_node: String,
+    to_pin: String,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    engine.lock().unwrap().add_kvl_connection(&path, &from_node, &from_pin, &to_node, &to_pin)
+}
+
+#[tauri::command]
+fn engine_kvl_remove_connection(
+    path: String,
+    connection_id: String,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    engine.lock().unwrap().remove_kvl_connection(&path, &connection_id)
+}
+
+#[tauri::command]
+fn engine_kvl_remove_node(
+    path: String,
+    node_id: String,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    engine.lock().unwrap().remove_kvl_node(&path, &node_id)
+}
+
+#[tauri::command]
 fn engine_plugin_catalog(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().plugin_catalog()
 }
@@ -1120,6 +1150,9 @@ pub fn run() {
             engine_get_active_brush_tile,
             engine_plugin_catalog,
             engine_kvl_add_node,
+            engine_kvl_add_connection,
+            engine_kvl_remove_connection,
+            engine_kvl_remove_node,
             engine_export_standalone_html,
             engine_move_player_to,
             engine_get_player_pos,

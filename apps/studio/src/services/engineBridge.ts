@@ -518,6 +518,20 @@ export async function addKvlNode(path: string, typeId: string, x: number, y: num
   return await invoke('engine_kvl_add_node', { path, typeId, x, y });
 }
 
+export async function addKvlConnection(
+  path: string, fromNode: string, fromPin: string, toNode: string, toPin: string,
+): Promise<string> {
+  return await invoke('engine_kvl_add_connection', { path, fromNode, fromPin, toNode, toPin });
+}
+
+export async function removeKvlConnection(path: string, connectionId: string): Promise<string> {
+  return await invoke('engine_kvl_remove_connection', { path, connectionId });
+}
+
+export async function removeKvlNode(path: string, nodeId: string): Promise<string> {
+  return await invoke('engine_kvl_remove_node', { path, nodeId });
+}
+
 /**
  * Construit et attache un graphe KVL guidé à partir d'une recette + paramètres.
  */

@@ -1167,6 +1167,63 @@ impl NativeEngine {
         Ok(json)
     }
 
+    /// Connecte deux pins KVL (sortie → entrée) avec validation de type, persiste et
+    /// renvoie le graphe sérialisé. (WS6/UX-604)
+    pub fn add_kvl_connection(
+        &mut self,
+        path: &str,
+        from_node: &str,
+        from_pin: &str,
+        to_node: &str,
+        to_pin: &str,
+    ) -> Result<String, String> {
+        let graph = self
+            .game
+            .kvl_graphs
+            .get_mut(path)
+            .ok_or_else(|| format!("Graphe introuvable : {}", path))?;
+        graph
+            .connect_pins(from_node, from_pin, to_node, to_pin)
+            .map_err(|error| error.to_string())?;
+        let snapshot = graph.clone();
+        let json = snapshot.to_json().map_err(|error| error.to_string())?;
+        self.persist_kvl_graph_to_disk(path, &snapshot);
+        Ok(json)
+    }
+
+    /// Supprime une connexion KVL par identifiant, persiste et renvoie le graphe.
+    pub fn remove_kvl_connection(&mut self, path: &str, connection_id: &str) -> Result<String, String> {
+        let graph = self
+            .game
+            .kvl_graphs
+            .get_mut(path)
+            .ok_or_else(|| format!("Graphe introuvable : {}", path))?;
+        if !graph.remove_connection_by_id(connection_id) {
+            return Err(format!("Connexion introuvable : {}", connection_id));
+        }
+        let snapshot = graph.clone();
+        let json = snapshot.to_json().map_err(|error| error.to_string())?;
+        self.persist_kvl_graph_to_disk(path, &snapshot);
+        Ok(json)
+    }
+
+    /// Supprime un nœud KVL et toutes ses connexions, persiste et renvoie le graphe.
+    pub fn remove_kvl_node(&mut self, path: &str, node_id: &str) -> Result<String, String> {
+        let graph = self
+            .game
+            .kvl_graphs
+            .get_mut(path)
+            .ok_or_else(|| format!("Graphe introuvable : {}", path))?;
+        if graph.nodes.remove(node_id).is_none() {
+            return Err(format!("Nœud introuvable : {}", node_id));
+        }
+        graph.connections.retain(|c| c.from_node != node_id && c.to_node != node_id);
+        let snapshot = graph.clone();
+        let json = snapshot.to_json().map_err(|error| error.to_string())?;
+        self.persist_kvl_graph_to_disk(path, &snapshot);
+        Ok(json)
+    }
+
     /// Attache un script KVL existant à une entité (par id) avec un événement de recouvrement.
     pub fn attach_script_to_entity(&mut self, entity_id: usize, script_path: &str) -> bool {
         if let Some(ent) = self.game.entities.iter_mut().find(|e| e.id == entity_id) {

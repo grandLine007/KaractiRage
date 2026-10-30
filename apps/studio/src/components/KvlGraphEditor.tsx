@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ReactFlow, Controls, Background, BackgroundVariant, applyNodeChanges,
+  ReactFlow, Controls, Background, BackgroundVariant, applyNodeChanges, Handle, Position,
 } from '@xyflow/react';
-import type { Node, Edge, NodeChange } from '@xyflow/react';
+import type { Node, Edge, NodeChange, Connection, NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
   Coins, Flame, Zap, CircleDot, Package, DoorOpen, CheckCircle2, AlertTriangle,
@@ -11,13 +11,15 @@ import {
 import {
   getKvlGraphs, getKvlGraph, buildGuidedGraph, attachScript, getSelectedEntity,
   getEditorState, validateKvlGraph, getPluginCatalog, addKvlNode,
+  addKvlConnection, removeKvlConnection, removeKvlNode, saveKvlGraph,
   type KvlGraphSummary, type GuidedGraphResult, type KvlDiagnostic,
   type PluginCatalog, type KvlNodeSchema,
 } from '../services/engineBridge';
 
+interface KvlPin { id: string; name: string; direction: 'Input' | 'Output'; data_type: unknown }
 interface KvlNodeData {
   id: string; name: string; category: unknown; description: string; kind: unknown;
-  inputs: unknown[]; outputs: unknown[];
+  inputs: KvlPin[]; outputs: KvlPin[];
   ui: { position_x: number; position_y: number; color_tag: string | null };
 }
 interface KvlConnection { id: string; from_node: string; from_pin: string; to_node: string; to_pin: string }
@@ -85,9 +87,9 @@ function layoutNodes(graph: KvlGraph): Node[] {
       const st = KIND_STYLE[kindOf(n.kind)];
       nodes.push({
         id,
+        type: 'kvl',
         position: { x: 40 + Number(l) * 280, y: 40 + i * 110 },
-        data: { label: `${st.emoji} ${n.name}` },
-        style: { background: st.bg, color: '#f8fafc', border: `1px solid ${st.border}`, borderRadius: 8, padding: 10, fontSize: 12, fontWeight: 600, width: 220 },
+        data: { label: `${st.emoji} ${n.name}`, inputs: n.inputs, outputs: n.outputs, accent: st.border },
       });
     });
   });
@@ -95,10 +97,44 @@ function layoutNodes(graph: KvlGraph): Node[] {
 }
 function layoutEdges(graph: KvlGraph): Edge[] {
   return graph.connections.map(c => ({
-    id: c.id, source: c.from_node, target: c.to_node, animated: true,
-    style: { stroke: '#a855f7', strokeWidth: 2 },
+    id: c.id, source: c.from_node, target: c.to_node,
+    sourceHandle: c.from_pin, targetHandle: c.to_pin,
+    animated: true, style: { stroke: '#a855f7', strokeWidth: 2 },
   }));
 }
+
+/** Nœud KVL personnalisé : pins d'entrée/sortie câblables (UX-604). */
+function KvlNode({ data }: NodeProps) {
+  const d = data as { label: string; inputs?: KvlPin[]; outputs?: KvlPin[]; accent?: string };
+  const handleStyle: React.CSSProperties = {
+    width: 24, height: 24, minWidth: 24, minHeight: 24,
+    background: '#0d0819', border: '2px solid #a855f7',
+  };
+  return (
+    <div className="rounded-lg overflow-hidden text-[#f8fafc] bg-[#1e1338]" style={{ border: `1px solid ${d.accent ?? '#a855f7'}`, minWidth: 180 }}>
+      <div className="px-3 py-2 font-semibold text-xs border-b border-[#2d1b4e]" style={{ background: 'rgba(0,0,0,0.25)' }}>{d.label}</div>
+      <div className="px-2 py-1.5 space-y-0.5">
+        {(d.inputs ?? []).map(p => (
+          <div key={p.id} className="relative flex items-center justify-between pl-4 text-[10px] text-[#94a3b8] py-0.5">
+            <Handle type="target" position={Position.Left} id={p.id} title={`${p.name} (entrée)`} style={handleStyle} />
+            <span className="truncate">{p.name}</span>
+          </div>
+        ))}
+        {(d.outputs ?? []).map(p => (
+          <div key={p.id} className="relative flex items-center justify-between pr-4 text-[10px] text-[#94a3b8] py-0.5">
+            <span className="truncate">{p.name}</span>
+            <Handle type="source" position={Position.Right} id={p.id} title={`${p.name} (sortie)`} style={handleStyle} />
+          </div>
+        ))}
+        {(!d.inputs?.length && !d.outputs?.length) && (
+          <div className="text-[10px] text-[#64748b] italic px-1 py-0.5">Aucun pin</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { kvl: KvlNode };
 
 type FieldDef =
   | { key: string; label: string; type: 'text' | 'number'; default: string | number; optional?: boolean }
@@ -211,6 +247,98 @@ export const KvlGraphEditor: React.FC = () => {
       setFeedback('Impossible de charger ce graphe.');
     }
   }, []);
+
+  // Applique un graphe sérialisé (après une mutation backend) à l'état local.
+  const applyGraph = useCallback(async (json: string) => {
+    const g = JSON.parse(json) as KvlGraph;
+    setGraph(g);
+    setNodes(layoutNodes(g));
+    setEdges(layoutEdges(g));
+    try { setDiagnostics(await validateKvlGraph(json)); } catch { setDiagnostics([]); }
+  }, []);
+
+  // Historique local (WS6/UX-604) : snapshots JSON avant chaque mutation.
+  const undoStackRef = useRef<string[]>([]);
+  const redoStackRef = useRef<string[]>([]);
+  const pushHistory = useCallback(() => {
+    if (graph) {
+      undoStackRef.current.push(JSON.stringify(graph));
+      if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+      redoStackRef.current = [];
+    }
+  }, [graph]);
+
+  const applyHistoryJson = useCallback(async (json: string) => {
+    if (!scriptPath) return;
+    await saveKvlGraph(scriptPath, json);
+    await applyGraph(json);
+  }, [scriptPath, applyGraph]);
+
+  const handleKvlUndo = useCallback(async () => {
+    const prev = undoStackRef.current.pop();
+    if (prev === undefined || !graph) return;
+    redoStackRef.current.push(JSON.stringify(graph));
+    await applyHistoryJson(prev);
+  }, [graph, applyHistoryJson]);
+
+  const handleKvlRedo = useCallback(async () => {
+    const next = redoStackRef.current.pop();
+    if (next === undefined || !graph) return;
+    undoStackRef.current.push(JSON.stringify(graph));
+    await applyHistoryJson(next);
+  }, [graph, applyHistoryJson]);
+
+  // Câblage : tirez un pin de sortie vers un pin d'entrée (UX-604).
+  const onConnect = useCallback(async (conn: Connection) => {
+    if (!scriptPath || !conn.source || !conn.target) return;
+    pushHistory();
+    try {
+      const json = await addKvlConnection(scriptPath, conn.source, conn.sourceHandle ?? '', conn.target, conn.targetHandle ?? '');
+      await applyGraph(json);
+      setFeedback('Connexion ajoutée.');
+    } catch (e) {
+      setFeedback(typeof e === 'string' ? e : 'Connexion refusée (types incompatibles ?).');
+    }
+  }, [scriptPath, pushHistory, applyGraph]);
+
+  const onEdgesDelete = useCallback(async (deleted: Edge[]) => {
+    if (!scriptPath || deleted.length === 0) return;
+    pushHistory();
+    for (const e of deleted) {
+      try { await removeKvlConnection(scriptPath, e.id); } catch { /* ignore */ }
+    }
+    await loadGraph(scriptPath);
+    setFeedback(`${deleted.length} connexion(s) supprimée(s).`);
+  }, [scriptPath, pushHistory, loadGraph]);
+
+  const onNodesDelete = useCallback(async (deleted: Node[]) => {
+    if (!scriptPath || deleted.length === 0) return;
+    pushHistory();
+    for (const n of deleted) {
+      try { await removeKvlNode(scriptPath, n.id); } catch { /* ignore */ }
+    }
+    await loadGraph(scriptPath);
+    setFeedback(`${deleted.length} nœud(s) supprimé(s).`);
+  }, [scriptPath, pushHistory, loadGraph]);
+
+  // Ctrl+Z / Ctrl+Y (hors champs de saisie) — undo/redo du graphe.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        void handleKvlUndo();
+      } else if (k === 'y' || (k === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        void handleKvlRedo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [handleKvlUndo, handleKvlRedo]);
 
   // Le catalogue peut arriver après le montage (boot moteur asynchrone) : on retente
   // à l'ouverture de l'onglet Nœuds s'il est encore absent.
@@ -386,7 +514,7 @@ export const KvlGraphEditor: React.FC = () => {
       <div className="flex items-center justify-between px-4 py-2 bg-[#0d0819] border-b border-[#2d1b4e]">
         <div className="flex items-center gap-2">
           <span className="badge-tag bg-[#2e1065] text-[#34d399] border border-[#059669]">KVL VISUAL LOGIC</span>
-          <span className="text-xs text-[#94a3b8]">Recettes guidées → graphe valide, sans connaître KVL</span>
+          <span className="text-xs text-[#94a3b8]">Recettes guidées → graphe valide · tirez les pins pour câbler · Suppr efface · Ctrl+Z/Y</span>
         </div>
         <div className="flex items-center gap-2">
           {graph && (
@@ -586,7 +714,11 @@ export const KvlGraphEditor: React.FC = () => {
           <ReactFlow
             nodes={nodes}
             edges={edges}
+            nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
+            onConnect={onConnect}
+            onEdgesDelete={onEdgesDelete}
+            onNodesDelete={onNodesDelete}
             fitView
             className="bg-[#07040d]"
           >
