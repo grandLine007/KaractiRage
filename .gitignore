@@ -46,3 +46,7 @@ dist/
 apps/studio/audit/*
 # …sauf la baseline visuelle versionnée (UX-003)
 !apps/studio/audit/baseline/
+
+# Captures d'écran macOS parasites
+Capture d*.png
+Screenshot*.png
