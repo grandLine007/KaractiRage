@@ -45,11 +45,11 @@ const VIEWPORTS = [
 const STEPS = [
   { id: 'hub', label: 'Hub' },
   { id: 'play', label: 'Play', run: (p) => p.getByTestId('hub').getByLabel('Fermer').click() },
-  { id: 'edition', label: 'Édition', run: (p) => p.getByTestId('header-modes').getByText('ATELIER STUDIO', { exact: false }).click() },
-  { id: 'kvl-recettes', label: 'KVL Recettes', run: (p) => p.getByTestId('header-modes').getByText('LOGIQUE KVL', { exact: false }).click() },
+  { id: 'edition', label: 'Édition', run: (p) => p.getByTestId('header-modes').getByText('Créer', { exact: false }).click() },
+  { id: 'kvl-recettes', label: 'KVL Recettes', run: (p) => p.getByTestId('header-modes').getByText('Logique', { exact: false }).click() },
   { id: 'kvl-noeuds', label: 'KVL Nœuds', run: (p) => p.getByTestId('kv-palette').getByText('Nœuds', { exact: false }).click() },
-  { id: 'pixel', label: 'Pixel Art', run: (p) => p.getByTestId('header-modes').getByText('PIXEL ART', { exact: false }).click() },
-  { id: 'vector', label: 'Vectoriel', run: (p) => p.getByTestId('header-modes').getByText('VECTORISATION', { exact: false }).click() },
+  { id: 'pixel', label: 'Pixel Art', run: (p) => p.getByTestId('header-modes').getByText('Pixel', { exact: false }).click() },
+  { id: 'vector', label: 'Vectoriel', run: (p) => p.getByTestId('header-modes').getByText('Vectoriel', { exact: false }).click() },
 ];
 
 // Scénarios de pannes (UX-005) — une capture 1440×900 chacun.
@@ -62,7 +62,7 @@ const FAULTS = [
     url: '?fault=empty',
     run: async (p) => {
       await p.getByTestId('hub').getByLabel('Fermer').click();
-      await p.getByTestId('header-modes').getByText('LOGIQUE KVL', { exact: false }).click();
+      await p.getByTestId('header-modes').getByText('Logique', { exact: false }).click();
       await p.getByTestId('kv-palette').getByText('Nœuds', { exact: false }).click();
     },
   },
