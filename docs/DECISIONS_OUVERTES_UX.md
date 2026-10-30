@@ -19,6 +19,10 @@ woff2 auto-hébergées) ou assumer la police système ?
 > **Recommandation : A** (Outfit corps + Space Grotesk titres + JetBrains Mono IDs), en
 > woff2 subset, `font-display: swap`, 2 graisses max. L'identité est un non-négociable (§2.1).
 
+> ✅ **Décision prise : A.** Implémentation UX-101 : woff2 auto-hébergées (Outfit/Space
+> Grotesk/JetBrains Mono), `@font-face` + préchargement des 2 graisses utiles, échelle
+> 12→32 px. (Nécessite les fichiers woff2 — lot dédié.)
+
 ---
 
 ## D13.2 — Portée du Hub (§13.2)
@@ -51,6 +55,11 @@ woff2 auto-hébergées) ou assumer la police système ?
 
 > **Recommandation : A** — c'est le cœur de la promesse « éditeur visuel » ; à séquencer
 > (câblage d'abord, puis undo, puis params).
+
+> ✅ **Décision prise : A.** WS6 séquencé en 3 vagues : **① UX-601+602 fait** (palette filtrable
+> Tout/Événements/Conditions/Actions + compteurs, catégories repliables mémorisées, cartes
+> lisibles : emoji + libellé FR + ID mono + badge « requis » + tooltip) → ② UX-604 (câblage +
+> undo) → ③ UX-603+605+606 (inspecteur + insérer/câbler + gestion des graphes).
 
 ---
 

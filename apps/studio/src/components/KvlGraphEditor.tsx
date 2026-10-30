@@ -6,7 +6,7 @@ import type { Node, Edge, NodeChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
   Coins, Flame, Zap, CircleDot, Package, DoorOpen, CheckCircle2, AlertTriangle,
-  Link2, GitFork, Wand2, Boxes, Search, Plus,
+  Link2, GitFork, Wand2, Boxes, Search, Plus, ChevronRight,
 } from 'lucide-react';
 import {
   getKvlGraphs, getKvlGraph, buildGuidedGraph, attachScript, getSelectedEntity,
@@ -51,6 +51,19 @@ function categoryLabel(cat: unknown): string {
     return (cat as { Custom: string }).Custom;
   }
   return 'Autre';
+}
+// UX-602 : icône de type + couleur + description (tooltip) + badge « requis ».
+function flavorStyle(flavor: KvlNodeSchema['flavor']) {
+  switch (flavor) {
+    case 'event': return KIND_STYLE.Event;
+    case 'condition': return KIND_STYLE.Condition;
+    case 'action': return KIND_STYLE.Action;
+    case 'composite': return KIND_STYLE.Composite;
+    default: return KIND_STYLE.Other;
+  }
+}
+function requiredParamCount(schema: KvlNodeSchema): number {
+  return schema.params.filter(p => p.default === undefined || p.default === null).length;
 }
 function layoutNodes(graph: KvlGraph): Node[] {
   const ids = Object.keys(graph.nodes);
@@ -162,6 +175,11 @@ export const KvlGraphEditor: React.FC = () => {
   const [diagnostics, setDiagnostics] = useState<KvlDiagnostic[]>([]);
   const [catalog, setCatalog] = useState<PluginCatalog | null>(null);
   const [nodeQuery, setNodeQuery] = useState('');
+  // UX-601 : filtre par famille + catégories repliables (mémorisées).
+  const [nodeFilter, setNodeFilter] = useState<'all' | 'event' | 'condition' | 'action'>('all');
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('karactirage.kvlCollapsed') ?? '{}'); } catch { return {}; }
+  });
 
   const refreshGraphs = useCallback(async () => {
     try {
@@ -331,16 +349,37 @@ export const KvlGraphEditor: React.FC = () => {
 
   const catalogNodes = catalog?.nodes ?? [];
   const normalizedQuery = nodeQuery.trim().toLowerCase();
-  const filteredSchemas = normalizedQuery
-    ? catalogNodes.filter(schema =>
-        `${schema.id} ${schema.label} ${schema.description}`.toLowerCase().includes(normalizedQuery))
-    : catalogNodes;
-  const groupedSchemas = filteredSchemas.reduce<Record<string, KvlNodeSchema[]>>((acc, schema) => {
+  const inFlavor = (schema: KvlNodeSchema) =>
+    nodeFilter === 'all'
+      ? true
+      : nodeFilter === 'action'
+        ? schema.flavor === 'action' || schema.flavor === 'composite'
+        : schema.flavor === nodeFilter;
+  const filteredSchemas = catalogNodes.filter(schema =>
+    inFlavor(schema) &&
+    (!normalizedQuery || `${schema.id} ${schema.label} ${schema.description}`.toLowerCase().includes(normalizedQuery)));
+  // UX-601 : « suggérés d'abord » (nœuds cœur sans plugin), puis alphabétique.
+  const sortedSchemas = [...filteredSchemas].sort((a, b) =>
+    (a.plugin === null ? 0 : 1) - (b.plugin === null ? 0 : 1) || a.label.localeCompare(b.label, 'fr'));
+  const groupedSchemas = sortedSchemas.reduce<Record<string, KvlNodeSchema[]>>((acc, schema) => {
     const key = categoryLabel(schema.category);
     (acc[key] ??= []).push(schema);
     return acc;
   }, {});
   const orderedGroups = Object.entries(groupedSchemas).sort(([a], [b]) => a.localeCompare(b));
+  const countByFlavor = {
+    all: catalogNodes.length,
+    event: catalogNodes.filter(s => s.flavor === 'event').length,
+    condition: catalogNodes.filter(s => s.flavor === 'condition').length,
+    action: catalogNodes.filter(s => s.flavor === 'action' || s.flavor === 'composite').length,
+  };
+  const toggleGroup = (cat: string) => {
+    setCollapsed(prev => {
+      const next = { ...prev, [cat]: !prev[cat] };
+      localStorage.setItem('karactirage.kvlCollapsed', JSON.stringify(next));
+      return next;
+    });
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#07040d] overflow-hidden select-none">
@@ -406,6 +445,22 @@ export const KvlGraphEditor: React.FC = () => {
                     className="w-full text-[11px] py-1.5 pl-7 pr-2 bg-[#07040d] border border-[#2d1b4e] rounded focus:border-[#a855f7]"
                   />
                 </div>
+                <div className="flex gap-1">
+                  {([
+                    ['all', 'Tout'],
+                    ['event', 'Événements'],
+                    ['condition', 'Conditions'],
+                    ['action', 'Actions'],
+                  ] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setNodeFilter(key)}
+                      className={`flex-1 px-1.5 py-1.5 rounded text-[10px] font-semibold transition ${nodeFilter === key ? 'bg-[#2e1065] text-[#f0abfc] border border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#f8fafc] bg-[#150d27] border border-transparent'}`}
+                    >
+                      {label} <span className="opacity-70">({countByFlavor[key]})</span>
+                    </button>
+                  ))}
+                </div>
                 {!scriptPath && (
                   <p className="text-[10px] text-[#f59e0b] leading-relaxed">
                     Chargez un graphe dans l'onglet « Graphes » pour activer l'insertion.
@@ -413,25 +468,42 @@ export const KvlGraphEditor: React.FC = () => {
                 )}
                 {orderedGroups.map(([category, schemas]) => (
                   <div key={category} className="space-y-1">
-                    <div className="text-[10px] uppercase tracking-wide text-[#94a3b8] px-0.5">{category}</div>
-                    {schemas.map(schema => (
-                      <button
-                        key={schema.id}
-                        onClick={() => void addNode(schema)}
-                        disabled={busy || !scriptPath}
-                        title={schema.description}
-                        className="w-full text-left px-2 py-1.5 rounded bg-[#150d27] hover:bg-[#2d1b4e] border border-[#2d1b4e] hover:border-[#a855f7] disabled:opacity-40 disabled:cursor-not-allowed transition"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[9px] px-1 rounded bg-[#2e1065] text-[#c084fc] uppercase">{schema.flavor}</span>
-                          <span className="text-[11px] text-[#f8fafc] truncate">{schema.label}</span>
-                          <Plus size={10} className="ml-auto text-[#a855f7] shrink-0" />
-                        </div>
-                        <div className="text-[9px] text-[#94a3b8] truncate mt-0.5">
-                          {schema.id}{schema.default_argument ? `:${schema.default_argument}` : ''}
-                        </div>
-                      </button>
-                    ))}
+                    <button
+                      onClick={() => toggleGroup(category)}
+                      className="flex items-center gap-1.5 w-full text-[10px] uppercase tracking-wide text-[#94a3b8] px-0.5 py-1.5 hover:text-[#f8fafc] transition"
+                    >
+                      <ChevronRight size={11} className={`transition-transform shrink-0 ${collapsed[category] ? '' : 'rotate-90'}`} />
+                      {category}
+                      <span className="ml-auto normal-case text-[9px] text-[#64748b]">{schemas.length}</span>
+                    </button>
+                    {!collapsed[category] && schemas.map(schema => {
+                      const st = flavorStyle(schema.flavor);
+                      const required = requiredParamCount(schema);
+                      return (
+                        <button
+                          key={schema.id}
+                          onClick={() => void addNode(schema)}
+                          disabled={busy || !scriptPath}
+                          title={schema.description}
+                          style={{ borderLeft: `2px solid ${st.border}` }}
+                          className="w-full text-left px-2 py-1.5 rounded bg-[#150d27] hover:bg-[#2d1b4e] border border-[#2d1b4e] hover:border-[#a855f7] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span aria-hidden="true">{st.emoji}</span>
+                            <span className="text-[11px] text-[#f8fafc] truncate">{schema.label}</span>
+                            {required > 0 && (
+                              <span className="text-[8px] px-1 rounded bg-[#3b0764] text-[#f0abfc] uppercase shrink-0" title={`${required} paramètre(s) requis`}>
+                                requis
+                              </span>
+                            )}
+                            <Plus size={10} className="ml-auto text-[#a855f7] shrink-0" />
+                          </div>
+                          <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 font-mono">
+                            {schema.id}{schema.default_argument ? `:${schema.default_argument}` : ''}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 ))}
                 {filteredSchemas.length === 0 && (
