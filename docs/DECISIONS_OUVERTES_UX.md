@@ -33,6 +33,11 @@ woff2 auto-hébergées) ou assumer la police système ?
 > **Recommandation : B** — livrer d'abord les 3 choix visuels (Jouer une démo / Créer /
 > Comprendre) sans refondre le reste du hub, puis itérer.
 
+> ✅ **Décision prise : B — implémenté.** `ProjectHubModal` ouvre désormais sur un
+> écran d'accueil « 3 choix » (Jouer une démo → `ArchetypesModal`, Créer → formulaire,
+> Comprendre → visite guidée `StudioGuideModal`) + accès discret « Ouvrir un projet
+> existant » et bouton « Accueil » pour y revenir. K11 : démo lancée en 2 clics.
+
 ---
 
 ## D13.3 — Portée de l'éditeur KVL (§13.4)
