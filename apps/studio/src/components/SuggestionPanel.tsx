@@ -131,7 +131,7 @@ export const SuggestionPanel: React.FC<SuggestionPanelProps> = ({
               )}
               <button
                 onClick={() => { onOpenKvl(); markDone('kvl-rule'); }}
-                className={done['kvl-rule'] ? 'text-[#94a3b8]' : 'text-[#c084fc] underline-offset-2 hover:underline'}
+                className={`py-1.5 ${done['kvl-rule'] ? 'text-[#94a3b8]' : 'text-[#c084fc] underline-offset-2 hover:underline'}`}
               >
                 Ajouter une règle KVL
               </button>
@@ -145,9 +145,9 @@ export const SuggestionPanel: React.FC<SuggestionPanelProps> = ({
               )}
               <button
                 onClick={() => { onTestGame(); markDone('test'); }}
-                className={done['test'] ? 'text-[#94a3b8]' : 'text-[#38bdf8] underline-offset-2 hover:underline'}
+                className={`py-1.5 ${done['test'] ? 'text-[#94a3b8]' : 'text-[#38bdf8] underline-offset-2 hover:underline'}`}
               >
-                Tester le jeu [Tab]
+                Tester le jeu
               </button>
             </div>
           </div>

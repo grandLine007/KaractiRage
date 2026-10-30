@@ -79,14 +79,14 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
         <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={() => onDuplicate(selectedEntity.id)}
-            className="p-1 hover:bg-[#1e1338] text-[#c084fc] rounded transition"
+            className="flex items-center justify-center w-8 h-8 hover:bg-[#1e1338] text-[#c084fc] rounded transition"
             title="Dupliquer l'entité [Ctrl+D]"
           >
             <Copy size={13} />
           </button>
           <button
             onClick={() => onDelete(selectedEntity.id)}
-            className="p-1 hover:bg-[#881337] text-[#f43f5e] rounded transition"
+            className="flex items-center justify-center w-8 h-8 hover:bg-[#881337] text-[#f43f5e] rounded transition"
             title="Supprimer l'entité [Suppr]"
           >
             <Trash2 size={13} />
@@ -158,7 +158,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
             {selectedEntity.is_player_controlled && (
               <div className="flex items-center justify-between">
                 <span className="text-[#94a3b8]">Rôle</span>
-                <span className="badge-tag bg-[#0c4a6e] text-[#38bdf8]">Joueur contrôlé</span>
+                <span className="badge-tag bg-[#0c4a6e] text-[#7dd3fc]">Joueur contrôlé</span>
               </div>
             )}
 

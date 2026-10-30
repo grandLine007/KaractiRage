@@ -116,6 +116,7 @@ export const PxlArtWorkspace: React.FC = () => {
           <select
             value={source}
             onChange={e => setSource(e.target.value)}
+            aria-label="Source d'art"
             className="bg-[#150d27] border border-[#2d1b4e] rounded px-1.5 py-1 text-[11px] text-[#cbd5e1]"
           >
             {sources.map(s => <option key={s} value={s}>{s}</option>)}

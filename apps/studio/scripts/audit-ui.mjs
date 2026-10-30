@@ -125,8 +125,30 @@ async function runAxe(page) {
     const res = await window.axe.run(document, {
       runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] },
     });
-    return res.violations.map((v) => ({ id: v.id, impact: v.impact, count: v.nodes.length, help: v.help }));
+    return res.violations.map((v) => {
+      const nodes = v.nodes.map((n) => ({
+        target: Array.isArray(n.target) ? n.target.join(' ') : String(n.target),
+        html: (n.html || '').replace(/\s+/g, ' ').slice(0, 140),
+        failure: (n.failureSummary || '').replace(/\s+/g, ' ').slice(0, 200),
+      }));
+      return {
+        id: v.id,
+        impact: v.impact,
+        count: v.nodes.length,
+        help: v.help,
+        targets: nodes.slice(0, 10).map((n) => n.target),
+        html: nodes[0]?.html ?? '',
+        failureSummary: nodes[0]?.failure ?? '',
+      };
+    });
   });
+}
+
+/** Log lisible des violations critical/serious (sélecteurs ciblés). */
+function logViolations(axe) {
+  axe
+    .filter((v) => v.impact === 'critical' || v.impact === 'serious')
+    .forEach((v) => console.log(`[audit]   ↳ ${v.id} ×${v.count} → ${(v.targets || []).slice(0, 3).join(' ‖ ')}`));
 }
 
 /** Pourcentage de pixels différents (>8 par canal) entre deux PNG de même taille. */
@@ -191,6 +213,7 @@ async function main() {
           console.log(
             `[audit] ${step.id} @${vp.name} header=${metrics.header_height ?? '—'}px cible_min=${metrics.header_target_min ?? '—'}px canvas_ratio=${metrics.canvas ? metrics.canvas.ratio : '—'} axe_crit/serious=${serious}`,
           );
+          logViolations(axe);
         }
         await page.close();
       }
@@ -212,6 +235,7 @@ async function main() {
         const serious = axe.filter((v) => v.impact === 'critical' || v.impact === 'serious').reduce((n, v) => n + v.count, 0);
         results.push({ scenario: fault.id, label: fault.label, viewport: '1440x900', ...metrics, axe, screenshot: path.relative(ROOT, shot) });
         console.log(`[audit] ${fault.id} @1440x900 axe_crit/serious=${serious}`);
+        logViolations(axe);
         await page.close();
       }
     } finally {

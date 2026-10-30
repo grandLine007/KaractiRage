@@ -32,10 +32,16 @@ Le script effectue :
 - `audit/report.json` — métriques + violations axe par scénario ;
 - `audit/<scenario>-<width>.png` — captures d'écran.
 
+Chaque violation axe expose `targets` (sélecteurs CSS, ≤ 10 nœuds), `html`
+(extrait tronqué) et `failureSummary` : le rapport est **directement
+actionnable** — on localise et corrige sans rejouer l'audit. Le terminal
+imprime aussi une ligne `↳ <règle> ×<n> → <sélecteurs>` par scénario.
+
 Résumé imprimé en console, ex. :
 
 ```text
-[audit] hub @1440x900 header=38px cible_min=16px canvas_ratio=1.75 axe_crit/serious=18
+[audit] hub @1440x900 header=56px cible_min=32px canvas_ratio=1.5 axe_crit/serious=0
+[audit]   ↳ target-size ×4 → button[title="Échelle 1x"] ‖ …        # sélecteurs des violations
 ```
 
 ## Cibles suivies (scorecard §4 du plan)
@@ -57,6 +63,9 @@ partiellement par axe-core ; les scripts dédiés viendront dans les lots WS4/WS
   est reporté dans `report.json` (`baseline_diff_pct`) et un avertissement est émis
   au-delà de **0,5 %**.
 - Toute différence justifiée doit être documentée dans la PR.
+- **Règle** : la baseline se régénère **uniquement en fin de lot** (refonte visuelle
+  ou correctif a11y terminé), après revue des captures — jamais en cours de lot, pour
+  ne pas masquer une régression.
 
 ## Scénarios de pannes (UX-005)
 

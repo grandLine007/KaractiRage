@@ -443,7 +443,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
                 key={z}
                 onClick={() => setZoomMode(z)}
                 aria-pressed={zoom === z}
-                className={`flex items-center justify-center h-7 px-1.5 rounded text-[10px] font-bold transition ${
+                className={`flex items-center justify-center h-8 min-w-8 px-2 rounded text-[10px] font-bold transition ${
                   zoom === z ? 'bg-[#3b0764] text-[#f3e8ff] border border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#150d27]'
                 }`}
                 title={z === 'fit' ? 'Ajuster à la fenêtre' : `Échelle ${z}`}

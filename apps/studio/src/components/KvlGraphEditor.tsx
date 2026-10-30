@@ -453,8 +453,9 @@ export const KvlGraphEditor: React.FC = () => {
                     if (f.type === 'select') {
                       return (
                         <div key={f.key}>
-                          <label className="text-[10px] text-[#94a3b8] block mb-0.5">{f.label}</label>
+                          <label htmlFor={`${r.id}-${f.key}`} className="text-[10px] text-[#94a3b8] block mb-0.5">{f.label}</label>
                           <select
+                            id={`${r.id}-${f.key}`}
                             value={String(values[f.key])}
                             onChange={e => setField(r.id, f.key, e.target.value)}
                             className="w-full text-[11px] py-1 px-1.5 bg-[#07040d] border border-[#2d1b4e] rounded focus:border-[#a855f7]"
@@ -466,8 +467,9 @@ export const KvlGraphEditor: React.FC = () => {
                     }
                     return (
                       <div key={f.key}>
-                        <label className="text-[10px] text-[#94a3b8] block mb-0.5">{f.label}</label>
+                        <label htmlFor={`${r.id}-${f.key}`} className="text-[10px] text-[#94a3b8] block mb-0.5">{f.label}</label>
                         <input
+                          id={`${r.id}-${f.key}`}
                           type={f.type}
                           value={values[f.key]}
                           onChange={e => setField(r.id, f.key, f.type === 'number' ? Number(e.target.value) : e.target.value)}

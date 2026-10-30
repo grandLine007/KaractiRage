@@ -60,10 +60,15 @@
   color-scheme: dark;
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+/* Reset global dans la couche `base` (UX-103). Hors couche, un `* { padding: 0 }`
+   écraserait les utilitaires p-*/px-*/py-*/m-* de Tailwind v4 (qui vivent dans
+   `@layer utilities`), ce qui réduisait les cibles à leur seul line-height (~14 px). */
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
 }
 
 /* Focus visible global (UX-402) — 2 px accent + offset, jamais d'outline supprimé sans remplacement. */
