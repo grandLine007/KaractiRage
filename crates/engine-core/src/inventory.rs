@@ -496,13 +496,14 @@ impl Inventory {
         if let Some(ref slot) = self.selected_slot() {
             let label = format!("[{}] {}", self.selected_hotbar_index + 1, slot.item.name);
             let tip_x = start_x;
-            let tip_y = bg_y - 20;
+            // Sous la notification (bg_y - 42) : les deux libellés ne se touchent plus.
+            let tip_y = bg_y - 18;
             canvas.draw_text(tip_x, tip_y, &label, 0x0038BDF8, 1);
         }
 
         // 4. Notification flottante de ramassage / action (au-dessus du nom)
         if let Some((ref msg, _)) = self.notification {
-            let notif_y = bg_y - 36;
+            let notif_y = bg_y - 42;
             let notif_w = (msg.len() * 6 + 16) as u32;
             let notif_x = center_x - (notif_w as i32 / 2);
             canvas.draw_badge(

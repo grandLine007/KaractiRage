@@ -5863,6 +5863,34 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         }
     }
 
+    /// Texte d'objectif du HUD : KVL prioritaire, sinon scène, sinon repli par mode.
+    fn objective_hud_text(&self, player_mode: MovementMode, has_pushables: bool) -> String {
+        if let Some(Value::String(text)) = self.kvl_context.get_var("objective") {
+            return text.clone();
+        }
+        if let Some(ref scene_objective) = self.scene_objective {
+            return scene_objective.clone();
+        }
+
+        let score = match self.kvl_context.get_var("score") {
+            Some(Value::Int(value)) => *value,
+            _ => 0,
+        };
+        match player_mode {
+            MovementMode::Platformer { .. } => "ATTEIGNEZ LE PORTAIL QUANTIQUE".to_string(),
+            MovementMode::SpaceInertia { .. } => "PILOTEZ LE VAISSEAU SPATIAL".to_string(),
+            MovementMode::Grid { .. } => "DÉPLACEZ LES BLOCS SUR LA DALLE".to_string(),
+            MovementMode::TopDown if has_pushables => "POUSSEZ LES BLOCS SUR LES DALLES".to_string(),
+            MovementMode::TopDown => {
+                if score < 50 {
+                    "COLLECTEZ 50 OR POUR LA PORTE".to_string()
+                } else {
+                    "PORTE DÉVERROUILLÉE ! SORTEZ DU DONJON".to_string()
+                }
+            }
+        }
+    }
+
     pub fn render(&mut self, canvas: &mut Canvas) {
         canvas.clear(0x00080B14);
 
@@ -6344,26 +6372,6 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                 _ => 0,
             };
 
-            let obj_txt = if let Some(Value::String(s)) = self.kvl_context.get_var("objective") {
-                s.as_str()
-            } else if let Some(ref s_obj) = self.scene_objective {
-                s_obj.as_str()
-            } else {
-                match player_mode {
-                    MovementMode::Platformer { .. } => "ATTEIGNEZ LE PORTAIL QUANTIQUE",
-                    MovementMode::SpaceInertia { .. } => "PILOTEZ LE VAISSEAU SPATIAL",
-                    MovementMode::Grid { .. } => "DÉPLACEZ LES BLOCS SUR LA DALLE",
-                    MovementMode::TopDown if has_pushables => "POUSSEZ LES BLOCS SUR LES DALLES",
-                    MovementMode::TopDown => {
-                        if score < 50 {
-                            "COLLECTEZ 50 OR POUR LA PORTE"
-                        } else {
-                            "PORTE DÉVERROUILLÉE ! SORTEZ DU DONJON"
-                        }
-                    }
-                }
-            };
-
             let (cur_hp, max_hp) = if let Some(p_idx) = self.player_index() {
                 if let Some(ref h) = self.entities[p_idx].health {
                     (h.current.ceil() as i32, h.max.ceil() as i32)
@@ -6376,17 +6384,25 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             let hearts_count = max_hp.clamp(1, 10);
 
             let hearts_w = hearts_count * 16 + 8;
-            let score_str = format!("🪙 {} OR", score);
+            // Pas d'emoji : la police bitmap ne fournit pas le glyphe pièce.
+            let score_str = format!("{} OR", score);
+            let obj_txt = self.objective_hud_text(player_mode, has_pushables);
             let score_w = canvas.measure_text(&score_str, 1).0 as i32 + 16;
-            let obj_prefix = "🎯 ";
-            let full_obj_str = format!("{}{}", obj_prefix, obj_txt);
-            let obj_w = canvas.measure_text(&full_obj_str, 1).0 as i32 + 20;
 
-            let has_boss = self.entities.iter().any(|e| e.is_active && e.boss.is_some());
-            let hud_pill_w = if has_boss {
-                (hearts_w + score_w + 22) as u32
+            // Sans quête, la pilule porte l'objectif de repli ; avec une quête, le
+            // widget de quête s'en charge et la pilule reste compacte.
+            let fallback_objective = if self.quest.is_none() {
+                Some(obj_txt.as_str())
             } else {
+                None
+            };
+            let obj_w = fallback_objective
+                .map(|text| canvas.measure_text(text, 1).0 + 20)
+                .unwrap_or(0);
+            let hud_pill_w = if fallback_objective.is_some() {
                 (hearts_w + score_w + obj_w + 32) as u32
+            } else {
+                (hearts_w + score_w + 22) as u32
             };
             let hud_x = 18;
             let hud_y = vy + 12;
@@ -6409,11 +6425,12 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             hx += 10;
 
             canvas.draw_text(hx, hud_y + 10, &score_str, 0x00FBBF24, 1);
-            if !has_boss {
+
+            if let Some(text) = fallback_objective {
                 hx += score_w + 2;
                 canvas.draw_line(hx, hud_y + 6, hx, hud_y + (hud_h as i32) - 6, 0x00334155);
                 hx += 10;
-                canvas.draw_text(hx, hud_y + 10, &full_obj_str, 0x006EE7B7, 1);
+                canvas.draw_text(hx, hud_y + 10, text, 0x006EE7B7, 1);
             }
         }
 
@@ -7732,8 +7749,10 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
 
             if let Some(ref q) = self.quest {
                 let q_x = 18;
-                let q_y = if is_embedded { vy + 16 } else { vy + 56 };
-                q.render(canvas, q_x, q_y);
+                // Sous la pilule cœurs/score (hauteur 34, y+12) : jamais de recouvrement.
+                let q_y = vy + 56;
+                let objective_text = self.objective_hud_text(player_mode, has_pushables);
+                q.render(canvas, q_x, q_y, Some(&objective_text));
             }
         }
 
