@@ -199,10 +199,27 @@ async function main() {
     const browser = await chromium.launch({ channel: 'chrome', headless: true });
     const results = [];
 
+    // Audit déterministe : le tier GPU dépend de la machine et de la version de
+    // Chrome (WEBGPU présent ou non). On force le chemin WebGL2 pour que la
+    // baseline et les runs suivants comparent le même badge.
+    const preparePage = async (page) => {
+      await page.addInitScript({ path: MOCK_PATH });
+      await page.addInitScript(() => {
+        try {
+          Object.defineProperty(navigator, 'gpu', {
+            get: () => undefined,
+            configurable: true,
+          });
+        } catch {
+          /* moteur sans WebGPU : le chemin WebGL2 est déjà celui attendu */
+        }
+      });
+    };
+
     try {
       for (const vp of VIEWPORTS) {
         const page = await browser.newPage({ viewport: { width: vp.width, height: vp.height } });
-        await page.addInitScript({ path: MOCK_PATH });
+        await preparePage(page);
         await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
         await page.getByTestId('hub').waitFor({ state: 'visible', timeout: 15000 });
 
@@ -240,7 +257,7 @@ async function main() {
       // Scénarios de pannes (UX-005) — une page par panne, 1440×900.
       for (const fault of FAULTS) {
         const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-        await page.addInitScript({ path: MOCK_PATH });
+        await preparePage(page);
         await page.goto(BASE_URL + fault.url, { waitUntil: 'domcontentloaded' });
         await page.getByTestId('hub').waitFor({ state: 'visible', timeout: 15000 });
         if (fault.run) {
