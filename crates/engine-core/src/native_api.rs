@@ -11,6 +11,7 @@ use crate::game::GameState;
 use crate::input::InputState;
 use crate::renderer::Canvas;
 use glam::Vec3;
+use std::path::{Component, Path, PathBuf};
 use winit::keyboard::KeyCode;
 
 pub const CANVAS_WIDTH: usize = 1200;
@@ -1074,6 +1075,7 @@ impl NativeEngine {
             .game
             .kvl_graphs
             .iter()
+            .filter(|(path, _)| validate_graph_relative_path(path).is_ok())
             .map(|(path, g)| {
                 serde_json::json!({
                     "path": path,
@@ -1132,8 +1134,11 @@ impl NativeEngine {
             Ok(g) => g,
             Err(_) => return false,
         };
-        self.game.kvl_graphs.insert(path.to_string(), graph.clone());
-        self.persist_kvl_graph_to_disk(path, &graph);
+        // Écrire d'abord : un chemin invalide ne doit jamais modifier la mémoire.
+        if self.persist_kvl_graph_to_disk(path, &graph).is_err() {
+            return false;
+        }
+        self.game.kvl_graphs.insert(path.to_string(), graph);
         true
     }
 
@@ -1147,6 +1152,7 @@ impl NativeEngine {
         x: f32,
         y: f32,
     ) -> Result<String, String> {
+        self.resolve_kvl_graph_path(path)?;
         let (schema, concrete) = self
             .game
             .plugins
@@ -1163,7 +1169,8 @@ impl NativeEngine {
             .map_err(|error| error.to_string())?;
         let snapshot = graph.clone();
         let json = snapshot.to_json().map_err(|error| error.to_string())?;
-        self.persist_kvl_graph_to_disk(path, &snapshot);
+        self.persist_kvl_graph_to_disk(path, &snapshot)
+            .map_err(|error| format!("Nœud inséré en mémoire mais non persisté : {}", error))?;
         Ok(json)
     }
 
@@ -1177,6 +1184,7 @@ impl NativeEngine {
         to_node: &str,
         to_pin: &str,
     ) -> Result<String, String> {
+        self.resolve_kvl_graph_path(path)?;
         let graph = self
             .game
             .kvl_graphs
@@ -1187,12 +1195,14 @@ impl NativeEngine {
             .map_err(|error| error.to_string())?;
         let snapshot = graph.clone();
         let json = snapshot.to_json().map_err(|error| error.to_string())?;
-        self.persist_kvl_graph_to_disk(path, &snapshot);
+        self.persist_kvl_graph_to_disk(path, &snapshot)
+            .map_err(|error| format!("Connexion ajoutée en mémoire mais non persistée : {}", error))?;
         Ok(json)
     }
 
     /// Supprime une connexion KVL par identifiant, persiste et renvoie le graphe.
     pub fn remove_kvl_connection(&mut self, path: &str, connection_id: &str) -> Result<String, String> {
+        self.resolve_kvl_graph_path(path)?;
         let graph = self
             .game
             .kvl_graphs
@@ -1203,12 +1213,14 @@ impl NativeEngine {
         }
         let snapshot = graph.clone();
         let json = snapshot.to_json().map_err(|error| error.to_string())?;
-        self.persist_kvl_graph_to_disk(path, &snapshot);
+        self.persist_kvl_graph_to_disk(path, &snapshot)
+            .map_err(|error| format!("Connexion supprimée en mémoire mais non persistée : {}", error))?;
         Ok(json)
     }
 
     /// Supprime un nœud KVL et toutes ses connexions, persiste et renvoie le graphe.
     pub fn remove_kvl_node(&mut self, path: &str, node_id: &str) -> Result<String, String> {
+        self.resolve_kvl_graph_path(path)?;
         let graph = self
             .game
             .kvl_graphs
@@ -1220,17 +1232,29 @@ impl NativeEngine {
         graph.connections.retain(|c| c.from_node != node_id && c.to_node != node_id);
         let snapshot = graph.clone();
         let json = snapshot.to_json().map_err(|error| error.to_string())?;
-        self.persist_kvl_graph_to_disk(path, &snapshot);
+        self.persist_kvl_graph_to_disk(path, &snapshot)
+            .map_err(|error| format!("Nœud supprimé en mémoire mais non persisté : {}", error))?;
         Ok(json)
     }
 
     /// Crée un graphe KVL vide, l'insère en mémoire et le persiste. (WS6/UX-606)
+    ///
+    /// Refuse un nom vide, un identifiant vide et toute collision (mémoire ou
+    /// disque) : créer deux fois « Nouvelle règle » ne doit jamais écraser le
+    /// premier graphe.
     pub fn new_kvl_graph(&mut self, name: &str, description: &str) -> Result<String, String> {
-        let id = format!("g_{}", name.to_lowercase().replace(|c: char| !c.is_alphanumeric(), "_"));
-        let graph = kvl_core::Graph::new(id.clone(), name, description);
+        let id = graph_id_from_name(name)?;
         let path = format!("assets/scripts/{}.kvl.json", id);
-        self.game.kvl_graphs.insert(path.clone(), graph.clone());
-        self.persist_kvl_graph_to_disk(&path, &graph);
+        let abs = self.resolve_kvl_graph_path(&path)?;
+        ensure_graph_target_free(
+            &path,
+            self.game.kvl_graphs.contains_key(&path),
+            abs.exists(),
+        )?;
+
+        let graph = kvl_core::Graph::new(id, name.trim(), description);
+        self.persist_kvl_graph_to_disk(&path, &graph)?;
+        self.game.kvl_graphs.insert(path.clone(), graph);
         Ok(path)
     }
 
@@ -1242,33 +1266,54 @@ impl NativeEngine {
             .get(path)
             .ok_or_else(|| format!("Graphe introuvable : {}", path))?
             .clone();
-        copy.id = format!("g_{}", new_name.to_lowercase().replace(|c: char| !c.is_alphanumeric(), "_"));
-        copy.name = new_name.to_string();
+
+        copy.id = graph_id_from_name(new_name)?;
+        copy.name = new_name.trim().to_string();
         let new_path = format!("assets/scripts/{}.kvl.json", copy.id);
-        self.game.kvl_graphs.insert(new_path.clone(), copy.clone());
-        self.persist_kvl_graph_to_disk(&new_path, &copy);
+        let abs = self.resolve_kvl_graph_path(&new_path)?;
+        ensure_graph_target_free(
+            &new_path,
+            self.game.kvl_graphs.contains_key(&new_path),
+            abs.exists(),
+        )?;
+
+        self.persist_kvl_graph_to_disk(&new_path, &copy)?;
+        self.game.kvl_graphs.insert(new_path.clone(), copy);
         Ok(new_path)
     }
 
     /// Renomme un graphe KVL (nom affiché), persiste. (WS6/UX-606)
     pub fn rename_kvl_graph(&mut self, path: &str, new_name: &str) -> bool {
-        if let Some(g) = self.game.kvl_graphs.get_mut(path) {
-            g.name = new_name.to_string();
-            let snapshot = g.clone();
-            self.persist_kvl_graph_to_disk(path, &snapshot);
-            return true;
+        let trimmed = new_name.trim();
+        if trimmed.is_empty() {
+            return false;
         }
-        false
+        let Some(mut snapshot) = self.game.kvl_graphs.get(path).cloned() else {
+            return false;
+        };
+        snapshot.name = trimmed.to_string();
+        // Persister avant de modifier la mémoire : un échec disque ne laisse pas
+        // un nom divergent entre l'UI et le fichier.
+        if self.persist_kvl_graph_to_disk(path, &snapshot).is_err() {
+            return false;
+        }
+        self.game.kvl_graphs.insert(path.to_string(), snapshot);
+        true
     }
 
     /// Supprime un graphe KVL de la mémoire et du disque. (WS6/UX-606)
+    ///
+    /// Un chemin hors `assets/scripts/` est refusé : la commande ne peut pas
+    /// supprimer un fichier arbitraire du workspace.
     pub fn delete_kvl_graph(&mut self, path: &str) -> bool {
-        if self.game.kvl_graphs.remove(path).is_some() {
-            let abs = format!("{}/../../{}", env!("CARGO_MANIFEST_DIR"), path);
-            let _ = std::fs::remove_file(&abs);
-            return true;
+        let Ok(abs) = self.resolve_kvl_graph_path(path) else {
+            return false;
+        };
+        if self.game.kvl_graphs.remove(path).is_none() {
+            return false;
         }
-        false
+        let _ = std::fs::remove_file(abs);
+        true
     }
 
     /// Attache un script KVL existant à une entité (par id) avec un événement de recouvrement.
@@ -1293,14 +1338,23 @@ impl NativeEngine {
         }
     }
 
-    fn persist_kvl_graph_to_disk(&self, path: &str, graph: &kvl_core::Graph) {
-        if let Ok(json) = graph.to_json() {
-            let abs = format!("{}/../../{}", env!("CARGO_MANIFEST_DIR"), path);
-            if let Some(parent) = std::path::Path::new(&abs).parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(&abs, json);
+    fn resolve_kvl_graph_path(&self, path: &str) -> Result<PathBuf, String> {
+        Ok(self.repo_root().join(validate_graph_relative_path(path)?))
+    }
+
+    /// Persiste un graphe dans `assets/scripts/` uniquement. Toute erreur est
+    /// remontée : l'appelant décide de conserver ou non l'état mémoire.
+    fn persist_kvl_graph_to_disk(&self, path: &str, graph: &kvl_core::Graph) -> Result<(), String> {
+        let abs = self.resolve_kvl_graph_path(path)?;
+        let json = graph
+            .to_json()
+            .map_err(|error| format!("Sérialisation KVL impossible : {}", error))?;
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("Dossier KVL inaccessible : {}", error))?;
         }
+        std::fs::write(&abs, json)
+            .map_err(|error| format!("Écriture KVL impossible ({}) : {}", abs.display(), error))
     }
 
     /// Construit un graphe KVL guidé, l'attache à l'entité sélectionnée (ou en
@@ -1386,8 +1440,14 @@ impl NativeEngine {
             recipe,
             self.game.entities.len() + 1
         );
+        if let Err(error) = self.persist_kvl_graph_to_disk(&script_path, &graph) {
+            return serde_json::json!({
+                "ok": false,
+                "error": format!("Graphe généré mais non persisté : {}", error),
+            })
+            .to_string();
+        }
         self.game.kvl_graphs.insert(script_path.clone(), graph.clone());
-        self.persist_kvl_graph_to_disk(&script_path, &graph);
 
         let mut attached = false;
         let mut target_entity: Option<String> = None;
@@ -1892,6 +1952,110 @@ impl NativeEngine {
     }
 }
 
+/// Valide qu'un chemin de graphe reste **directement** sous `assets/scripts/`.
+///
+/// Refuse : chemin vide, absolu, antislash, `..`, sous-dossier, extension autre
+/// que `.kvl.json`. Retourne le chemin relatif d'origine.
+fn validate_graph_relative_path(path: &str) -> Result<&Path, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Chemin de graphe vide.".into());
+    }
+    if trimmed.contains('\\') || trimmed.contains('\0') {
+        return Err(format!("Chemin de graphe invalide : {}", path));
+    }
+
+    let candidate = Path::new(trimmed);
+    if candidate.is_absolute() {
+        return Err(format!("Chemin de graphe absolu refusé : {}", path));
+    }
+
+    let mut components = candidate.components();
+    let (Some(Component::Normal(assets)), Some(Component::Normal(scripts)), Some(Component::Normal(file)), None) = (
+        components.next(),
+        components.next(),
+        components.next(),
+        components.next(),
+    ) else {
+        return Err(format!(
+            "Le graphe doit être directement dans assets/scripts/ : {}",
+            path
+        ));
+    };
+
+    if assets.to_str() != Some("assets") || scripts.to_str() != Some("scripts") {
+        return Err(format!(
+            "Le graphe doit être directement dans assets/scripts/ : {}",
+            path
+        ));
+    }
+
+    let file = file
+        .to_str()
+        .ok_or_else(|| format!("Nom de fichier KVL non UTF-8 : {}", path))?;
+    if file == ".kvl.json" || !file.ends_with(".kvl.json") {
+        return Err(format!(
+            "Le fichier doit se terminer par .kvl.json : {}",
+            path
+        ));
+    }
+
+    Ok(candidate)
+}
+
+/// Identifiant de fichier stable à partir d'un nom lisible.
+///
+/// « Nouvelle règle » → `g_nouvelle_r_gle` ; un nom sans lettre ni chiffre est
+/// refusé plutôt que de produire `g_` ou un chemin vide.
+fn graph_id_from_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Le nom du graphe ne peut pas être vide.".into());
+    }
+    if trimmed.chars().count() > 120 {
+        return Err("Le nom du graphe est trop long (120 caractères max).".into());
+    }
+
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+    for character in trimmed.chars() {
+        if character.is_ascii_alphanumeric() {
+            for lower in character.to_lowercase() {
+                slug.push(lower);
+            }
+            last_was_separator = false;
+        } else if !last_was_separator && !slug.is_empty() {
+            slug.push('_');
+            last_was_separator = true;
+        }
+    }
+    while slug.ends_with('_') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        return Err("Le nom doit contenir au moins une lettre ou un chiffre.".into());
+    }
+
+    let slug: String = slug.chars().take(64).collect();
+    let slug = slug.trim_matches('_');
+    Ok(format!("g_{}", slug))
+}
+
+/// Refuse une cible déjà occupée, en mémoire ou sur disque.
+fn ensure_graph_target_free(
+    path: &str,
+    exists_in_memory: bool,
+    exists_on_disk: bool,
+) -> Result<(), String> {
+    if exists_in_memory || exists_on_disk {
+        return Err(format!(
+            "Un graphe existe déjà à cet emplacement : {}. Choisissez un autre nom.",
+            path
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2118,5 +2282,92 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    #[test]
+    fn graph_paths_are_confined_to_assets_scripts() {
+        for good in [
+            "assets/scripts/coin_pickup.kvl.json",
+            "assets/scripts/guided_coin_1.kvl.json",
+        ] {
+            assert!(
+                validate_graph_relative_path(good).is_ok(),
+                "chemin refusé à tort : {}",
+                good
+            );
+        }
+
+        for bad in [
+            "",
+            "../evil.kvl.json",
+            "/tmp/evil.kvl.json",
+            "assets/scripts/../../evil.kvl.json",
+            "assets/sprites/evil.kvl.json",
+            "assets/scripts/evil.json",
+            "assets/scripts/sub/evil.kvl.json",
+            "assets/scripts/.kvl.json",
+            "assets/scripts\\evil.kvl.json",
+        ] {
+            assert!(
+                validate_graph_relative_path(bad).is_err(),
+                "chemin accepté à tort : {}",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn graph_ids_are_stable_and_never_empty() {
+        assert_eq!(graph_id_from_name("Nouvelle règle").unwrap(), "g_nouvelle_r_gle");
+        assert_eq!(graph_id_from_name("A/B").unwrap(), "g_a_b");
+        assert_eq!(graph_id_from_name("  Porte  ").unwrap(), "g_porte");
+        assert!(graph_id_from_name("   ").is_err());
+        assert!(graph_id_from_name("!!!").is_err());
+
+        let long = graph_id_from_name(&"x".repeat(100)).unwrap();
+        assert!(long.starts_with("g_"));
+        assert!(long.len() <= 66, "identifiant trop long : {}", long.len());
+    }
+
+    #[test]
+    fn graph_target_guard_rejects_memory_and_disk_collisions() {
+        assert!(ensure_graph_target_free("assets/scripts/a.kvl.json", false, false).is_ok());
+        assert!(ensure_graph_target_free("assets/scripts/a.kvl.json", true, false).is_err());
+        assert!(ensure_graph_target_free("assets/scripts/a.kvl.json", false, true).is_err());
+    }
+
+    struct FileGuard(std::path::PathBuf);
+    impl Drop for FileGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn graph_crud_refuses_collisions_and_path_escapes() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let name = format!("ux_collision_{}_{}", std::process::id(), unique);
+
+        let path = engine.new_kvl_graph(&name, "test").expect("création initiale");
+        let _guard = FileGuard(engine.repo_root().join(&path));
+
+        let duplicate = engine
+            .new_kvl_graph(&name, "test")
+            .expect_err("un nom identique doit être refusé");
+        assert!(duplicate.contains("existe déjà"), "message : {}", duplicate);
+
+        let copy_error = engine
+            .duplicate_kvl_graph(&path, &name)
+            .expect_err("une copie au même nom doit être refusée");
+        assert!(copy_error.contains("existe déjà"), "message : {}", copy_error);
+
+        assert!(!engine.save_kvl_graph("../../evil.kvl.json", "{}"));
+        assert!(!engine.delete_kvl_graph("../../evil.kvl.json"));
+        assert!(engine.delete_kvl_graph(&path));
+        assert!(!engine.game.kvl_graphs.contains_key(&path));
     }
 }
