@@ -1,3 +1,80 @@
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
+/// Division entière exacte par 255 pour `v` dans [0, 65025].
+///
+/// Identité : `v / 255 == (v + 1 + (v >> 8)) >> 8` pour tout `v <= 65025`.
+/// Évite 3 divisions matérielles par pixel de glyphe dans le blending alpha.
+#[inline]
+fn div255(v: u32) -> u32 {
+    (v + 1 + (v >> 8)) >> 8
+}
+
+/// Glyphe pré-rastérisé mis en cache pour éliminer toute allocation heap dans le hot path de rendu
+#[derive(Clone)]
+pub struct CachedGlyph {
+    pub metrics: fontdue::Metrics,
+    pub bitmap: Arc<[u8]>,
+}
+
+/// Cache global de glyphes indexé par (pointeur_police, caractère, taille_quantifiée_x10)
+pub static GLYPH_CACHE: RwLock<Option<HashMap<(usize, char, u16), CachedGlyph>>> = RwLock::new(None);
+
+/// Accède à un glyphe depuis le cache sans aucune allocation heap en régime de croisière
+#[inline]
+pub fn with_cached_glyph<R>(
+    font: &fontdue::Font,
+    c: char,
+    size: f32,
+    f: impl FnOnce(&fontdue::Metrics, &[u8]) -> R,
+) -> R {
+    let font_ptr = font as *const fontdue::Font as usize;
+    let size_key = (size * 10.0).round() as u16;
+    let key = (font_ptr, c, size_key);
+
+    // 1. Fast Path : Accès immédiat en lecture sans clonage d'Arc ni allocation
+    if let Ok(guard) = GLYPH_CACHE.read() {
+        if let Some(ref cache) = *guard {
+            if let Some(cached) = cache.get(&key) {
+                return f(&cached.metrics, &cached.bitmap);
+            }
+        }
+    }
+
+    // 2. Slow Path : Rastérisation unique et mise en cache
+    let (metrics, bitmap) = font.rasterize(c, size);
+    let bitmap_arc: Arc<[u8]> = Arc::from(bitmap.into_boxed_slice());
+    let cached = CachedGlyph {
+        metrics,
+        bitmap: bitmap_arc.clone(),
+    };
+
+    if let Ok(mut guard) = GLYPH_CACHE.write() {
+        let cache = guard.get_or_insert_with(|| HashMap::with_capacity(512));
+        cache.insert(key, cached);
+    }
+
+    f(&metrics, &bitmap_arc)
+}
+
+/// Préchauffe le cache de glyphes pour les polices et tailles clés de l'interface
+pub fn warmup_glyph_cache() {
+    let title = get_title_font();
+    let body = get_body_font();
+    let mono = get_mono_font();
+    let fonts = [title, body, mono];
+    let sizes = [10.0, 11.0, 12.0, 13.0, 14.0, 16.0, 17.0, 20.0];
+    let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;!?+-*/=()[]{}<>'\"_#%~@$éèêëàâîïôùûçÉÈÀÇ°«»€ ";
+
+    for &font in &fonts {
+        for &size in &sizes {
+            for c in chars.chars() {
+                with_cached_glyph(font, c, size, |_, _| {});
+            }
+        }
+    }
+}
+
 pub struct Canvas {
     pub width: usize,
     pub height: usize,
@@ -78,11 +155,49 @@ impl Canvas {
     }
 
     pub fn draw_circle(&mut self, cx: i32, cy: i32, radius: i32, color: u32) {
-        let r2 = radius * radius;
-        for dy in -radius..=radius {
-            for dx in -radius..=radius {
-                if dx * dx + dy * dy <= r2 {
-                    self.set_pixel(cx + dx, cy + dy, color);
+        if radius < 0 {
+            return;
+        }
+        let r = radius;
+        let r2 = (r as i64) * (r as i64);
+
+        // Zone de dessin effective (clip rect ∩ bornes du canvas)
+        let (eff_min_x, eff_min_y, eff_max_x, eff_max_y) = if let Some((ccx, ccy, ccw, cch)) =
+            self.clip_rect
+        {
+            (
+                ccx.max(0),
+                ccy.max(0),
+                ((ccx + ccw as i32).max(0)).min(self.width as i32),
+                ((ccy + cch as i32).max(0)).min(self.height as i32),
+            )
+        } else {
+            (0, 0, self.width as i32, self.height as i32)
+        };
+
+        // Remplissage par tranches horizontales (une écriture contiguë par ligne),
+        // pixel-identique à l'ancienne boucle dx/dy (dx² + dy² <= r²).
+        for dy in -r..=r {
+            let y = cy + dy;
+            if y < eff_min_y || y >= eff_max_y {
+                continue;
+            }
+            let dy2 = (dy as i64) * (dy as i64);
+            let mut half = ((r2 - dy2) as f64).sqrt().floor() as i32;
+            // Correction d'arrondi exacte (2 itérations max en pratique)
+            while (half as i64 + 1) * (half as i64 + 1) + dy2 <= r2 {
+                half += 1;
+            }
+            while (half as i64) * (half as i64) + dy2 > r2 {
+                half -= 1;
+            }
+
+            let x0 = (cx - half).max(eff_min_x);
+            let x1 = (cx + half + 1).min(eff_max_x);
+            if x0 < x1 {
+                let row = y as usize * self.width;
+                for x in x0..x1 {
+                    self.buffer[row + x as usize] = color;
                 }
             }
         }
@@ -161,18 +276,208 @@ impl Canvas {
             return;
         }
 
+        // Arithmétique à virgule fixe 16.16 : élimine toute division entière dans les boucles de pixels
+        let step_x_fp = ((matrix_w as u64) << 16) / (dest_w as u64);
+        let step_y_fp = ((matrix_h as u64) << 16) / (dest_h as u64);
+
+        let initial_src_x_fp = (x_start as i32 - dest_x).max(0) as u64 * step_x_fp;
+        let mut src_y_fp = (y_start as i32 - dest_y).max(0) as u64 * step_y_fp;
+        let max_src_x = (matrix_w as usize).saturating_sub(1);
+        let max_src_y = (matrix_h as usize).saturating_sub(1);
+
         for py in y_start..y_end {
             let row_offset = py * self.width;
-            let src_y = (((py as i32 - dest_y) as u64 * matrix_h as u64) / dest_h as u64) as usize;
+            let src_y = ((src_y_fp >> 16) as usize).min(max_src_y);
+            src_y_fp += step_y_fp;
             let src_row = src_y * matrix_w as usize;
 
+            let mut src_x_fp = initial_src_x_fp;
             for px in x_start..x_end {
-                let src_x = (((px as i32 - dest_x) as u64 * matrix_w as u64) / dest_w as u64) as usize;
+                let src_x = ((src_x_fp >> 16) as usize).min(max_src_x);
+                src_x_fp += step_x_fp;
                 let idx = src_row + src_x;
                 if idx < matrix.len() {
                     let color = matrix[idx];
                     if color != 0 {
                         self.buffer[row_offset + px] = color;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Affiche une image RGBA **prémultipliée** (`0xAARRGGBB`) redimensionnée
+    /// (nearest-neighbor) avec alpha blending sur le fond existant.
+    ///
+    /// Le pixel `0` est transparent. Le chemin opaque (`alpha == 255`) écrit
+    /// directement, sans multiplication. Aucune allocation dans le hot path.
+    pub fn draw_pixel_matrix_alpha(
+        &mut self,
+        dest_x: i32,
+        dest_y: i32,
+        dest_w: u32,
+        dest_h: u32,
+        matrix: &[u32],
+        matrix_w: u32,
+        matrix_h: u32,
+    ) {
+        if matrix_w == 0 || matrix_h == 0 || dest_w == 0 || dest_h == 0 {
+            return;
+        }
+
+        let (clip_min_x, clip_min_y, clip_max_x, clip_max_y) = if let Some((cx, cy, cw, ch)) = self.clip_rect {
+            (
+                cx.max(0) as usize,
+                cy.max(0) as usize,
+                ((cx + cw as i32).max(0) as usize).min(self.width),
+                ((cy + ch as i32).max(0) as usize).min(self.height),
+            )
+        } else {
+            (0, 0, self.width, self.height)
+        };
+
+        let x_start = (dest_x.max(0) as usize).max(clip_min_x);
+        let y_start = (dest_y.max(0) as usize).max(clip_min_y);
+        let x_end = (((dest_x + dest_w as i32).max(0) as usize).min(self.width)).min(clip_max_x);
+        let y_end = (((dest_y + dest_h as i32).max(0) as usize).min(self.height)).min(clip_max_y);
+
+        if x_start >= x_end || y_start >= y_end {
+            return;
+        }
+
+        // Arithmétique à virgule fixe 16.16 : aucune division entière dans les boucles.
+        let step_x_fp = ((matrix_w as u64) << 16) / (dest_w as u64);
+        let step_y_fp = ((matrix_h as u64) << 16) / (dest_h as u64);
+
+        let initial_src_x_fp = (x_start as i32 - dest_x).max(0) as u64 * step_x_fp;
+        let mut src_y_fp = (y_start as i32 - dest_y).max(0) as u64 * step_y_fp;
+        let max_src_x = (matrix_w as usize).saturating_sub(1);
+        let max_src_y = (matrix_h as usize).saturating_sub(1);
+
+        for py in y_start..y_end {
+            let row_offset = py * self.width;
+            let src_y = ((src_y_fp >> 16) as usize).min(max_src_y);
+            src_y_fp += step_y_fp;
+            let src_row = src_y * matrix_w as usize;
+
+            let mut src_x_fp = initial_src_x_fp;
+            for px in x_start..x_end {
+                let src_x = ((src_x_fp >> 16) as usize).min(max_src_x);
+                src_x_fp += step_x_fp;
+                let idx = src_row + src_x;
+                if idx < matrix.len() {
+                    let c = matrix[idx];
+                    if c != 0 {
+                        let a = (c >> 24) & 0xFF;
+                        if a != 0 {
+                            let di = row_offset + px;
+                            if a == 255 {
+                                // Opaque : écriture directe (r,g,b déjà = couleur réelle).
+                                self.buffer[di] = c & 0x00FF_FFFF;
+                            } else {
+                                // Blend prémultiplié : out = src + dst * (255 - a) / 255
+                                let dst = self.buffer[di];
+                                let inv = 255 - a;
+                                let out_r = ((c >> 16) & 0xFF) + div255(((dst >> 16) & 0xFF) * inv);
+                                let out_g = ((c >> 8) & 0xFF) + div255(((dst >> 8) & 0xFF) * inv);
+                                let out_b = (c & 0xFF) + div255((dst & 0xFF) * inv);
+                                self.buffer[di] = (out_r << 16) | (out_g << 8) | out_b;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Affiche une image RGBA prémultipliée (`0xAARRGGBB`) avec rotation + échelle
+    /// autour d'un pivot, échantillonnage nearest-neighbor et alpha blending.
+    ///
+    /// `pivot_x/pivot_y` : pivot en coordonnées du bitmap source. `angle` en
+    /// radians, `scale_x/scale_y` échelles, `dx/dy` position écran du pivot.
+    /// Aucune allocation dans le hot path.
+    pub fn draw_sprite_affine(
+        &mut self,
+        matrix: &[u32],
+        mw: u32,
+        mh: u32,
+        pivot_x: f32,
+        pivot_y: f32,
+        angle: f32,
+        scale_x: f32,
+        scale_y: f32,
+        dx: f32,
+        dy: f32,
+    ) {
+        if mw == 0 || mh == 0 {
+            return;
+        }
+        let cos = angle.cos();
+        let sin = angle.sin();
+        // Inverse : src = S^-1 * R^-1 * (screen - d) + pivot
+        let m00 = cos / scale_x;
+        let m01 = sin / scale_x;
+        let m10 = -sin / scale_y;
+        let m11 = cos / scale_y;
+
+        // Boîte englobante écran du quadrilatère transformé
+        let corners = [
+            (0.0f32, 0.0f32),
+            (mw as f32, 0.0),
+            (0.0, mh as f32),
+            (mw as f32, mh as f32),
+        ];
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+        for (cx, cy) in corners {
+            let rx = cx - pivot_x;
+            let ry = cy - pivot_y;
+            let sx = rx * scale_x;
+            let sy = ry * scale_y;
+            let tx = cos * sx - sin * sy + dx;
+            let ty = sin * sx + cos * sy + dy;
+            min_x = min_x.min(tx);
+            min_y = min_y.min(ty);
+            max_x = max_x.max(tx);
+            max_y = max_y.max(ty);
+        }
+
+        let cx0 = (min_x.floor() as i32).max(0);
+        let cx1 = (max_x.ceil() as i32).min(self.width as i32);
+        let cy0 = (min_y.floor() as i32).max(0);
+        let cy1 = (max_y.ceil() as i32).min(self.height as i32);
+
+        let mw_i = mw as i32;
+        let mh_i = mh as i32;
+        let stride = mw as usize;
+
+        for v in cy0..cy1 {
+            for u in cx0..cx1 {
+                let ex = u as f32 - dx;
+                let ey = v as f32 - dy;
+                let sxf = m00 * ex + m01 * ey + pivot_x;
+                let syf = m10 * ex + m11 * ey + pivot_y;
+                let si = sxf as i32;
+                let sj = syf as i32;
+                if si >= 0 && si < mw_i && sj >= 0 && sj < mh_i {
+                    let c = matrix[sj as usize * stride + si as usize];
+                    if c != 0 {
+                        let a = (c >> 24) & 0xFF;
+                        if a != 0 {
+                            let di = (v as usize) * self.width + (u as usize);
+                            if a == 255 {
+                                self.buffer[di] = c & 0x00FF_FFFF;
+                            } else {
+                                let dst = self.buffer[di];
+                                let inv = 255 - a;
+                                let out_r = ((c >> 16) & 0xFF) + div255(((dst >> 16) & 0xFF) * inv);
+                                let out_g = ((c >> 8) & 0xFF) + div255(((dst >> 8) & 0xFF) * inv);
+                                let out_b = (c & 0xFF) + div255((dst & 0xFF) * inv);
+                                self.buffer[di] = (out_r << 16) | (out_g << 8) | out_b;
+                            }
+                        }
                     }
                 }
             }
@@ -206,9 +511,9 @@ impl Canvas {
                 let fg_g = (color >> 8) & 0xFF;
                 let fg_b = color & 0xFF;
 
-                let out_r = (fg_r * a + bg_r * inv_a) / 255;
-                let out_g = (fg_g * a + bg_g * inv_a) / 255;
-                let out_b = (fg_b * a + bg_b * inv_a) / 255;
+                let out_r = div255(fg_r * a + bg_r * inv_a);
+                let out_g = div255(fg_g * a + bg_g * inv_a);
+                let out_b = div255(fg_b * a + bg_b * inv_a);
 
                 self.buffer[idx] = (out_r << 16) | (out_g << 8) | out_b;
             }
@@ -285,23 +590,26 @@ impl Canvas {
                 continue;
             }
 
-            let (metrics, bitmap) = font.rasterize(c, size);
-            let gx = cur_x + metrics.xmin;
-            let baseline_y = cur_y + ascent;
-            let gy = baseline_y - (metrics.height as i32 + metrics.ymin);
+            let mut advance_w = 0;
+            with_cached_glyph(font, c, size, |metrics, bitmap| {
+                let gx = cur_x + metrics.xmin;
+                let baseline_y = cur_y + ascent;
+                let gy = baseline_y - (metrics.height as i32 + metrics.ymin);
 
-            for row in 0..metrics.height {
-                for col in 0..metrics.width {
-                    let mut alpha = bitmap[row * metrics.width + col];
-                    if alpha > 0 {
-                        if alpha >= 180 {
-                            alpha = 255;
+                for row in 0..metrics.height {
+                    for col in 0..metrics.width {
+                        let mut alpha = bitmap[row * metrics.width + col];
+                        if alpha > 0 {
+                            if alpha >= 180 {
+                                alpha = 255;
+                            }
+                            self.blend_pixel(gx + col as i32, gy + row as i32, color, alpha);
                         }
-                        self.blend_pixel(gx + col as i32, gy + row as i32, color, alpha);
                     }
                 }
-            }
-            cur_x += metrics.advance_width.ceil() as i32;
+                advance_w = metrics.advance_width.ceil() as i32;
+            });
+            cur_x += advance_w;
             max_w = max_w.max(cur_x - start_x);
         }
         (max_w, (cur_y - start_y) + line_height)
@@ -678,5 +986,127 @@ mod tests {
         // Vérifie qu'au moins un pixel a été allumé
         let has_lit_pixels = canvas.buffer.iter().any(|&p| p == 0x00FFFFFF);
         assert!(has_lit_pixels, "Le texte accentué doit produire des pixels allumés");
+    }
+
+    #[test]
+    fn test_glyph_cache_retrieval_and_warmup() {
+        let font = get_title_font();
+        // Vérifie que le warmup s'exécute sans erreur
+        warmup_glyph_cache();
+
+        // Récupère deux fois le même caractère et vérifie la cohérence
+        let mut metrics_first = None;
+        with_cached_glyph(font, 'A', 14.0, |m, _| {
+            metrics_first = Some(*m);
+        });
+
+        let mut metrics_second = None;
+        with_cached_glyph(font, 'A', 14.0, |m, _| {
+            metrics_second = Some(*m);
+        });
+
+        assert_eq!(metrics_first, metrics_second);
+        assert!(metrics_first.unwrap().width > 0);
+    }
+
+    #[test]
+    fn test_draw_pixel_matrix_fixed_point_scaling() {
+        let mut canvas = Canvas::new(32, 32);
+        // Sprite 2x2 en damier
+        let sprite = [
+            0x00FF0000, 0x0000FF00,
+            0x000000FF, 0x00FFFFFF,
+        ];
+        // Rendu mis à l'échelle 4x (8x8)
+        canvas.draw_pixel_matrix(4, 4, 8, 8, &sprite, 2, 2);
+
+        // Le pixel en haut à gauche du sprite doit être rouge
+        assert_eq!(canvas.buffer[4 * 32 + 4], 0x00FF0000);
+        // Le pixel en bas à droite du sprite (4+7, 4+7) doit être blanc
+        assert_eq!(canvas.buffer[11 * 32 + 11], 0x00FFFFFF);
+    }
+
+    #[test]
+    fn test_draw_pixel_matrix_alpha_opaque_and_semi() {
+        let mut canvas = Canvas::new(2, 1);
+        canvas.buffer.fill(0x00FFFFFF); // fond blanc
+        // Opaque rouge prémultiplié (a=255) puis semi-transparent rouge (a=128)
+        let sprite = [0xFFFF0000u32, 0x80800000u32];
+        canvas.draw_pixel_matrix_alpha(0, 0, 2, 1, &sprite, 2, 1);
+        assert_eq!(canvas.buffer[0], 0x00FF0000, "opaque: rouge pur");
+        assert_eq!(canvas.buffer[1], 0x00FF7F7F, "semi: rouge sur blanc");
+    }
+
+    #[test]
+    fn test_draw_pixel_matrix_alpha_transparent_noop() {
+        let mut canvas = Canvas::new(1, 1);
+        canvas.buffer[0] = 0x00123456;
+        canvas.draw_pixel_matrix_alpha(0, 0, 1, 1, &[0u32], 1, 1);
+        assert_eq!(canvas.buffer[0], 0x00123456, "pixel 0 ne doit pas écrire");
+    }
+
+    #[test]
+    fn test_draw_pixel_matrix_alpha_out_of_bounds() {
+        let mut canvas = Canvas::new(4, 4);
+        // Sprite 2x2 opaque rouge dessiné partiellement hors écran (dest à (3,3))
+        let sprite = [0xFFFF0000u32; 4];
+        canvas.draw_pixel_matrix_alpha(3, 3, 4, 4, &sprite, 2, 2);
+        // Seul le pixel (3,3) est visible et écrit
+        assert_eq!(canvas.buffer[3 * 4 + 3], 0x00FF0000);
+        // Le reste reste transparent
+        assert_eq!(canvas.buffer[0], 0);
+    }
+
+    #[test]
+    fn test_draw_sprite_affine_identity_matches_matrix_alpha() {
+        let sprite = [0xFFFF0000u32, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF]; // 2x2 opaque
+        let mut a = Canvas::new(8, 8);
+        let mut b = Canvas::new(8, 8);
+        a.draw_pixel_matrix_alpha(2, 2, 4, 4, &sprite, 2, 2);
+        // Affine identité : pivot (0,0), angle 0, échelle 2, pivot à (2,2)
+        b.draw_sprite_affine(&sprite, 2, 2, 0.0, 0.0, 0.0, 2.0, 2.0, 2.0, 2.0);
+        assert_eq!(a.buffer, b.buffer, "identité affine ≡ blit matriciel");
+    }
+
+    #[test]
+    fn test_draw_sprite_affine_rotation_produces_pixels() {
+        let sprite = [0xFFFF0000u32, 0xFF0000FFu32]; // 2x1 horizontal
+        let mut c = Canvas::new(16, 16);
+        c.draw_sprite_affine(
+            &sprite, 2, 1, 1.0, 0.5,
+            std::f32::consts::FRAC_PI_2, 1.0, 1.0, 8.0, 8.0,
+        );
+        let written = c.buffer.iter().filter(|&&p| p != 0).count();
+        assert!(written > 0, "la rotation doit produire des pixels");
+    }
+
+    #[test]
+    fn test_div255_exact_for_blend_range() {
+        // Le numérateur du blending alpha est borné à [0, 255*255] = [0, 65025].
+        for v in 0..=65025u32 {
+            assert_eq!(div255(v), v / 255, "div255({v})");
+        }
+    }
+
+    #[test]
+    fn test_draw_circle_matches_bruteforce() {
+        let cx = 20i32;
+        let cy = 20i32;
+        let radius = 9i32;
+        let color = 0x00FF00FFu32;
+
+        let mut reference = Canvas::new(40, 40);
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius {
+                    reference.set_pixel(cx + dx, cy + dy, color);
+                }
+            }
+        }
+
+        let mut canvas = Canvas::new(40, 40);
+        canvas.draw_circle(cx, cy, radius, color);
+
+        assert_eq!(canvas.buffer, reference.buffer);
     }
 }

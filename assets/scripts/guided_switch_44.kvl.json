@@ -1,0 +1,111 @@
+{
+  "id": "graph_switch_dalle",
+  "name": "Dalle : Dalle",
+  "description": "Mécanique guidée : activation par pression de bloc ou du joueur.",
+  "version": 1,
+  "variables": {},
+  "nodes": {
+    "act_switch_sound": {
+      "id": "act_switch_sound",
+      "name": "Son d'interrupteur mécanique",
+      "category": "Audio",
+      "description": "Clic métallique et grondement de porte.",
+      "kind": {
+        "Action": {
+          "action_type": "PlaySound"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_switch_open": {
+      "id": "act_switch_open",
+      "name": "Activer door_secret",
+      "category": "World",
+      "description": "Déverrouille le passage ou le mécanisme relié.",
+      "kind": {
+        "Action": {
+          "action_type": "SetVariable:door_secret:true"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "evt_plate_press": {
+      "id": "evt_plate_press",
+      "name": "Pression sur Dalle",
+      "category": "Interactions",
+      "description": "Déclenché quand un poids est placé sur la dalle.",
+      "kind": {
+        "Event": {
+          "event_type": "OnPressurePlate"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    }
+  },
+  "connections": [
+    {
+      "id": "conn_sw_act",
+      "from_node": "evt_plate_press",
+      "from_pin": "out_trigger",
+      "to_node": "act_switch_open",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_act_snd",
+      "from_node": "act_switch_open",
+      "from_pin": "out_trigger",
+      "to_node": "act_switch_sound",
+      "to_pin": "in_trigger"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+[project]
+name = "karacti-crew"
+version = "0.1.0"
+description = "Sidecar d'orchestration agentique CrewAI pour KaractiRage (jalon M0+, cf. PLAN_CONCEPTION_CREWAI.md)"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.7",
+    "jsonschema>=4.21",
+]
+
+[project.optional-dependencies]
+# Groupe « crew » : installé seulement quand on veut réellement exécuter des pipelines
+# (léger par défaut : les tests contract n'ont besoin que de pydantic + jsonschema).
+crew = [
+    "crewai>=0.100",
+    # Couche LLM de CrewAI : requise pour construire un Agent (llm="openai/...")
+    # Plafonné : litellm >=1.103 importe CacheableResult depuis mcp 2.x, alors que
+    # crewai (1.15.28) impose mcp~=1.28.1 → ImportError au runtime sans ce plafond.
+    "litellm>=1.56,<1.103",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/karacti_crew"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

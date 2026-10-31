@@ -1,0 +1,429 @@
+{
+  "$defs": {
+    "AiGeneratedEntity": {
+      "properties": {
+        "color_hex": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "has_collider": {
+          "default": false,
+          "type": "boolean"
+        },
+        "has_vision": {
+          "default": false,
+          "type": "boolean"
+        },
+        "health": {
+          "default": 3.0,
+          "format": "float",
+          "type": "number"
+        },
+        "height": {
+          "default": 32.0,
+          "format": "float",
+          "type": "number"
+        },
+        "is_flocking": {
+          "default": false,
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "mesh_asset": {
+          "default": null,
+          "description": "Asset de mesh 3D référencé dans le manifest (pillar, rock, platform, …).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mesh_primitive": {
+          "default": null,
+          "description": "Primitive 3D directe : \"cube\", \"sphere\", \"plane\", \"capsule\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "movement": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "offset_x": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "offset_y": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "position3d": {
+          "default": null,
+          "description": "Position 3D [x, y, z] (sinon dérivée de offset_x/offset_y).",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "rotation_euler_deg": {
+          "default": null,
+          "description": "Rotation d'Euler en degrés [x, y, z].",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "scale3d": {
+          "default": null,
+          "description": "Échelle [sx, sy, sz].",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "sprite_archetype": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sprite_ascii": {
+          "default": null,
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "sprite_asset": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sprite_frame": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sprite_palette": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": null,
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "width": {
+          "default": 32.0,
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "AiGeneratedGameplayLoop": {
+      "description": "Boucle de gameplay complète (Objectif, Condition de Victoire, Défaite)",
+      "properties": {
+        "lose_condition": {
+          "default": "PlayerHealthZero",
+          "type": "string"
+        },
+        "objective": {
+          "default": "Explorer et triompher de l'épreuve",
+          "type": "string"
+        },
+        "target_item_name": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "win_condition": {
+          "default": "CollectAllKeysThenExit",
+          "type": "string"
+        },
+        "win_fanfare": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AiGeneratedHazard": {
+      "properties": {
+        "damage": {
+          "default": 35.0,
+          "format": "float",
+          "type": "number"
+        },
+        "hazard_type": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "height": {
+          "format": "float",
+          "type": "number"
+        },
+        "name": {
+          "default": "Piege_Danger",
+          "type": "string"
+        },
+        "offset_x": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "offset_y": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "AiGeneratedKvlAction": {
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "condition": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event": {
+          "type": "string"
+        },
+        "on_false_action": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "on_true_action": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "second_action": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target_entity": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "event",
+        "action"
+      ],
+      "type": "object"
+    },
+    "AiGeneratedPlatform": {
+      "properties": {
+        "color_hex": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "height": {
+          "format": "float",
+          "type": "number"
+        },
+        "is_solid": {
+          "default": true,
+          "type": "boolean"
+        },
+        "name": {
+          "default": "Plateforme",
+          "type": "string"
+        },
+        "offset_x": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "offset_y": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "AiGeneratedTerrain": {
+      "description": "Structure du terrain et level design généré par l'IA",
+      "properties": {
+        "hazards": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AiGeneratedHazard"
+          },
+          "type": "array"
+        },
+        "platforms": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AiGeneratedPlatform"
+          },
+          "type": "array"
+        },
+        "theme": {
+          "default": "dungeon",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Payload JSON de réponse standard attendu de l'IA",
+  "properties": {
+    "description": {
+      "type": "string"
+    },
+    "entities": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AiGeneratedEntity"
+      },
+      "type": "array"
+    },
+    "gameplay_loop": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AiGeneratedGameplayLoop"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "kvl_actions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AiGeneratedKvlAction"
+      },
+      "type": "array"
+    },
+    "primary_genre": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "terrain": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AiGeneratedTerrain"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "title": {
+      "type": "string"
+    },
+    "variables": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": null,
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "title",
+    "description"
+  ],
+  "title": "AiGeneratedGamePayload",
+  "type": "object"
+}

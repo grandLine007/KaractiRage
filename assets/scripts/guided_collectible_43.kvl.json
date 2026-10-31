@@ -1,0 +1,128 @@
+{
+  "id": "graph_collectible_piece_test",
+  "name": "Collecte : Piece Test",
+  "description": "Mécanique guidée : ajoute 10 points et retire l'objet lors du contact.",
+  "version": 1,
+  "variables": {
+    "score": {
+      "name": "score",
+      "data_type": "Int",
+      "initial_value": {
+        "type": "Int",
+        "value": 0
+      }
+    }
+  },
+  "nodes": {
+    "act_destroy": {
+      "id": "act_destroy",
+      "name": "Faire disparaître Piece Test",
+      "category": "World",
+      "description": "Supprime l'objet du monde de jeu.",
+      "kind": {
+        "Action": {
+          "action_type": "DestroySelf"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_add_score": {
+      "id": "act_add_score",
+      "name": "Ajouter 10 au score",
+      "category": "Progression",
+      "description": "Incrémente la variable de score de 10.",
+      "kind": {
+        "Action": {
+          "action_type": "AddScore"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "evt_overlap": {
+      "id": "evt_overlap",
+      "name": "Quand le joueur touche Piece Test",
+      "category": "Interactions",
+      "description": "Détecte la collision entre le joueur et l'objet.",
+      "kind": {
+        "Event": {
+          "event_type": "OnPlayerOverlap"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    }
+  },
+  "connections": [
+    {
+      "id": "conn_evt_score",
+      "from_node": "evt_overlap",
+      "from_pin": "out_trigger",
+      "to_node": "act_add_score",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_score_destroy",
+      "from_node": "act_add_score",
+      "from_pin": "out_trigger",
+      "to_node": "act_destroy",
+      "to_pin": "in_trigger"
+    }
+  ]
+}

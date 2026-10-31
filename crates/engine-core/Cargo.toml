@@ -6,23 +6,27 @@ authors.workspace = true
 license.workspace = true
 
 [lib]
-name = "karactirage_wasm"
-crate-type = ["cdylib", "rlib"]
+name = "karactirage_engine"
+crate-type = ["rlib"]
 path = "src/lib.rs"
 
-[[bin]]
-name = "karactirage"
-path = "src/main.rs"
+[[bench]]
+name = "engine_bench"
+harness = false
 
 [dependencies]
 kvl-core = { path = "../kvl-core" }
 kvl-runtime = { path = "../kvl-runtime" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 winit = { workspace = true }
-softbuffer = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tinyaudio = "2.0.0"
-wasm-bindgen = "0.2"
 fontdue = "0.9.4"
+schemars = "1"
+resvg = { version = "0.48", default-features = false }
+png = "0.17"
+base64 = "0.22"
+glam = { version = "0.34", features = ["serde"] }

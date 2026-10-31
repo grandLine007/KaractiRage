@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use glam::{Quat, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Transform2D {
@@ -94,6 +96,16 @@ pub enum ShapeKind {
     Circle { radius: f32 },
     Text { label: String, scale: u32 },
     PixelMatrix { width: u32, height: u32, pixels: Vec<u32> },
+    /// Sprite vectoriel SVG : référence à un asset rastérisé à l'import
+    /// (le bitmap résolu vit dans `Entity::vector_sprite`).
+    SvgRef { asset: String },
+    /// Sprite pixel-art PNG (généré par pxl) : référence à un asset décodé à
+    /// l'import (le bitmap résolu vit dans `GameState::sprite_cache`).
+    ImageRef { asset: String },
+    /// Frame nommée d'une spritesheet pxl (atlas PNG + JSON, voir `sheet`).
+    SheetRef { asset: String, frame: String },
+    /// Animation par frames pxl (bande d'images + durées), lue en boucle.
+    AnimRef { asset: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,6 +144,54 @@ impl Renderable2D {
     pub fn pixel_matrix(width: u32, height: u32, pixels: Vec<u32>, z_index: i32) -> Self {
         Self {
             shape: ShapeKind::PixelMatrix { width, height, pixels },
+            color: 0x00FFFFFF,
+            outline_color: None,
+            outline_width: 0,
+            z_index,
+            visible: true,
+        }
+    }
+
+    /// Sprite pixel-art PNG référencé par identifiant d'asset (résolu à l'import).
+    pub fn image_ref(asset: impl Into<String>, z_index: i32) -> Self {
+        Self {
+            shape: ShapeKind::ImageRef { asset: asset.into() },
+            color: 0x00FFFFFF,
+            outline_color: None,
+            outline_width: 0,
+            z_index,
+            visible: true,
+        }
+    }
+
+    /// Frame nommée d'une spritesheet pxl.
+    pub fn sheet_ref(asset: impl Into<String>, frame: impl Into<String>, z_index: i32) -> Self {
+        Self {
+            shape: ShapeKind::SheetRef { asset: asset.into(), frame: frame.into() },
+            color: 0x00FFFFFF,
+            outline_color: None,
+            outline_width: 0,
+            z_index,
+            visible: true,
+        }
+    }
+
+    /// Animation par frames pxl (lue en boucle).
+    pub fn anim_ref(asset: impl Into<String>, z_index: i32) -> Self {
+        Self {
+            shape: ShapeKind::AnimRef { asset: asset.into() },
+            color: 0x00FFFFFF,
+            outline_color: None,
+            outline_width: 0,
+            z_index,
+            visible: true,
+        }
+    }
+
+    /// Sprite vectoriel SVG référencé par identifiant d'asset (résolu à l'import).
+    pub fn svg_ref(asset: impl Into<String>, z_index: i32) -> Self {
+        Self {
+            shape: ShapeKind::SvgRef { asset: asset.into() },
             color: 0x00FFFFFF,
             outline_color: None,
             outline_width: 0,
@@ -437,6 +497,8 @@ pub struct Collider2D {
     pub is_trigger: bool,
     #[serde(default)]
     pub is_pushable: bool,
+    #[serde(default)]
+    pub is_one_way: bool,
     pub layer: u32,
 }
 
@@ -450,6 +512,7 @@ impl Collider2D {
             is_solid: true,
             is_trigger: false,
             is_pushable: false,
+            is_one_way: false,
             layer: 1,
         }
     }
@@ -463,7 +526,23 @@ impl Collider2D {
             is_solid: false,
             is_trigger: true,
             is_pushable: false,
+            is_one_way: false,
             layer: 2,
+        }
+    }
+
+    /// Plateforme semi-solide traversable par le bas (One-Way)
+    pub fn one_way(w: f32, h: f32) -> Self {
+        Self {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            w,
+            h,
+            is_solid: false,
+            is_trigger: false,
+            is_pushable: false,
+            is_one_way: true,
+            layer: 1,
         }
     }
 
@@ -477,6 +556,7 @@ impl Collider2D {
             is_solid: true,
             is_trigger: false,
             is_pushable: true,
+            is_one_way: false,
             layer: 1,
         }
     }
@@ -1119,6 +1199,112 @@ impl BossComponent {
 }
 
 /// Modèle d'Entité Universel du moteur KaractiRage
+/// Sprite vectoriel SVG résolu au chargement : bitmap prémultiplié partagé
+/// (`Arc`) + état d'animation (le rig et les clips sont ajoutés à l'étape
+/// suivante). Le bitmap est partagé entre entités pour éviter toute duplication.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorSprite {
+    pub asset: String,
+    pub image: Arc<crate::vector::RasterImage>,
+    /// Rig squelettique partagé (si l'asset possède des groupes nommés).
+    pub rig: Option<Arc<crate::vector::RigAsset>>,
+    /// Nom du clip d'animation courant (ex: "idle", "walk").
+    pub clip: String,
+    /// Avancement dans le clip (secondes).
+    pub time: f32,
+    pub speed: f32,
+    pub playing: bool,
+}
+
+// ===== Modèle 3D (Lot 3) =====
+
+/// Référence à un maillage 3D : primitive intégrée ou asset du manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MeshRef {
+    Cube,
+    Sphere,
+    Plane,
+    Capsule,
+    /// Asset glTF/GLB référencé par identifiant (manifest `assets/models/manifest.json`).
+    Asset { id: String, node: Option<String> },
+}
+
+/// Matériau 3D : couleur unie (teinte `0xAARRGGBB`) ou asset nommé.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MaterialRef {
+    Solid {
+        color: u32,
+        #[serde(default = "default_roughness")]
+        roughness: f32,
+        #[serde(default = "default_metalness")]
+        metalness: f32,
+    },
+    Asset { id: String },
+}
+
+fn default_roughness() -> f32 {
+    0.4
+}
+
+fn default_metalness() -> f32 {
+    0.0
+}
+
+/// Composant de rendu 3D (miroir 3D de `Renderable2D`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Renderable3D {
+    pub mesh: MeshRef,
+    pub material: MaterialRef,
+    #[serde(default)]
+    pub cast_shadow: bool,
+    #[serde(default)]
+    pub receive_shadow: bool,
+}
+
+/// Transform 3D (position/rotation/échelle + interpolation de rendu).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Transform3D {
+    pub position: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+    /// Position de la frame précédente pour interpolation 120 Hz → 60 Hz.
+    #[serde(default)]
+    pub prev_position: Option<Vec3>,
+    /// Entité parente pour le graphe de scène hiérarchique 3D.
+    #[serde(default)]
+    pub parent_id: Option<usize>,
+}
+
+impl Transform3D {
+    pub fn new(position: Vec3, rotation: Quat, scale: Vec3) -> Self {
+        Self {
+            position,
+            rotation,
+            scale,
+            prev_position: None,
+            parent_id: None,
+        }
+    }
+
+    /// Rotation depuis des angles d'Euler en degrés (XYZ intrinsèque).
+    pub fn from_euler_deg(position: Vec3, euler_deg: Vec3, scale: Vec3) -> Self {
+        let rotation = Quat::from_euler(
+            glam::EulerRot::XYZ,
+            euler_deg.x.to_radians(),
+            euler_deg.y.to_radians(),
+            euler_deg.z.to_radians(),
+        );
+        Self::new(position, rotation, scale)
+    }
+
+    /// Matrice modèle colonne-major, prête pour le `RenderPacket`.
+    pub fn to_mat4(&self) -> glam::Mat4 {
+        glam::Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.position)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
     pub id: usize,
@@ -1143,6 +1329,13 @@ pub struct Entity {
     pub nav_agent: Option<crate::navigation::NavAgent>,
     #[serde(default)]
     pub flock: Option<crate::flocking::FlockMember>,
+    #[serde(default)]
+    pub transform3d: Option<Transform3D>,
+    #[serde(default)]
+    pub renderable3d: Option<Renderable3D>,
+    /// Sprite vectoriel SVG résolu à l'import (jamais sérialisé : reconstruit au chargement).
+    #[serde(skip)]
+    pub vector_sprite: Option<VectorSprite>,
     pub is_active: bool,
 }
 
@@ -1166,6 +1359,9 @@ impl Entity {
             boss: None,
             nav_agent: None,
             flock: None,
+            transform3d: None,
+            renderable3d: None,
+            vector_sprite: None,
             is_active: true,
         }
     }
@@ -1429,5 +1625,28 @@ impl Entity {
                 mode: MovementMode::TopDown,
             })
             .with_flock(flock)
+    }
+}
+
+#[cfg(test)]
+mod transform3d_tests {
+    use super::*;
+    use glam::{Quat, Vec3};
+
+    #[test]
+    fn test_transform3d_to_mat4() {
+        let t = Transform3D::new(Vec3::new(3.0, 4.0, 5.0), Quat::IDENTITY, Vec3::ONE);
+        let m = t.to_mat4();
+        assert_eq!(m.w_axis.x, 3.0);
+        assert_eq!(m.w_axis.y, 4.0);
+        assert_eq!(m.w_axis.z, 5.0);
+    }
+
+    #[test]
+    fn test_transform3d_euler_deg() {
+        let t = Transform3D::from_euler_deg(Vec3::ZERO, Vec3::new(0.0, 90.0, 0.0), Vec3::ONE);
+        // Rotation de +90° autour de Y : l'axe X local pointe vers -Z monde.
+        let m = t.to_mat4();
+        assert!((m.x_axis.z + 1.0).abs() < 1e-5);
     }
 }

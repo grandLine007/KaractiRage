@@ -5,6 +5,7 @@ pub mod graph;
 pub mod guided;
 pub mod node;
 pub mod pin;
+pub mod schema;
 pub mod types;
 pub mod validator;
 
@@ -18,6 +19,10 @@ pub use guided::{
 };
 pub use node::{Node, NodeKind};
 pub use pin::{Pin, PinDirection};
+pub use schema::{
+    GraphSchemaIssue, NodeFlavor, NodeRegistry, NodeSchema, ParamSpec, ParamType, ResolvedNode,
+    SchemaError,
+};
 pub use types::{DataType, Value};
 pub use validator::{Diagnostic, ValidationSeverity, Validator};
 

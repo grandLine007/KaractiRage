@@ -1,0 +1,26 @@
+[package]
+name = "karactirage-studio"
+version = "0.1.0"
+description = "KaractiRage Studio — 2D Engine & Visual Logic"
+authors = ["KaractiRage Team"]
+license = "MIT OR Apache-2.0"
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "karactirage_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-log = "2"
+engine-core = { path = "../../../crates/engine-core" }
+kvl-core = { path = "../../../crates/kvl-core" }
+kvl-runtime = { path = "../../../crates/kvl-runtime" }

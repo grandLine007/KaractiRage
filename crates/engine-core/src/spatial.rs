@@ -2,6 +2,7 @@
 pub enum SpatialKind {
     Solid,
     Trigger,
+    OneWay,
     Entity(usize),
 }
 
@@ -25,6 +26,10 @@ impl SpatialItem {
         Self { id, kind: SpatialKind::Trigger, x, y, w, h }
     }
 
+    pub fn one_way(id: usize, x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self { id, kind: SpatialKind::OneWay, x, y, w, h }
+    }
+
     pub fn entity(id: usize, x: f32, y: f32, w: f32, h: f32) -> Self {
         Self { id, kind: SpatialKind::Entity(id), x, y, w, h }
     }
@@ -38,12 +43,18 @@ impl SpatialItem {
     pub fn is_trigger(&self) -> bool {
         self.kind == SpatialKind::Trigger
     }
+
+    #[inline]
+    pub fn is_one_way(&self) -> bool {
+        self.kind == SpatialKind::OneWay
+    }
 }
 
 pub struct SpatialHashGrid {
     pub cell_size: f32,
     inv_cell_size: f32,
     buckets: Vec<Vec<SpatialItem>>,
+    static_buckets: Vec<Vec<SpatialItem>>,
     bucket_mask: usize,
     query_buffer: Vec<SpatialItem>,
     pub stats_queries: usize,
@@ -56,14 +67,17 @@ impl SpatialHashGrid {
         // Garantir une puissance de deux pour le masque de hachage rapide
         let count = bucket_count.next_power_of_two().max(64);
         let mut buckets = Vec::with_capacity(count);
+        let mut static_buckets = Vec::with_capacity(count);
         for _ in 0..count {
             buckets.push(Vec::with_capacity(8));
+            static_buckets.push(Vec::with_capacity(8));
         }
 
         Self {
             cell_size,
             inv_cell_size: 1.0 / cell_size,
             buckets,
+            static_buckets,
             bucket_mask: count - 1,
             query_buffer: Vec::with_capacity(32),
             stats_queries: 0,
@@ -78,7 +92,7 @@ impl SpatialHashGrid {
         h & self.bucket_mask
     }
 
-    /// Réinitialise les seaux sans désallouer la mémoire (Zero-Alloc Hot Path)
+    /// Réinitialise les seaux dynamiques sans désallouer la mémoire (Zero-Alloc Hot Path)
     pub fn clear(&mut self) {
         for bucket in &mut self.buckets {
             bucket.clear();
@@ -87,7 +101,20 @@ impl SpatialHashGrid {
         self.stats_candidates = 0;
     }
 
-    /// Insère un élément AABB dans toutes les cellules qu'il chevauche
+    /// Réinitialise les seaux statiques (lors d'un rechargement de niveau ou modification éditeur)
+    pub fn clear_static(&mut self) {
+        for bucket in &mut self.static_buckets {
+            bucket.clear();
+        }
+    }
+
+    /// Réinitialise à la fois les seaux dynamiques et statiques
+    pub fn clear_all(&mut self) {
+        self.clear();
+        self.clear_static();
+    }
+
+    /// Insère un élément dynamique dans toutes les cellules qu'il chevauche
     pub fn insert(&mut self, item: SpatialItem) {
         let min_cx = (item.x * self.inv_cell_size).floor() as i32;
         let max_cx = ((item.x + item.w) * self.inv_cell_size).floor() as i32;
@@ -102,7 +129,22 @@ impl SpatialHashGrid {
         }
     }
 
-    /// Recherche les éléments chevauchant une boîte englobante AABB
+    /// Insère un élément statique (murs, décors fixes) dans la grille persistante
+    pub fn insert_static(&mut self, item: SpatialItem) {
+        let min_cx = (item.x * self.inv_cell_size).floor() as i32;
+        let max_cx = ((item.x + item.w) * self.inv_cell_size).floor() as i32;
+        let min_cy = (item.y * self.inv_cell_size).floor() as i32;
+        let max_cy = ((item.y + item.h) * self.inv_cell_size).floor() as i32;
+
+        for cy in min_cy..=max_cy {
+            for cx in min_cx..=max_cx {
+                let idx = self.hash_cell(cx, cy);
+                self.static_buckets[idx].push(item);
+            }
+        }
+    }
+
+    /// Recherche les éléments chevauchant une boîte englobante AABB (dans les seaux statiques et dynamiques)
     pub fn query_aabb(&mut self, qx: f32, qy: f32, qw: f32, qh: f32) -> &[SpatialItem] {
         self.query_buffer.clear();
         self.stats_queries += 1;
@@ -115,10 +157,17 @@ impl SpatialHashGrid {
         for cy in min_cy..=max_cy {
             for cx in min_cx..=max_cx {
                 let idx = self.hash_cell(cx, cy);
-                for item in &self.buckets[idx] {
-                    // Dédoublonnage instantané
+                // 1. Éléments statiques
+                for item in &self.static_buckets[idx] {
                     if !self.query_buffer.iter().any(|e| e.id == item.id && e.kind == item.kind) {
-                        // Test d'intersection AABB strict
+                        if qx + qw > item.x && qx < item.x + item.w && qy + qh > item.y && qy < item.y + item.h {
+                            self.query_buffer.push(*item);
+                        }
+                    }
+                }
+                // 2. Éléments dynamiques
+                for item in &self.buckets[idx] {
+                    if !self.query_buffer.iter().any(|e| e.id == item.id && e.kind == item.kind) {
                         if qx + qw > item.x && qx < item.x + item.w && qy + qh > item.y && qy < item.y + item.h {
                             self.query_buffer.push(*item);
                         }
@@ -213,4 +262,31 @@ mod tests {
         assert_eq!(grid.query_aabb(0.0, 0.0, 50.0, 50.0).len(), 0);
         assert_eq!(grid.stats_queries, 1);
     }
+
+    #[test]
+    fn test_spatial_grid_static_and_dynamic_separation() {
+        let mut grid = SpatialHashGrid::new(64.0, 64);
+        // Éléments statiques (murs)
+        grid.insert_static(SpatialItem::solid(100, 10.0, 10.0, 40.0, 40.0));
+        grid.insert_static(SpatialItem::one_way(101, 100.0, 100.0, 50.0, 10.0));
+
+        // Élément dynamique (joueur)
+        grid.insert(SpatialItem::entity(1, 15.0, 15.0, 20.0, 20.0));
+
+        // La requête AABB doit trouver à la fois le statique et le dynamique
+        let results = grid.query_aabb(0.0, 0.0, 60.0, 60.0);
+        assert_eq!(results.len(), 2);
+
+        // Effacement de la frame dynamique : le statique DOIT PERSISTER
+        grid.clear();
+        let after_dynamic_clear = grid.query_aabb(0.0, 0.0, 60.0, 60.0);
+        assert_eq!(after_dynamic_clear.len(), 1, "Le mur statique doit persister après grid.clear()");
+        assert_eq!(after_dynamic_clear[0].id, 100);
+
+        // Effacement total : tout doit disparaître
+        grid.clear_all();
+        let after_all_clear = grid.query_aabb(0.0, 0.0, 60.0, 60.0);
+        assert_eq!(after_all_clear.len(), 0);
+    }
 }
+

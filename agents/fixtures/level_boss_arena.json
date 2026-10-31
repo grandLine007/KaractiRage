@@ -1,0 +1,53 @@
+{
+  "title": "Sanctuaire des Énigmes et Boss à Deux Phases",
+  "description": "Niveau complexe avec porte verrouillée par clé, dialogue avec PNJ, et Boss avec enrage à mi-vie.",
+  "primary_genre": "Aventure",
+  "gameplay_loop": {
+    "objective": "Résolvez l'énigme de la porte, parlez au Sage et terrassez le Titan!",
+    "win_condition": "DefeatBoss",
+    "lose_condition": "PlayerHealthZero",
+    "target_item_name": "Cle_Sanctuaire",
+    "win_fanfare": "victory_fanfare"
+  },
+  "entities": [
+    {
+      "name": "Porte_Donjon",
+      "kind": "door",
+      "offset_x": 200.0,
+      "offset_y": 50.0,
+      "width": 32.0,
+      "height": 64.0,
+      "health": 100.0,
+      "color_hex": "#A855F7",
+      "sprite_archetype": "portal",
+      "movement": "none",
+      "has_collider": true,
+      "has_vision": false,
+      "is_flocking": false
+    }
+  ],
+  "kvl_actions": [
+    {
+      "event": "OnPlayerInteract",
+      "action": "ToggleDoor",
+      "target_entity": "Porte_Donjon",
+      "condition": "HasItem:Cle_Sanctuaire",
+      "on_true_action": "ToggleDoor",
+      "on_false_action": "DenyAccess",
+      "second_action": "PlaySound:coin"
+    },
+    {
+      "event": "OnDamage",
+      "action": "SetBossPhase:2",
+      "target_entity": "Titan_Boss",
+      "condition": "HealthLessThan:25",
+      "on_true_action": "SetBossPhase:2",
+      "second_action": "TriggerBossRoar"
+    }
+  ],
+  "variables": {
+    "dungeon_keys": "0",
+    "door_locked": "true",
+    "boss_rage_counter": "3"
+  }
+}

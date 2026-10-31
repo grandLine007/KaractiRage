@@ -110,6 +110,41 @@ L'IA peut également concevoir un sprite 100% inédit en fournissant une matrice
 ```
 * Note : Le caractère `.` est réservé pour la transparence (`#00000000`).
 
+### C. Sprites Vectoriels SVG (Décor & Personnages Animés)
+En complément du pixel-art, le moteur rastérise des fichiers **SVG** (format ouvert W3C) via la forme
+ECS `ShapeKind::SvgRef { asset }` et le composant `VectorSprite`. Les assets SVG sont rastérisés **une
+seule fois à l'import** en bitmap RGBA prémultiplié (aucun coût par frame, aucun GPU requis — conforme
+au profil Low-End First).
+
+#### Assets vectoriels intégrés (scènes prédéfinies)
+* `"decor_torch"` : Torche murale (32×64) avec flamme stylisée — décor d'ambiance.
+* `"decor_crate"` : Caisse en bois cerclée (32×32) — décor/environnement.
+* `"hero"` : Personnage robotique riggé (64×64) composé de 6 groupes nommés `<g id="...">` :
+  `head`, `torso`, `arm_l`, `arm_r`, `leg_l`, `leg_r`.
+
+#### Rig squelettique & animation
+Chaque `<g id="...">` d'un SVG devient un **membre** rastérisé isolément. L'animation est portée par
+des **clips JSON** (`assets/sprites/*.anim.json`) : keyframes par membre (`t`, `rot` en degrés,
+`tx`/`ty` translation, `sx`/`sy` échelle), interpolation linéaire, bouclage optionnel.
+
+> ⚠️ Le moteur ne supporte **pas** SMIL (`<animate>`/`<animateTransform>`) : l'animation passe par le
+> rig + les clips JSON, pilotables via les actions KVL `PlayAnimation2D*` (voir §5.C).
+
+> ℹ️ **Périmètre actuel** : le SVG est réservé aux **assets et scènes prédéfinis** (`assets/sprites/`,
+> `assets/scenes/`). Le payload IA (§7) continue d'utiliser le pixel-art (`sprite_archetype`/`sprite_ascii`).
+
+Exemple de clip :
+```json
+{
+  "clips": {
+    "idle": { "loop": true, "tracks": {
+      "arm_l": [ { "t": 0.0, "rot": -8.0 }, { "t": 0.5, "rot": 8.0 }, { "t": 1.0, "rot": -8.0 } ],
+      "arm_r": [ { "t": 0.0, "rot": 8.0 }, { "t": 0.5, "rot": -8.0 }, { "t": 1.0, "rot": 8.0 } ]
+    } }
+  }
+}
+```
+
 ---
 
 ## 4. ARCHITECTURE ECS (COMPOSANTS DISPONIBLES & PARAMÈTRES)
@@ -119,7 +154,8 @@ Chaque entité du monde est un conteneur d'identifiant unique recevant des compo
 | Composant | Rôle & Détection | Paramètres Clés |
 | :--- | :--- | :--- |
 | `Transform2D` | Position spatiale, échelle, orientation | `x`, `y`, `rotation`, `scale_x`, `scale_y` |
-| `Renderable2D` | Rendu visuel 2D | `shape`: `PixelMatrix`, `Rect`, `Circle`, `Text` |
+| `Renderable2D` | Rendu visuel 2D | `shape`: `PixelMatrix`, `Rect`, `Circle`, `Text`, `SvgRef` |
+| `VectorSprite` | Sprite vectoriel SVG (bitmap rastérisé + rig d'animation) | `asset`, `clip`, `time`, `speed`, `playing` |
 | `Collider2D` | Boîte de collision AABB | `width`, `height`, `is_solid`, `is_trigger` |
 | `Physics2D` | Dynamique newtonienne | `velocity_x/y`, `friction`, `bounce`, `gravity_scale` |
 | `Health2D` | Points de vie et invulnérabilité | `current_health`, `max_health`, `invulnerability_timer` |
@@ -216,6 +252,11 @@ Instructions opérationnelles modifiant le monde ou les entités :
 * `"EmitBurst"` / `"EmitBurst:<nombre>"` : Déclenche une gerbe d'étincelles ou de confettis.
 * `"ToggleEmitter"` / `"ToggleEmitter:<true|false>"` : Active ou éteint un émetteur continu.
 * `"DestroySelf"` : Supprime immédiatement l'entité du monde.
+
+#### Animations & Sprites Vectoriels
+* `"PlayAnimation2D:<clip>"` : Joue le clip d'animation (ex: `"PlayAnimation2D:walk"`) sur les entités vectorielles.
+* `"PlayAnimation2DOn:<tag>:<clip>"` : Joue le clip sur les entités vectorielles portant le tag donné (ex: `"PlayAnimation2DOn:sentinel:attack"`).
+* `"StopAnimation2D"` : Fige l'animation vectorielle courante.
 
 #### Variables & Compteurs
 * `"IncrementCounter:<nom>"` : Incrémente un compteur de passage ou de collecte.
@@ -345,6 +386,10 @@ Lorsqu'un LLM génère un niveau pour KaractiRage, il doit répondre **EXCLUSIVE
   ]
 }
 ```
+
+> ℹ️ **Assets vectoriels SVG** : les scènes prédéfinies utilisent des sprites vectoriels SVG
+> (`ShapeKind::SvgRef`, voir §3.C). Le payload IA ci-dessus reste en pixel-art ; le champ dédié
+> `svg_asset` sera exposé au pipeline IA dans une itération ultérieure.
 
 ---
 

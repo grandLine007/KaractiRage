@@ -1,0 +1,183 @@
+@import "tailwindcss";
+
+@theme {
+  --color-deep: #07040d;
+  --color-panel: #0d0819;
+  --color-card: #150d27;
+  --color-card-hover: #1e1338;
+  --color-line: #2d1b4e;
+  --color-focus: #a855f7;
+  --color-purple: #9333ea;
+  --color-amethyst: #a855f7;
+  --color-cyan: #38bdf8;
+  --color-emerald: #34d399;
+  --color-amber: #f59e0b;
+  --color-rose: #f43f5e;
+  --color-ink: #f8fafc;
+  --color-muted: #94a3b8;
+  --color-faint: #64748b;
+  /* Typographie (UX-101) : Outfit corps · Space Grotesk titres · JetBrains Mono code. */
+  --font-sans: 'Outfit', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Space Grotesk', 'Outfit', ui-sans-serif, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+:root {
+  --bg-deep: #07040d;
+  --bg-panel: #0d0819;
+  --bg-card: #150d27;
+  --bg-card-hover: #1e1338;
+  --border-subtle: #2d1b4e;
+  --border-focus: #a855f7;
+  --accent-purple: #9333ea;
+  --accent-amethyst: #a855f7;
+  --accent-cyan: #38bdf8;
+  --accent-emerald: #34d399;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;   /* texte secondaire (≥ 4,5:1 sur panneaux sombres) */
+  --text-faint: #64748b;   /* décoratif uniquement (icônes), jamais du texte informatif */
+  /* Tokens sémantiques (UX-102) — 1 accent = 1 rôle. */
+  --accent-primary: #a855f7;
+  --success: #34d399;
+  --warning: #f59e0b;
+  --danger: #f43f5e;
+  --info: #38bdf8;
+  /* Mise à l'échelle (UX-103) — espacements, rayons, élévation (3 niveaux max). */
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --radius-4: 4px;
+  --radius-6: 6px;
+  --radius-8: 8px;
+  --radius-12: 12px;
+  --shadow-e1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-e2: 0 2px 6px rgba(0, 0, 0, 0.45);
+  --shadow-e3: 0 6px 18px rgba(0, 0, 0, 0.5);
+  font-family: 'Outfit', ui-sans-serif, system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+/* Reset global dans la couche `base` (UX-103). Hors couche, un `* { padding: 0 }`
+   écraserait les utilitaires p-*/px-*/py-*/m-* de Tailwind v4 (qui vivent dans
+   `@layer utilities`), ce qui réduisait les cibles à leur seul line-height (~14 px). */
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+/* Focus visible global (UX-402) — 2 px accent + offset, jamais d'outline supprimé sans remplacement. */
+:focus-visible {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+body {
+  background-color: var(--bg-deep);
+  color: var(--text-main);
+  overflow: hidden;
+  user-select: none;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Titres : Space Grotesk, line-height 1,2 (UX-101). */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Space Grotesk', 'Outfit', ui-sans-serif, sans-serif;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+/* Scrollbars modernes Dark Atelier */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-deep);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-purple);
+}
+
+/* Badges & interactions */
+.badge-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  transition: all 0.15s ease-in-out;
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+input, textarea, select {
+  font-family: inherit;
+  color: inherit;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.4);
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Mouvement réduit (UX-407) — désactive les animations quand le système le demande. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin,
+  .animate-pulse,
+  .animate-bounce {
+    animation: none !important;
+  }
+}

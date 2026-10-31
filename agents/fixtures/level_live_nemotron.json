@@ -1,0 +1,93 @@
+{
+  "title": "Donjon Plateau",
+  "description": "Le chevalier doit franchir trois plateformes, éviter un piège et collecter le coffre du trésor pour victoire.",
+  "primary_genre": null,
+  "terrain": {
+    "theme": "dungeon",
+    "platforms": [
+      {
+        "name": "Plateforme",
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "width": 80.0,
+        "height": 20.0,
+        "is_solid": true,
+        "color_hex": null
+      },
+      {
+        "name": "Plateforme",
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "width": 60.0,
+        "height": 15.0,
+        "is_solid": true,
+        "color_hex": null
+      },
+      {
+        "name": "Plateforme",
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "width": 70.0,
+        "height": 20.0,
+        "is_solid": true,
+        "color_hex": null
+      }
+    ],
+    "hazards": [
+      {
+        "name": "Pit_Danger",
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "width": 16.0,
+        "height": 4.0,
+        "damage": 35.0,
+        "hazard_type": "Piercing"
+      }
+    ]
+  },
+  "gameplay_loop": {
+    "objective": "Collect the treasure chest and exit",
+    "win_condition": "CollectAllKeysThenExit",
+    "lose_condition": "PlayerHealthZero",
+    "target_item_name": null,
+    "win_fanfare": null
+  },
+  "entities": [
+    {
+      "name": "Knight",
+      "kind": "Knight",
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "width": 32.0,
+      "height": 32.0,
+      "health": 5.0,
+      "color_hex": null,
+      "sprite_archetype": "Knight",
+      "sprite_ascii": null,
+      "sprite_palette": null,
+      "movement": null,
+      "has_collider": false,
+      "has_vision": false,
+      "is_flocking": false
+    },
+    {
+      "name": "Guardian",
+      "kind": "Boss",
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "width": 80.0,
+      "height": 100.0,
+      "health": 10.0,
+      "color_hex": null,
+      "sprite_archetype": "Boss",
+      "sprite_ascii": null,
+      "sprite_palette": null,
+      "movement": null,
+      "has_collider": false,
+      "has_vision": false,
+      "is_flocking": false
+    }
+  ],
+  "kvl_actions": [],
+  "variables": null
+}

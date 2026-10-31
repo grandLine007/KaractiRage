@@ -21,7 +21,9 @@ impl Telemetry {
             min_frame_time_us: u64::MAX,
             max_frame_time_us: 0,
             kvl_steps_last_frame: 0,
-            show_overlay: true, // Visible par défaut pour mesurer
+            // Masqué par défaut : le HUD de jeu reste lisible pour un débutant.
+            // F1 ouvre le panneau de diagnostic à la demande.
+            show_overlay: false,
         }
     }
 

@@ -1,0 +1,120 @@
+{
+  "id": "graph_bonus_coin",
+  "name": "Bonus : pièce dorée",
+  "description": "Au contact du joueur : +1 score, puis +2 pièces dans l'inventaire. Graphe de référence du pack plateforme.",
+  "version": 1,
+  "variables": {
+    "score": {
+      "name": "score",
+      "data_type": "Int",
+      "initial_value": {
+        "type": "Int",
+        "value": 0
+      }
+    }
+  },
+  "nodes": {
+    "evt_overlap": {
+      "id": "evt_overlap",
+      "name": "Quand le joueur touche la pièce",
+      "category": "Interactions",
+      "description": "Déclenche le bonus au contact.",
+      "kind": {
+        "Event": {
+          "event_type": "OnPlayerOverlap"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_add_score": {
+      "id": "act_add_score",
+      "name": "Ajouter 1 au score",
+      "category": "Progression",
+      "description": "Incrémente la variable score de 1.",
+      "kind": {
+        "Action": {
+          "action_type": "AddScore"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 200.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_give_item": {
+      "id": "act_give_item",
+      "name": "Donner 2 pièces",
+      "category": "World",
+      "description": "Ajoute deux pièces à l'inventaire (forme préfixée GiveItem).",
+      "kind": {
+        "Action": {
+          "action_type": "GiveItem:coin:2"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 400.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    }
+  },
+  "connections": [
+    {
+      "id": "conn_evt_score",
+      "from_node": "evt_overlap",
+      "from_pin": "out_trigger",
+      "to_node": "act_add_score",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_score_give",
+      "from_node": "act_add_score",
+      "from_pin": "out_trigger",
+      "to_node": "act_give_item",
+      "to_pin": "in_trigger"
+    }
+  ]
+}
