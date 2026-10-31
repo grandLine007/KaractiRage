@@ -65,16 +65,21 @@
 Les glows colorés (halos violets) sont réservés à **l'identité** (logo, badge actif) ;
 le reste utilise l'élévation neutre ci-dessus.
 
-## 3. Typographie (UX-101 — à trancher §13.3)
+## 3. Typographie (UX-101 — fait, D13.1 A)
 
+Auto-hébergée via `@fontsource/*` (woff2 **subset latin**, aucune requête réseau externe).
 Échelle cible : **12 / 13 / 14 / 16 / 20 / 24 / 32** · line-height 1,4 (corps), 1,2 (titres).
-Interdiction de texte porteur de sens **< 12 px**.
+Interdiction de texte porteur de sens **< 12 px** (IDs / micro-labels 9-11 px autorisés).
 
-| Rôle | Police (décision §13.3 à confirmer) |
-|---|---|
-| Corps | Outfit (ou système) |
-| Titres | Space Grotesk (ou système) |
-| IDs / code | JetBrains Mono (ou système) |
+| Rôle | Police | Graisses |
+|---|---|---|
+| Corps | **Outfit** (`--font-sans`) | 400 · 600 |
+| Titres | **Space Grotesk** (`--font-display`, appliqué à `h1`-`h6`) | 500 · 700 |
+| IDs / code | **JetBrains Mono** (`--font-mono`) | 400 · 500 |
+
+Import dans `src/main.tsx` ; tokens `--font-sans` / `--font-display` / `--font-mono` dans
+`@theme` (`index.css`). `font-display: swap` (fourni par @fontsource) → pas de FOUT bloquant
+(K4 = 0, pas de requête externe).
 
 ## 4. Règles d'usage
 

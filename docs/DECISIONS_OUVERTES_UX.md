@@ -19,9 +19,9 @@ woff2 auto-hébergées) ou assumer la police système ?
 > **Recommandation : A** (Outfit corps + Space Grotesk titres + JetBrains Mono IDs), en
 > woff2 subset, `font-display: swap`, 2 graisses max. L'identité est un non-négociable (§2.1).
 
-> ✅ **Décision prise : A.** Implémentation UX-101 : woff2 auto-hébergées (Outfit/Space
-> Grotesk/JetBrains Mono), `@font-face` + préchargement des 2 graisses utiles, échelle
-> 12→32 px. (Nécessite les fichiers woff2 — lot dédié.)
+> ✅ **Décision prise : A — implémenté.** UX-101 fait : woff2 auto-hébergées via
+> `@fontsource/*` (subset latin), Outfit (corps) / Space Grotesk (titres) / JetBrains Mono
+> (code), `font-display: swap`, échelle 12→32 px, aucune requête réseau externe (K4 = 0).
 
 ---
 
