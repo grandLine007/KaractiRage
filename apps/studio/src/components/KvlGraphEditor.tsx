@@ -6,12 +6,13 @@ import type { Node, Edge, NodeChange, Connection, NodeProps } from '@xyflow/reac
 import '@xyflow/react/dist/style.css';
 import {
   Coins, Flame, Zap, CircleDot, Package, DoorOpen, CheckCircle2, AlertTriangle,
-  Link2, GitFork, Wand2, Boxes, Search, Plus, ChevronRight,
+  Link2, GitFork, Wand2, Boxes, Search, Plus, ChevronRight, X,
 } from 'lucide-react';
 import {
   getKvlGraphs, getKvlGraph, buildGuidedGraph, attachScript, getSelectedEntity,
   getEditorState, validateKvlGraph, getPluginCatalog, addKvlNode,
   addKvlConnection, removeKvlConnection, removeKvlNode, saveKvlGraph,
+  newKvlGraph, duplicateKvlGraph, renameKvlGraph, deleteKvlGraph,
   type KvlGraphSummary, type GuidedGraphResult, type KvlDiagnostic,
   type PluginCatalog, type KvlNodeSchema,
 } from '../services/engineBridge';
@@ -66,6 +67,11 @@ function flavorStyle(flavor: KvlNodeSchema['flavor']) {
 }
 function requiredParamCount(schema: KvlNodeSchema): number {
   return schema.params.filter(p => p.default === undefined || p.default === null).length;
+}
+function dtLabel(dt: unknown): string {
+  if (typeof dt === 'string') return dt;
+  if (dt && typeof dt === 'object') return Object.keys(dt as object)[0] ?? '?';
+  return '?';
 }
 function layoutNodes(graph: KvlGraph): Node[] {
   const ids = Object.keys(graph.nodes);
@@ -216,6 +222,8 @@ export const KvlGraphEditor: React.FC = () => {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem('karactirage.kvlCollapsed') ?? '{}'); } catch { return {}; }
   });
+  // UX-603 : nœud sélectionné pour l'inspecteur.
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   const refreshGraphs = useCallback(async () => {
     try {
@@ -320,6 +328,46 @@ export const KvlGraphEditor: React.FC = () => {
     await loadGraph(scriptPath);
     setFeedback(`${deleted.length} nœud(s) supprimé(s).`);
   }, [scriptPath, pushHistory, loadGraph]);
+
+  // UX-603 : sélection d'un nœud → inspecteur.
+  const onNodeClick = useCallback((_e: React.MouseEvent, node: Node) => {
+    setSelectedNodeId(node.id);
+  }, []);
+
+  // UX-606 : gestion des graphes (nouveau / renommer / dupliquer / supprimer).
+  const handleNewGraph = useCallback(async () => {
+    const name = window.prompt('Nom du nouveau graphe :', 'Nouvelle règle');
+    if (!name?.trim()) return;
+    try {
+      const path = await newKvlGraph(name.trim(), '');
+      await refreshGraphs();
+      await loadGraph(path);
+      setFeedback(`Graphe « ${name.trim()} » créé.`);
+    } catch (e) { setFeedback(typeof e === 'string' ? e : 'Création impossible.'); }
+  }, [refreshGraphs, loadGraph]);
+
+  const handleRenameGraph = useCallback(async (g: KvlGraphSummary) => {
+    const name = window.prompt('Nouveau nom :', g.name);
+    if (!name?.trim()) return;
+    await renameKvlGraph(g.path, name.trim());
+    await refreshGraphs();
+  }, [refreshGraphs]);
+
+  const handleDuplicateGraph = useCallback(async (g: KvlGraphSummary) => {
+    const name = window.prompt('Nom de la copie :', `${g.name} (copie)`);
+    if (!name?.trim()) return;
+    try {
+      await duplicateKvlGraph(g.path, name.trim());
+      await refreshGraphs();
+    } catch (e) { setFeedback(typeof e === 'string' ? e : 'Duplication impossible.'); }
+  }, [refreshGraphs]);
+
+  const handleDeleteGraph = useCallback(async (g: KvlGraphSummary) => {
+    if (!window.confirm(`Supprimer « ${g.name} » ?`)) return;
+    await deleteKvlGraph(g.path);
+    if (scriptPath === g.path) { setGraph(null); setNodes([]); setEdges([]); setScriptPath(null); setSelectedNodeId(null); }
+    await refreshGraphs();
+  }, [refreshGraphs, scriptPath]);
 
   // Ctrl+Z / Ctrl+Y (hors champs de saisie) — undo/redo du graphe.
   useEffect(() => {
@@ -474,6 +522,7 @@ export const KvlGraphEditor: React.FC = () => {
 
   const errCount = diagnostics.filter(d => d.severity === 'error').length;
   const warnCount = diagnostics.filter(d => d.severity === 'warning').length;
+  const selectedNode = selectedNodeId && graph ? graph.nodes[selectedNodeId] : null;
 
   const catalogNodes = catalog?.nodes ?? [];
   const normalizedQuery = nodeQuery.trim().toLowerCase();
@@ -521,6 +570,9 @@ export const KvlGraphEditor: React.FC = () => {
             <span className={`badge-tag ${errCount === 0 ? 'bg-[#064e3b] text-[#34d399]' : 'bg-[#881337] text-[#f43f5e]'}`}>
               {errCount === 0 ? `✓ Valide (${warnCount} avert.)` : `✗ ${errCount} erreur(s)`}
             </span>
+          )}
+          {graph && (
+            <span className="badge-tag bg-[#150d27] text-[#94a3b8] border border-[#2d1b4e]">✓ Enregistré</span>
           )}
           <button
             onClick={attach}
@@ -690,21 +742,36 @@ export const KvlGraphEditor: React.FC = () => {
               </div>
             ))}
 
-            {tab === 'graphs' && graphs.map(g => (
+            {tab === 'graphs' && (
               <button
-                key={g.path}
-                onClick={() => loadGraph(g.path)}
-                className="w-full text-left p-2.5 bg-[#150d27] hover:bg-[#1e1338] border border-[#2d1b4e] hover:border-[#a855f7] rounded-lg transition"
+                onClick={handleNewGraph}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-gradient-to-r from-[#9333ea] to-[#7e22ce] hover:from-[#a855f7] hover:to-[#9333ea] text-white rounded text-xs font-bold transition"
               >
-                <div className="text-xs font-bold text-[#f8fafc] truncate">{g.name}</div>
-                <div className="text-[10px] text-[#94a3b8] truncate mt-0.5">{g.path}</div>
-                <div className="text-[10px] text-[#94a3b8] mt-1">{g.node_count} nœuds · {g.connection_count} liens</div>
+                <Plus size={13} /> Nouveau graphe
               </button>
+            )}
+
+            {tab === 'graphs' && graphs.map(g => (
+              <div
+                key={g.path}
+                className="p-2.5 bg-[#150d27] hover:bg-[#1e1338] border border-[#2d1b4e] hover:border-[#a855f7] rounded-lg transition"
+              >
+                <button onClick={() => loadGraph(g.path)} className="w-full text-left">
+                  <div className="text-xs font-bold text-[#f8fafc] truncate">{g.name}</div>
+                  <div className="text-[10px] text-[#94a3b8] truncate mt-0.5 font-mono">{g.path}</div>
+                  <div className="text-[10px] text-[#94a3b8] mt-1">{g.node_count} nœuds · {g.connection_count} liens</div>
+                </button>
+                <div className="flex items-center gap-1 mt-1.5">
+                  <button onClick={() => handleRenameGraph(g)} className="px-2 py-1 text-[10px] text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#2d1b4e] rounded transition">Renommer</button>
+                  <button onClick={() => handleDuplicateGraph(g)} className="px-2 py-1 text-[10px] text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#2d1b4e] rounded transition">Dupliquer</button>
+                  <button onClick={() => handleDeleteGraph(g)} className="px-2 py-1 text-[10px] text-[#f87171] hover:text-white hover:bg-[#3b0a0a] rounded transition ml-auto">Supprimer</button>
+                </div>
+              </div>
             ))}
 
             {tab === 'graphs' && graphs.length === 0 && (
               <div className="p-4 text-center text-xs text-[#94a3b8] leading-relaxed">
-                Aucun graphe chargé. Générez une recette pour en créer un.
+                Aucun graphe. Créez-en un ci-dessus, ou générez une recette.
               </div>
             )}
           </div>
@@ -719,6 +786,7 @@ export const KvlGraphEditor: React.FC = () => {
             onConnect={onConnect}
             onEdgesDelete={onEdgesDelete}
             onNodesDelete={onNodesDelete}
+            onNodeClick={onNodeClick}
             fitView
             className="bg-[#07040d]"
           >
@@ -730,6 +798,23 @@ export const KvlGraphEditor: React.FC = () => {
         <aside className="w-80 flex flex-col h-full bg-[#0d0819] border-l border-[#2d1b4e] overflow-y-auto shrink-0">
           {graph ? (
             <div className="p-3 space-y-3 text-xs">
+              {selectedNode && (
+                <div className="p-2.5 bg-[#150d27] border border-[#a855f7] rounded-lg space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-[#c084fc]">Nœud sélectionné</div>
+                    <button onClick={() => setSelectedNodeId(null)} className="p-1 text-[#94a3b8] hover:text-[#f8fafc] rounded transition" aria-label="Fermer l'inspecteur"><X size={12} /></button>
+                  </div>
+                  <div className="text-xs font-bold text-[#f8fafc]">{KIND_STYLE[kindOf(selectedNode.kind)].emoji} {selectedNode.name}</div>
+                  <div className="text-[10px] text-[#94a3b8] font-mono">{selectedNode.id}</div>
+                  <p className="text-[10px] text-[#94a3b8] leading-relaxed">{selectedNode.description}</p>
+                  <div className="text-[10px] text-[#94a3b8]">
+                    Entrées ({selectedNode.inputs.length}) : {selectedNode.inputs.map(p => `${p.name} (${dtLabel(p.data_type)})`).join(', ') || 'aucune'}
+                  </div>
+                  <div className="text-[10px] text-[#94a3b8]">
+                    Sorties ({selectedNode.outputs.length}) : {selectedNode.outputs.map(p => `${p.name} (${dtLabel(p.data_type)})`).join(', ') || 'aucune'}
+                  </div>
+                </div>
+              )}
               <h3 className="font-bold text-sm text-[#f8fafc]">{graph.name}</h3>
               <p className="text-[#94a3b8] leading-relaxed">{graph.description}</p>
 
@@ -789,6 +874,12 @@ export const KvlGraphEditor: React.FC = () => {
               <p className="leading-relaxed">
                 Choisissez une recette à gauche, remplissez 2-3 champs, puis générez une mécanique valide.
               </p>
+              <button
+                onClick={() => setTab('recipes')}
+                className="mt-1 px-3 py-2 bg-[#2e1065] border border-[#a855f7] text-[#c084fc] rounded-lg text-xs font-semibold transition hover:bg-[#3b0764]"
+              >
+                Créer ma première règle
+              </button>
             </div>
           )}
         </aside>

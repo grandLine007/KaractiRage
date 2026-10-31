@@ -532,6 +532,22 @@ export async function removeKvlNode(path: string, nodeId: string): Promise<strin
   return await invoke('engine_kvl_remove_node', { path, nodeId });
 }
 
+export async function newKvlGraph(name: string, description: string): Promise<string> {
+  return await invoke('engine_kvl_new_graph', { name, description });
+}
+
+export async function duplicateKvlGraph(path: string, newName: string): Promise<string> {
+  return await invoke('engine_kvl_duplicate_graph', { path, newName });
+}
+
+export async function renameKvlGraph(path: string, newName: string): Promise<boolean> {
+  return await invoke('engine_kvl_rename_graph', { path, newName });
+}
+
+export async function deleteKvlGraph(path: string): Promise<boolean> {
+  return await invoke('engine_kvl_delete_graph', { path });
+}
+
 /**
  * Construit et attache un graphe KVL guidé à partir d'une recette + paramètres.
  */

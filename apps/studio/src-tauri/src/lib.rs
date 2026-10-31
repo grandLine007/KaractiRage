@@ -540,6 +540,41 @@ fn engine_kvl_remove_node(
 }
 
 #[tauri::command]
+fn engine_kvl_new_graph(
+    name: String,
+    description: String,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    engine.lock().unwrap().new_kvl_graph(&name, &description)
+}
+
+#[tauri::command]
+fn engine_kvl_duplicate_graph(
+    path: String,
+    new_name: String,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    engine.lock().unwrap().duplicate_kvl_graph(&path, &new_name)
+}
+
+#[tauri::command]
+fn engine_kvl_rename_graph(
+    path: String,
+    new_name: String,
+    engine: tauri::State<'_, SharedEngine>,
+) -> bool {
+    engine.lock().unwrap().rename_kvl_graph(&path, &new_name)
+}
+
+#[tauri::command]
+fn engine_kvl_delete_graph(
+    path: String,
+    engine: tauri::State<'_, SharedEngine>,
+) -> bool {
+    engine.lock().unwrap().delete_kvl_graph(&path)
+}
+
+#[tauri::command]
 fn engine_plugin_catalog(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().plugin_catalog()
 }
@@ -1153,6 +1188,10 @@ pub fn run() {
             engine_kvl_add_connection,
             engine_kvl_remove_connection,
             engine_kvl_remove_node,
+            engine_kvl_new_graph,
+            engine_kvl_duplicate_graph,
+            engine_kvl_rename_graph,
+            engine_kvl_delete_graph,
             engine_export_standalone_html,
             engine_move_player_to,
             engine_get_player_pos,

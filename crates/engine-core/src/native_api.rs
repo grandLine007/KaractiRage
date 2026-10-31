@@ -1224,6 +1224,53 @@ impl NativeEngine {
         Ok(json)
     }
 
+    /// Crée un graphe KVL vide, l'insère en mémoire et le persiste. (WS6/UX-606)
+    pub fn new_kvl_graph(&mut self, name: &str, description: &str) -> Result<String, String> {
+        let id = format!("g_{}", name.to_lowercase().replace(|c: char| !c.is_alphanumeric(), "_"));
+        let graph = kvl_core::Graph::new(id.clone(), name, description);
+        let path = format!("assets/scripts/{}.kvl.json", id);
+        self.game.kvl_graphs.insert(path.clone(), graph.clone());
+        self.persist_kvl_graph_to_disk(&path, &graph);
+        Ok(path)
+    }
+
+    /// Duplique un graphe KVL sous un nouveau nom. (WS6/UX-606)
+    pub fn duplicate_kvl_graph(&mut self, path: &str, new_name: &str) -> Result<String, String> {
+        let mut copy = self
+            .game
+            .kvl_graphs
+            .get(path)
+            .ok_or_else(|| format!("Graphe introuvable : {}", path))?
+            .clone();
+        copy.id = format!("g_{}", new_name.to_lowercase().replace(|c: char| !c.is_alphanumeric(), "_"));
+        copy.name = new_name.to_string();
+        let new_path = format!("assets/scripts/{}.kvl.json", copy.id);
+        self.game.kvl_graphs.insert(new_path.clone(), copy.clone());
+        self.persist_kvl_graph_to_disk(&new_path, &copy);
+        Ok(new_path)
+    }
+
+    /// Renomme un graphe KVL (nom affiché), persiste. (WS6/UX-606)
+    pub fn rename_kvl_graph(&mut self, path: &str, new_name: &str) -> bool {
+        if let Some(g) = self.game.kvl_graphs.get_mut(path) {
+            g.name = new_name.to_string();
+            let snapshot = g.clone();
+            self.persist_kvl_graph_to_disk(path, &snapshot);
+            return true;
+        }
+        false
+    }
+
+    /// Supprime un graphe KVL de la mémoire et du disque. (WS6/UX-606)
+    pub fn delete_kvl_graph(&mut self, path: &str) -> bool {
+        if self.game.kvl_graphs.remove(path).is_some() {
+            let abs = format!("{}/../../{}", env!("CARGO_MANIFEST_DIR"), path);
+            let _ = std::fs::remove_file(&abs);
+            return true;
+        }
+        false
+    }
+
     /// Attache un script KVL existant à une entité (par id) avec un événement de recouvrement.
     pub fn attach_script_to_entity(&mut self, entity_id: usize, script_path: &str) -> bool {
         if let Some(ent) = self.game.entities.iter_mut().find(|e| e.id == entity_id) {

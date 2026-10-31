@@ -56,10 +56,12 @@ woff2 auto-hébergées) ou assumer la police système ?
 > **Recommandation : A** — c'est le cœur de la promesse « éditeur visuel » ; à séquencer
 > (câblage d'abord, puis undo, puis params).
 
-> ✅ **Décision prise : A.** WS6 séquencé en 3 vagues : **① UX-601+602 fait**, **② UX-604 fait**
-> (câblage des pins sortie→entrée, suppression arête/nœud, undo/redo Ctrl+Z/Y, commandes backend
-> `engine_kvl_add_connection` / `engine_kvl_remove_connection` / `engine_kvl_remove_node`) →
-> ③ UX-603+605+606 (inspecteur + insérer/câbler + gestion des graphes).
+> ✅ **Décision prise : A.** WS6 séquencé en 3 vagues, **toutes livrées** :
+> ① UX-601+602 (palette filtrable + cartes lisibles), ② UX-604 (câblage des pins,
+> suppression arête/nœud, undo/redo Ctrl+Z/Y), ③ UX-603+606 (inspecteur de nœud au clic,
+> gestion des graphes nouveau/renommer/dupliquer/supprimer, badge « ✓ Enregistré »,
+> état vide « Créer ma première règle »). UX-605 : insertion + câblage manuels couverts
+> par ①+② ; l'assistant « insérer & câbler » dédié reste un raffinement optionnel.
 
 ---
 
