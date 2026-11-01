@@ -465,6 +465,17 @@ impl AiClient {
         prompt: &str,
         backend: &dyn LlmBackend,
     ) -> Result<AiGeneratedGamePayload, String> {
+        let system_prompt = get_system_prompt_for_provider(config.provider);
+        Self::send_prompt_with_system_prompt(config, &system_prompt, prompt, backend)
+    }
+
+    /// Appel avec un prompt système fourni (permet de brancher l'assembleur RAG).
+    pub fn send_prompt_with_system_prompt(
+        config: &AiClientConfig,
+        system_prompt: &str,
+        user_prompt: &str,
+        backend: &dyn LlmBackend,
+    ) -> Result<AiGeneratedGamePayload, String> {
         if config.provider == AiProvider::OfflineLocal {
             return Err("Fournisseur OfflineLocal : utilisez AiPatchBuilder localement.".into());
         }
@@ -473,12 +484,10 @@ impl AiClient {
         let model = config.custom_model.as_deref().unwrap_or_else(|| config.provider.default_model());
         let api_key = config.custom_api_key.clone().or_else(|| config.provider.get_api_key());
 
-        let system_prompt = get_system_prompt_for_provider(config.provider);
-
         let raw_output = if config.provider == AiProvider::Claude {
-            Self::call_claude(backend, endpoint, model, api_key.as_deref(), &system_prompt, prompt, config.timeout_seconds)?
+            Self::call_claude(backend, endpoint, model, api_key.as_deref(), system_prompt, user_prompt, config.timeout_seconds)?
         } else {
-            Self::call_openai_compatible(backend, endpoint, model, api_key.as_deref(), &system_prompt, prompt, config.timeout_seconds)?
+            Self::call_openai_compatible(backend, endpoint, model, api_key.as_deref(), system_prompt, user_prompt, config.timeout_seconds)?
         };
 
         Self::parse_llm_json_response(&raw_output)

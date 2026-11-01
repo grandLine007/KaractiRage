@@ -26,6 +26,7 @@ pub mod ai_client;
 pub mod ai_dictionary;
 pub mod ai_executor;
 pub mod ai_intent;
+pub mod ai_orchestrator;
 pub mod ai_plan;
 pub mod ai_prompt;
 pub mod project;
