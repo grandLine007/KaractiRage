@@ -116,12 +116,19 @@ pub struct AiClientConfig {
 }
 
 impl AiClientConfig {
-    /// Charge la configuration depuis karactirage.ai.json si présent, sinon utilise la configuration par défaut
+    /// Charge la configuration depuis `karactirage.ai.json` (recherche depuis le CWD vers la racine).
     pub fn load_or_default() -> Self {
-        if let Ok(content) = std::fs::read_to_string("karactirage.ai.json") {
-            if let Ok(cfg) = serde_json::from_str::<AiClientConfig>(&content) {
-                return cfg;
+        let mut current = std::env::current_dir().ok();
+        while let Some(dir) = current {
+            let candidate = dir.join("karactirage.ai.json");
+            if candidate.is_file() {
+                if let Ok(content) = std::fs::read_to_string(&candidate) {
+                    if let Ok(cfg) = serde_json::from_str::<AiClientConfig>(&content) {
+                        return cfg;
+                    }
+                }
             }
+            current = dir.parent().map(|p| p.to_path_buf());
         }
         Self::default()
     }
@@ -140,7 +147,7 @@ impl Default for AiClientConfig {
             custom_endpoint: None,
             custom_model: None,
             custom_api_key: None,
-            timeout_seconds: 25,
+            timeout_seconds: 120,
         }
     }
 }

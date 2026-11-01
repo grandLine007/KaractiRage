@@ -290,12 +290,17 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
             <button
               onClick={handleGenerate}
               disabled={isGenerating || !promptText.trim()}
-              className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-[#9333ea] to-[#7e22ce] hover:from-[#a855f7] hover:to-[#9333ea] disabled:opacity-50 text-white font-bold text-xs rounded-lg shadow-lg shadow-purple-950/60 transition"
+              className={`flex items-center gap-2 px-5 py-2 text-white font-bold text-xs rounded-lg shadow-lg shadow-purple-950/60 transition ${
+                isGenerating
+                  ? 'bg-gradient-to-r from-[#7e22ce] to-[#4c1d95] animate-pulse cursor-wait'
+                  : 'bg-gradient-to-r from-[#9333ea] to-[#7e22ce] hover:from-[#a855f7] hover:to-[#9333ea] disabled:opacity-50'
+              }`}
             >
               {isGenerating ? (
                 <>
-                  <RefreshCw size={14} className="animate-spin" />
-                  Génération en cours...
+                  <Sparkles size={14} className="animate-spin" />
+                  <span>Le LLM compose votre jeu</span>
+                  <span className="tracking-widest animate-pulse">…</span>
                 </>
               ) : (
                 <>

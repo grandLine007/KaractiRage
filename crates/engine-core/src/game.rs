@@ -13265,6 +13265,7 @@ mod tests {
     #[test]
     fn test_ai_patch_trigger_and_review_lifecycle() {
         let mut state = GameState::load_from_scene(get_test_scene_path()).unwrap();
+        state.editor.ai_config.provider = crate::ai_client::AiProvider::OfflineLocal;
         state.editor.mode = EditorMode::Edit;
         let mut canvas = Canvas::new(1200, 800);
         let initial_entity_count = state.entities.len();
@@ -13393,6 +13394,7 @@ mod tests {
     #[test]
     fn test_ai_patch_rejection_and_instant_rollback() {
         let mut state = GameState::load_from_scene(get_test_scene_path()).unwrap();
+        state.editor.ai_config.provider = crate::ai_client::AiProvider::OfflineLocal;
         state.editor.mode = EditorMode::Edit;
         let mut canvas = Canvas::new(1200, 800);
         let initial_entity_count = state.entities.len();

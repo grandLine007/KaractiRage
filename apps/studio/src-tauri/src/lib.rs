@@ -200,7 +200,7 @@ fn engine_retry_boot(engine: tauri::State<'_, SharedEngine>) -> bool {
 }
 
 #[tauri::command]
-fn test_llm_connection(provider_name: String, endpoint: Option<String>) -> LlmTestResult {
+async fn test_llm_connection(provider_name: String, endpoint: Option<String>) -> LlmTestResult {
     let provider = match provider_name.to_lowercase().as_str() {
         "lmstudio" | "lm studio" => AiProvider::LmStudio,
         "ollama" => AiProvider::Ollama,
@@ -240,7 +240,7 @@ fn test_llm_connection(provider_name: String, endpoint: Option<String>) -> LlmTe
 }
 
 #[tauri::command]
-fn generate_ai_level(prompt: String, provider_name: Option<String>, endpoint: Option<String>) -> AiGenerationResult {
+async fn generate_ai_level(prompt: String, provider_name: Option<String>, endpoint: Option<String>) -> AiGenerationResult {
     let mut config = AiClientConfig::load_or_default();
     if let Some(p_name) = provider_name {
         config.provider = match p_name.to_lowercase().as_str() {
