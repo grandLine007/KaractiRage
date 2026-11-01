@@ -13372,7 +13372,7 @@ mod tests {
             kvl_actions: vec![
                 crate::ai_client::AiGeneratedKvlAction {
                     event: "OnDamage".into(),
-                    action: "SpawnParticles:burst".into(),
+                    action: "EmitBurst:12".into(),
                     target_entity: None,
                     condition: None,
                     on_true_action: None,

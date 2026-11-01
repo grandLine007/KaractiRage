@@ -1,0 +1,29 @@
+{
+  "dictionary_version": "2026.11.1",
+  "engine_api": 1,
+  "dimensions": [
+    "2d",
+    "2.5d",
+    "3d"
+  ],
+  "artifacts": [
+    "project",
+    "scene",
+    "level",
+    "mechanic",
+    "sprite",
+    "mesh",
+    "audio",
+    "ui"
+  ],
+  "files": {
+    "capabilities.json": "e09dd48e2c7df299",
+    "examples/2d-platformer-boss.json": "149e7474b4f50cdf",
+    "examples/3d-arena.json": "7bec9724ad971885",
+    "nodes.json": "a8161352285baf5c",
+    "playbooks/2d-platformer.md": "13037dd937730e23",
+    "playbooks/3d-scene.md": "c753c197cb11aa96",
+    "schemas/graph.schema.json": "088e9ca2dce0a6e9",
+    "schemas/level.schema.json": "ac845fc11f886711"
+  }
+}

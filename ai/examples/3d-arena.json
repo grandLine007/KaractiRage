@@ -1,0 +1,12 @@
+{
+  "title": "Arène 3D du Titan",
+  "description": "Arène 3D : survivre aux assauts du Titan.",
+  "primary_genre": "BossFight",
+  "entities": [
+    { "name": "Titan", "kind": "boss", "offset_x": 0, "offset_y": 0, "width": 64, "height": 64, "health": 20, "color_hex": "#DC2626", "mesh_primitive": "sphere", "position3d": [0, 0, 0], "scale3d": [2, 2, 2], "has_collider": true, "has_vision": true, "is_flocking": false },
+    { "name": "Pilier", "kind": "npc", "offset_x": 0, "offset_y": 0, "width": 32, "height": 32, "health": 0, "color_hex": "#475569", "mesh_primitive": "cube", "position3d": [120, 0, 0], "scale3d": [1, 4, 1], "has_collider": true, "has_vision": false, "is_flocking": false }
+  ],
+  "kvl_actions": [
+    { "event": "OnStart", "action": "PlaySound:alarm" }
+  ]
+}

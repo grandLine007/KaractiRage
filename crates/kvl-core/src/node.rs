@@ -2,7 +2,7 @@ use crate::category::Category;
 use crate::pin::Pin;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum NodeKind {
     /// Événement déclencheur (ex: Contact joueur, Touche pressée, Début de niveau)
     Event { event_type: String },
@@ -17,7 +17,7 @@ pub enum NodeKind {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NodeUiMetadata {
     pub position_x: f32,
     pub position_y: f32,
@@ -34,7 +34,7 @@ impl Default for NodeUiMetadata {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Node {
     pub id: String,
     pub name: String,

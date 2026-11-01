@@ -40,7 +40,9 @@ tools/pxl/node_modules/
 tools/pxl/docs/
 
 # Build WASM généré (reconstruit par scripts/build_wasm.sh)
-dist/
+dist/*
+# …sauf le dictionnaire IA compilé, versionné pour le CI de non-dérive.
+!dist/ai/
 
 # Sorties du harnais d'audit UX (report.json + captures, régénérés par `npm run audit:ui`)
 apps/studio/audit/*

@@ -75,9 +75,15 @@ pub struct AiPatchHistoryItem {
 
 /// Vérification rigoureuse dans un bac à sable (Sandbox) hermétique (100 pas simulés)
 pub fn test_in_sandbox(graph: &Graph, entry_event: &str) -> SandboxReport {
-    let static_errors = kvl_core::Validator::validate(graph);
-    let static_ok = static_errors.is_empty();
-    let static_count = static_errors.len();
+    let structural_errors = kvl_core::Validator::validate(graph);
+
+    // Catalogue : une action/événement inconnu est une ERREUR (jamais un no-op).
+    // Les conditions restent hors catalogue (repli historique de l'interpréteur).
+    let registry = catalog_registry();
+    let unknown = unknown_catalog_nodes(graph, &registry);
+
+    let static_ok = structural_errors.is_empty() && unknown.is_empty();
+    let static_count = structural_errors.len() + unknown.len();
 
     let mut sim_ok = false;
     let target_steps = 100;
@@ -104,6 +110,33 @@ pub fn test_in_sandbox(graph: &Graph, entry_event: &str) -> SandboxReport {
         simulation_passed: static_ok && sim_ok,
         memory_budget_ok: true,
     }
+}
+
+/// Catalogue de nœuds construit depuis les schémas compilés (actions + événements).
+fn catalog_registry() -> kvl_core::NodeRegistry {
+    let mut registry = kvl_core::NodeRegistry::new();
+    let _ = registry.register_all(kvl_runtime::builtin_node_schemas());
+    registry
+}
+
+/// Liste les types d'action/événement absents du catalogue.
+///
+/// Les conditions (`HasItem:`, `HealthLessThan:`, …) ne sont volontairement **pas**
+/// vérifiées ici : elles restent exécutées par le repli historique de l'interpréteur et
+/// ne sont pas encore cataloguées. Une action ou un événement inconnu, lui, est une erreur.
+fn unknown_catalog_nodes(graph: &Graph, registry: &kvl_core::NodeRegistry) -> Vec<String> {
+    let mut unknown = Vec::new();
+    for node in graph.nodes.values() {
+        let type_id = match &node.kind {
+            NodeKind::Event { event_type } => event_type.as_str(),
+            NodeKind::Action { action_type } => action_type.as_str(),
+            _ => continue,
+        };
+        if registry.resolve(type_id).is_none() {
+            unknown.push(type_id.to_string());
+        }
+    }
+    unknown
 }
 
 /// Générateur d'Intentions IA : analyse sémantique et construction de patchs
@@ -180,7 +213,7 @@ impl AiPatchBuilder {
             "Prise en Chasse A*",
             Category::ArtificialIntelligence,
             "Engage la navigation A* vers le joueur.",
-            NodeKind::Action { action_type: "NavChasePlayer:130.0".into() },
+            NodeKind::Action { action_type: "NavChasePlayer".into() },
         ).with_input(Pin::new_trigger("in_trigger", "Exécution", PinDirection::Input))
          .with_output(Pin::new_trigger("out_trigger", "Exécution", PinDirection::Output));
 
@@ -583,7 +616,7 @@ impl AiPatchBuilder {
             "Dispersion Boids (Scatter)",
             Category::ArtificialIntelligence,
             "Disperse les membres de la meute pendant 4 secondes.",
-            NodeKind::Action { action_type: "FlockScatter:4.0".into() },
+            NodeKind::Action { action_type: "SwarmScatter:1,4.0".into() },
         ).with_input(Pin::new_trigger("in_trigger", "Exécution", PinDirection::Input))
          .with_output(Pin::new_trigger("out_trigger", "Exécution", PinDirection::Output));
 
@@ -732,7 +765,7 @@ impl AiPatchBuilder {
             "Télégraphie Circulaire (1.5s)",
             Category::World,
             "Affiche un cercle d'avertissement rouge au sol avant impact.",
-            NodeKind::Action { action_type: "BossTelegraph:RadialNova:1.5".into() },
+            NodeKind::Action { action_type: "TriggerBossTelegraph:RadialNova:1.5".into() },
         ).with_input(Pin::new_trigger("in_trigger", "Exécution", PinDirection::Input))
          .with_output(Pin::new_trigger("out_trigger", "Exécution", PinDirection::Output));
 
@@ -1640,5 +1673,43 @@ mod tests {
         assert!(patch.sandbox_report.static_check_passed);
         assert_eq!(patch.sandbox_report.static_errors_count, 0);
         assert!(patch.sandbox_report.simulation_passed);
+    }
+
+    #[test]
+    fn test_llm_payload_with_unknown_action_is_rejected() {
+        let payload = crate::ai_client::AiGeneratedGamePayload {
+            title: "Test Rejet".to_string(),
+            description: "test".to_string(),
+            primary_genre: None,
+            terrain: None,
+            gameplay_loop: None,
+            entities: vec![],
+            kvl_actions: vec![crate::ai_client::AiGeneratedKvlAction {
+                event: "OnEntityDefeated".to_string(),
+                action: "WinGame".to_string(),
+                target_entity: None,
+                condition: None,
+                on_true_action: None,
+                on_false_action: None,
+                second_action: None,
+            }],
+            variables: None,
+        };
+
+        let patch = AiPatchBuilder::build_from_generated_payload(
+            &payload,
+            "test",
+            (0.0, 0.0),
+            200,
+            &[],
+            None,
+        );
+
+        assert!(
+            !patch.sandbox_report.static_check_passed,
+            "une action/événement inconnu doit être rejeté, pas ignoré"
+        );
+        assert!(patch.sandbox_report.static_errors_count >= 1);
+        assert!(!patch.sandbox_report.simulation_passed);
     }
 }

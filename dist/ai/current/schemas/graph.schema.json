@@ -1,0 +1,472 @@
+{
+  "$defs": {
+    "Category": {
+      "oneOf": [
+        {
+          "enum": [
+            "Movement",
+            "Interactions",
+            "Combat",
+            "ArtificialIntelligence",
+            "UserInterface",
+            "Progression",
+            "World",
+            "Audio",
+            "MathLogic"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Custom": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "Custom"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Connection": {
+      "properties": {
+        "from_node": {
+          "type": "string"
+        },
+        "from_pin": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "to_node": {
+          "type": "string"
+        },
+        "to_pin": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "from_node",
+        "from_pin",
+        "to_node",
+        "to_pin"
+      ],
+      "type": "object"
+    },
+    "DataType": {
+      "enum": [
+        "Trigger",
+        "Bool",
+        "Int",
+        "Float",
+        "String",
+        "Vector2",
+        "Vector3",
+        "EntityRef",
+        "Any"
+      ],
+      "type": "string"
+    },
+    "Node": {
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/Category"
+        },
+        "description": {
+          "description": "Explication claire en langage naturel du rôle de ce bloc (pédagogie & audit IA)",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/Pin"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/NodeKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "outputs": {
+          "items": {
+            "$ref": "#/$defs/Pin"
+          },
+          "type": "array"
+        },
+        "ui": {
+          "$ref": "#/$defs/NodeUiMetadata"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "category",
+        "description",
+        "kind",
+        "inputs",
+        "outputs",
+        "ui"
+      ],
+      "type": "object"
+    },
+    "NodeKind": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Événement déclencheur (ex: Contact joueur, Touche pressée, Début de niveau)",
+          "properties": {
+            "Event": {
+              "properties": {
+                "event_type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "event_type"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Event"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Condition booléenne (ex: Vérifier score, Possède clé, Objet actif)",
+          "properties": {
+            "Condition": {
+              "properties": {
+                "operator": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "operator"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Condition"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Action unitaire (ex: Modifier score, Jouer son, Supprimer objet)",
+          "properties": {
+            "Action": {
+              "properties": {
+                "action_type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action_type"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Bloc intelligent / Composé (regroupe une sous-logique avec vue simplifiée)",
+          "properties": {
+            "Composite": {
+              "properties": {
+                "is_expanded": {
+                  "type": "boolean"
+                },
+                "macro_name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "macro_name",
+                "is_expanded"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Composite"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "NodeUiMetadata": {
+      "properties": {
+        "color_tag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "position_x": {
+          "format": "float",
+          "type": "number"
+        },
+        "position_y": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "position_x",
+        "position_y"
+      ],
+      "type": "object"
+    },
+    "Pin": {
+      "properties": {
+        "data_type": {
+          "$ref": "#/$defs/DataType"
+        },
+        "default_value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Value"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "direction": {
+          "$ref": "#/$defs/PinDirection"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "direction",
+        "data_type"
+      ],
+      "type": "object"
+    },
+    "PinDirection": {
+      "enum": [
+        "Input",
+        "Output"
+      ],
+      "type": "string"
+    },
+    "Value": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "Bool",
+              "type": "string"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Int",
+              "type": "string"
+            },
+            "value": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Float",
+              "type": "string"
+            },
+            "value": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "String",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Vector2",
+              "type": "string"
+            },
+            "value": {
+              "items": {
+                "format": "float",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Vector3",
+              "type": "string"
+            },
+            "value": {
+              "items": {
+                "format": "float",
+                "type": "number"
+              },
+              "maxItems": 3,
+              "minItems": 3,
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "EntityRef",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Variable": {
+      "properties": {
+        "data_type": {
+          "$ref": "#/$defs/DataType"
+        },
+        "initial_value": {
+          "$ref": "#/$defs/Value"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "data_type",
+        "initial_value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "connections": {
+      "items": {
+        "$ref": "#/$defs/Connection"
+      },
+      "type": "array"
+    },
+    "description": {
+      "description": "Résumé en langage naturel de la mécanique globale",
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "nodes": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Node"
+      },
+      "type": "object"
+    },
+    "variables": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Variable"
+      },
+      "type": "object"
+    },
+    "version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "description",
+    "version",
+    "variables",
+    "nodes",
+    "connections"
+  ],
+  "title": "Graph",
+  "type": "object"
+}

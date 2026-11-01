@@ -234,6 +234,12 @@ pub(crate) fn register(registry: &mut HandlerRegistry) {
         .register_prefix("TriggerBossTelegraph:", h_trigger_boss_telegraph)
         .expect("préfixe unique : TriggerBossTelegraph:");
     registry
+        .register("BossNovaShoot:", h_boss_nova_shoot)
+        .expect("handler unique : BossNovaShoot:");
+    registry
+        .register_prefix("BossNovaShoot:", h_boss_nova_shoot)
+        .expect("préfixe unique : BossNovaShoot:");
+    registry
         .register("TriggerBossRoar", h_trigger_boss_roar)
         .expect("handler unique : TriggerBossRoar");
     registry
@@ -251,6 +257,12 @@ pub(crate) fn register(registry: &mut HandlerRegistry) {
     registry
         .register_prefix("PlayAnimation2D:", h_play_animation2_d)
         .expect("préfixe unique : PlayAnimation2D:");
+    registry
+        .register("SetObjective:", h_set_objective)
+        .expect("handler unique : SetObjective:");
+    registry
+        .register_prefix("SetObjective:", h_set_objective)
+        .expect("préfixe unique : SetObjective:");
 }
 
 fn h_bonus_points(ctx: &mut ExecutionContext, call: &NodeCall<'_>) -> Result<(), RuntimeError> {
@@ -511,6 +523,16 @@ fn h_add_var(ctx: &mut ExecutionContext, call: &NodeCall<'_>) -> Result<(), Runt
     Ok(())
 }
 
+fn h_set_objective(ctx: &mut ExecutionContext, call: &NodeCall<'_>) -> Result<(), RuntimeError> {
+    ctx.set_var("objective", Value::String(call.argument.to_string()));
+    ctx.record_step(
+        call.node_id,
+        call.node_name,
+        format!("Objectif affiché : {}", call.argument),
+    );
+    Ok(())
+}
+
 fn h_set_var(ctx: &mut ExecutionContext, call: &NodeCall<'_>) -> Result<(), RuntimeError> {
     let op = call.type_id;
     let rest = op.trim_start_matches("SetVar:");
@@ -715,6 +737,21 @@ fn h_trigger_boss_telegraph(ctx: &mut ExecutionContext, call: &NodeCall<'_>) -> 
     Ok(())
 }
 
+fn h_boss_nova_shoot(ctx: &mut ExecutionContext, call: &NodeCall<'_>) -> Result<(), RuntimeError> {
+    let count = call
+        .type_id
+        .trim_start_matches("BossNovaShoot:")
+        .parse::<i64>()
+        .unwrap_or(16);
+    ctx.set_var("boss_nova_shoot_count", Value::Int(count));
+    ctx.record_step(
+        call.node_id,
+        call.node_name,
+        format!("Tir Nova radiale : {count} projectiles"),
+    );
+    Ok(())
+}
+
 fn h_trigger_boss_roar(ctx: &mut ExecutionContext, call: &NodeCall<'_>) -> Result<(), RuntimeError> {
     ctx.set_var("boss_roar_triggered", Value::Bool(true));
     ctx.record_step(call.node_id, call.node_name, "Grondement terrifiant du Boss !");
@@ -838,6 +875,10 @@ pub(crate) fn schemas() -> Vec<NodeSchema> {
             .with_prefix("SetVar:")
             .with_default_argument("score:0")
             .with_plugin(CORE_NODE_PACK),
+        NodeSchema::action("SetObjective", "Afficher l'objectif", Category::Progression, "Affiche le texte d'objectif à l'écran. Forme préfixée : « SetObjective:<texte> ».")
+            .with_prefix("SetObjective:")
+            .with_default_argument("objectif")
+            .with_plugin(CORE_NODE_PACK),
         NodeSchema::action("ShowDialogue", "Afficher un dialogue", Category::UserInterface, "Action historique. Forme préfixée : « ShowDialogue:… ».")
             .with_prefix("ShowDialogue:")
             .with_default_argument("PNJ:Bonjour")
@@ -887,6 +928,10 @@ pub(crate) fn schemas() -> Vec<NodeSchema> {
         NodeSchema::action("TriggerBossTelegraph", "Boss : télégraphier une attaque", Category::Combat, "Action historique. Forme préfixée : « TriggerBossTelegraph:… ».")
             .with_prefix("TriggerBossTelegraph:")
             .with_default_argument("slam")
+            .with_plugin(CORE_NODE_PACK),
+        NodeSchema::action("BossNovaShoot", "Boss : tir nova radiale", Category::Combat, "Action historique. Forme préfixée : « BossNovaShoot:<nb_projectiles> ».")
+            .with_prefix("BossNovaShoot:")
+            .with_default_argument("16")
             .with_plugin(CORE_NODE_PACK),
         NodeSchema::action("UseItem", "Utiliser un objet", Category::Progression, "Action historique. Forme préfixée : « UseItem:… ».")
             .with_prefix("UseItem:")

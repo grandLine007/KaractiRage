@@ -1,0 +1,30 @@
+{
+  "title": "Donjon du Golem Solaire",
+  "description": "Niveau plateforme : collecter la clé, ouvrir la porte, vaincre le boss.",
+  "primary_genre": "Platformer",
+  "terrain": {
+    "theme": "dungeon",
+    "platforms": [
+      { "name": "Sol", "offset_x": -200, "offset_y": 150, "width": 600, "height": 40, "is_solid": true, "color_hex": "#1E293B" }
+    ],
+    "hazards": []
+  },
+  "gameplay_loop": {
+    "objective": "Collecter la Clé Solaire puis vaincre le Golem.",
+    "win_condition": "DefeatBoss",
+    "lose_condition": "PlayerHealthZero",
+    "target_item_name": "Cle_Solaire",
+    "win_fanfare": "victory_bell"
+  },
+  "entities": [
+    { "name": "Ninja_Hero", "kind": "player", "offset_x": -120, "offset_y": 0, "width": 32, "height": 32, "health": 6, "color_hex": "#38BDF8", "sprite_archetype": "ninja", "has_collider": true, "has_vision": false, "is_flocking": false },
+    { "name": "Golem_Gardien", "kind": "boss", "offset_x": 200, "offset_y": 60, "width": 48, "height": 48, "health": 12, "color_hex": "#F59E0B", "sprite_archetype": "boss", "has_collider": true, "has_vision": true, "is_flocking": false },
+    { "name": "Cle_Solaire", "kind": "item", "offset_x": 120, "offset_y": 20, "width": 24, "height": 24, "health": 0, "color_hex": "#FBBF24", "sprite_archetype": "key", "has_collider": true, "has_vision": false, "is_flocking": false }
+  ],
+  "kvl_actions": [
+    { "event": "OnStart", "action": "PlaySound:coin" },
+    { "event": "OnItemPickup", "action": "GiveItem:cle_solaire:1", "target_entity": "Cle_Solaire" },
+    { "event": "OnBossDefeated", "action": "PlaySound:victory_bell", "target_entity": "Golem_Gardien" }
+  ],
+  "variables": { "objective": "Collecter la Clé Solaire puis vaincre le Golem." }
+}
