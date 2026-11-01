@@ -24,6 +24,7 @@ pub mod exporter;
 pub mod recipe;
 pub mod ai_client;
 pub mod ai_dictionary;
+pub mod ai_executor;
 pub mod ai_intent;
 pub mod ai_plan;
 pub mod ai_prompt;
