@@ -7,7 +7,7 @@
 use thiserror::Error;
 
 use crate::ai_plan::{AiOp, AiPlan, PlanError};
-use crate::entity::{Entity, Transform2D};
+use crate::entity::{Collider2D, Entity, Health2D, Movement2D, Renderable2D, Transform2D, VisionSensing};
 use crate::project::KaractiProject;
 use crate::recipe::GameGenre;
 use kvl_core::{Connection, Graph, Node, NodeFlavor, NodeKind, Pin, PinDirection, Value};
@@ -77,6 +77,45 @@ fn apply_op(project: &mut KaractiProject, op: &AiOp) -> Result<(), String> {
         AiOp::SetVariable { name, value } => {
             project.kvl_variables.insert(name.clone(), parse_value(value));
             Ok(())
+        }
+        AiOp::GenerateSprite { archetype } => {
+            let id = project.scene.entities.len();
+            let mut entity = Entity::new(
+                id,
+                archetype.clone(),
+                "sprite",
+                Transform2D::new(0.0, 0.0, 32.0, 32.0),
+            );
+            entity.renderable = Some(Renderable2D::procedural_sprite(archetype.as_str(), 0x00A855F7, 2));
+            project.scene.entities.push(entity);
+            Ok(())
+        }
+        AiOp::SetEntityComponent { entity, component } => {
+            let target = project
+                .scene
+                .entities
+                .iter_mut()
+                .find(|e| e.name == entity.as_str())
+                .ok_or_else(|| format!("entité introuvable : {entity}"))?;
+            match component.as_str() {
+                "collider" => {
+                    target.collider = Some(Collider2D::solid(32.0, 32.0));
+                    Ok(())
+                }
+                "health" => {
+                    target.health = Some(Health2D::new(5.0));
+                    Ok(())
+                }
+                "movement" => {
+                    target.movement = Some(Movement2D::new(110.0));
+                    Ok(())
+                }
+                "vision" => {
+                    target.vision = Some(VisionSensing::new(200.0));
+                    Ok(())
+                }
+                other => Err(format!("composant inconnu : {other}")),
+            }
         }
         other => Err(format!("opération non encore supportée : {other:?}")),
     }
@@ -258,5 +297,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(project.kvl_graphs["main"].connections.len(), 1);
+    }
+
+    #[test]
+    fn generate_sprite_creates_entity_with_renderable() {
+        let mut project = KaractiProject::new_empty("Base", "auteur", GameGenre::Platformer);
+        project.scene.entities.clear();
+        apply_op(&mut project, &AiOp::GenerateSprite { archetype: "coin".into() }).unwrap();
+        assert_eq!(project.scene.entities.len(), 1);
+        assert!(project.scene.entities[0].renderable.is_some());
+    }
+
+    #[test]
+    fn set_entity_component_adds_component() {
+        let mut project = KaractiProject::new_empty("Base", "auteur", GameGenre::Platformer);
+        project.scene.entities.clear();
+        apply_op(&mut project, &AiOp::AddEntity { name: "Joueur".into(), kind: "player".into() }).unwrap();
+        apply_op(&mut project, &AiOp::SetEntityComponent { entity: "Joueur".into(), component: "collider".into() }).unwrap();
+        assert!(project.scene.entities[0].collider.is_some());
+    }
+
+    #[test]
+    fn set_entity_component_unknown_entity_errors() {
+        let mut project = KaractiProject::new_empty("Base", "auteur", GameGenre::Platformer);
+        project.scene.entities.clear();
+        let err = apply_op(&mut project, &AiOp::SetEntityComponent { entity: "Inconnu".into(), component: "collider".into() });
+        assert!(err.is_err());
     }
 }
