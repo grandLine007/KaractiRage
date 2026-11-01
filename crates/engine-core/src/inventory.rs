@@ -403,6 +403,12 @@ impl Inventory {
         self.render_hotbar_at(canvas, (screen_w / 2) as i32, (screen_h - 14) as i32);
     }
 
+    /// Masque la hotbar et neutralise ses hitboxes (dialogue modal, cinématique).
+    pub fn hide_hotbar(&mut self) {
+        self.hotbar_hitboxes = [None; HOTBAR_SLOTS_COUNT];
+        self.use_btn_hitbox = None;
+    }
+
     /// Rendu de la barre d'action rapide (Hotbar) centrée à des coordonnées précises
     pub fn render_hotbar_at(&mut self, canvas: &mut Canvas, center_x: i32, bottom_y: i32) {
         let slot_size: u32 = 36;
@@ -638,5 +644,19 @@ mod tests {
         for i in 0..HOTBAR_SLOTS_COUNT {
             assert!(inv.hotbar_hitboxes[i].is_some(), "Slot {} must have a valid hitbox", i);
         }
+    }
+
+    #[test]
+    fn test_hide_hotbar_clears_hitboxes() {
+        let mut inv = Inventory::new(16);
+        inv.add_item(Item::health_potion(1), 1);
+        let mut canvas = Canvas::new(800, 600);
+        inv.render_hotbar_at(&mut canvas, 400, 560);
+        assert!(inv.hotbar_hitboxes.iter().any(|hitbox| hitbox.is_some()));
+        assert!(inv.use_btn_hitbox.is_some());
+
+        inv.hide_hotbar();
+        assert!(inv.hotbar_hitboxes.iter().all(|hitbox| hitbox.is_none()));
+        assert!(inv.use_btn_hitbox.is_none());
     }
 }

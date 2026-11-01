@@ -14,6 +14,10 @@ path = "src/lib.rs"
 name = "engine_bench"
 harness = false
 
+[[bin]]
+name = "ai_dictionary"
+path = "src/bin/ai_dictionary.rs"
+
 [dependencies]
 kvl-core = { path = "../kvl-core" }
 kvl-runtime = { path = "../kvl-runtime" }

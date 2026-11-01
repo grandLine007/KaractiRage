@@ -2344,6 +2344,106 @@ mod tests {
     }
 
     #[test]
+    fn graph_connections_validate_pins_and_cleanup_on_node_removal() {
+        use kvl_core::{DataType, Node, NodeKind, Pin, PinDirection};
+
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = format!("assets/scripts/__cm_conn_{}.kvl.json", unique);
+        let _guard = FileGuard(engine.repo_root().join(&path));
+
+        let mut graph = kvl_core::Graph::new("g_conn", "Connexions", "");
+        graph.add_node(
+            Node::new(
+                "e",
+                "Départ",
+                kvl_core::Category::Interactions,
+                "",
+                NodeKind::Event { event_type: "Start".into() },
+            )
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output)),
+        );
+        graph.add_node(
+            Node::new(
+                "a",
+                "Score",
+                kvl_core::Category::Progression,
+                "",
+                NodeKind::Action { action_type: "AddScore".into() },
+            )
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input)),
+        );
+        graph.add_node(
+            Node::new(
+                "b",
+                "Valeur",
+                kvl_core::Category::MathLogic,
+                "",
+                NodeKind::Action { action_type: "SetVar:score:1".into() },
+            )
+            .with_input(Pin::new_data("in_value", "Valeur", PinDirection::Input, DataType::Int, None)),
+        );
+        engine.game.kvl_graphs.insert(path.clone(), graph);
+
+        // Type incompatible : Trigger → Int doit être refusé.
+        let incompatible = engine.add_kvl_connection(&path, "e", "out_trigger", "b", "in_value");
+        assert!(incompatible.is_err(), "connexion Trigger→Int acceptée à tort");
+
+        engine
+            .add_kvl_connection(&path, "e", "out_trigger", "a", "in_trigger")
+            .expect("connexion Trigger→Trigger");
+        let connection_id = engine.game.kvl_graphs[&path].connections[0].id.clone();
+        engine
+            .remove_kvl_connection(&path, &connection_id)
+            .expect("suppression de connexion");
+        assert!(engine.game.kvl_graphs[&path].connections.is_empty());
+
+        engine
+            .add_kvl_connection(&path, "e", "out_trigger", "a", "in_trigger")
+            .expect("reconnexion");
+        engine.remove_kvl_node(&path, "a").expect("suppression du nœud");
+        assert!(!engine.game.kvl_graphs[&path].nodes.contains_key("a"));
+        assert!(
+            engine.game.kvl_graphs[&path].connections.is_empty(),
+            "les arêtes du nœud supprimé doivent disparaître"
+        );
+    }
+
+    #[test]
+    fn graph_crud_renames_duplicates_and_deletes() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let base_name = format!("ux_crud_{}", unique);
+        let path = engine.new_kvl_graph(&base_name, "test").expect("création");
+        let first = engine.repo_root().join(&path);
+        let _first_guard = FileGuard(first.clone());
+
+        assert!(engine.rename_kvl_graph(&path, "Nom Renommé"));
+        let on_disk = std::fs::read_to_string(&first).expect("graphe renommé sur disque");
+        let graph = kvl_core::Graph::from_json(&on_disk).expect("JSON valide");
+        assert_eq!(graph.name, "Nom Renommé");
+
+        let copy_name = format!("{}_copie", base_name);
+        let copy_path = engine
+            .duplicate_kvl_graph(&path, &copy_name)
+            .expect("duplication");
+        let copy_abs = engine.repo_root().join(&copy_path);
+        let _copy_guard = FileGuard(copy_abs.clone());
+        assert!(copy_abs.exists(), "la copie doit être persistée");
+
+        assert!(engine.delete_kvl_graph(&copy_path));
+        assert!(!copy_abs.exists());
+        assert!(engine.delete_kvl_graph(&path));
+        assert!(!first.exists());
+    }
+
+    #[test]
     fn graph_crud_refuses_collisions_and_path_escapes() {
         let mut engine = NativeEngine::init().expect("init moteur");
         let unique = std::time::SystemTime::now()

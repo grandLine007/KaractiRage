@@ -1,0 +1,1444 @@
+{
+  "api_version": 1,
+  "plugin_count": 1,
+  "node_count": 78,
+  "load_order": [
+    "karacti.nodes.core"
+  ],
+  "plugins": [
+    {
+      "id": "karacti.nodes.core",
+      "name": "Nœuds cœur KaractiRage",
+      "version": "0.1.0",
+      "api": 1,
+      "kind": "node-pack",
+      "description": "Pack de référence : actions AddScore, DamagePlayer et GiveItem, migrées du dispatch historique vers le registre de handlers.",
+      "capabilities": [
+        "content-read"
+      ],
+      "deterministic": true,
+      "budget_us": 0,
+      "dependencies": [],
+      "enabled": true,
+      "content": {
+        "scenes": [],
+        "graphs": [],
+        "prefabs": [],
+        "tilesets": []
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "AddScore",
+      "flavor": "action",
+      "label": "Ajouter 1 au score",
+      "category": "Progression",
+      "description": "Incrémente la variable « score » de 1. Nœud de base des collectibles.",
+      "params": [
+        {
+          "name": "amount",
+          "label": "Points",
+          "param_type": {
+            "kind": "int"
+          },
+          "default": {
+            "type": "Int",
+            "value": 1
+          },
+          "description": ""
+        }
+      ],
+      "aliases": [],
+      "prefixes": [
+        "AddScore:"
+      ],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "AddVar",
+      "flavor": "action",
+      "label": "Ajouter à une variable",
+      "category": "Progression",
+      "description": "Action historique. Forme préfixée : « AddVar:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "AddVar:"
+      ],
+      "default_argument": "score:1",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "AdvanceQuest",
+      "flavor": "action",
+      "label": "Avancer une quête",
+      "category": "Progression",
+      "description": "Action historique. Forme préfixée : « AdvanceQuest:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "AdvanceQuest:"
+      ],
+      "default_argument": "quete",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "BonusPoints",
+      "flavor": "action",
+      "label": "Bonus de points",
+      "category": "Progression",
+      "description": "Accorde un bonus majeur de points et déclenche la fanfare.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "BoostSpeed",
+      "flavor": "action",
+      "label": "Accélérer",
+      "category": "Movement",
+      "description": "Action historique migrée vers le registre.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "BossEnrage",
+      "flavor": "action",
+      "label": "Boss : mode enragé",
+      "category": "Progression",
+      "description": "Bascule l'indicateur de surcharge enragée et accélère les cycles d'attaque.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "BossNovaShoot",
+      "flavor": "action",
+      "label": "Boss : tir nova radiale",
+      "category": "Combat",
+      "description": "Action historique. Forme préfixée : « BossNovaShoot:<nb_projectiles> ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "BossNovaShoot:"
+      ],
+      "default_argument": "16",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "ClearAlarm",
+      "flavor": "action",
+      "label": "Lever l'alerte",
+      "category": "World",
+      "description": "Action historique migrée vers le registre.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "CloseDialogue",
+      "flavor": "action",
+      "label": "Fermer le dialogue",
+      "category": "UserInterface",
+      "description": "Action historique migrée vers le registre.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "CompleteQuest",
+      "flavor": "action",
+      "label": "Terminer une quête",
+      "category": "Progression",
+      "description": "Action historique. Forme préfixée : « CompleteQuest:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "CompleteQuest:"
+      ],
+      "default_argument": "quete",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "DamagePlayer",
+      "flavor": "action",
+      "label": "Infliger des dégâts",
+      "category": "Combat",
+      "description": "Retire des points de vie au joueur. Sans argument : 1 PV. Forme paramétrée : « DamagePlayer:3 » retire 3 PV.",
+      "params": [
+        {
+          "name": "amount",
+          "label": "Dégâts",
+          "param_type": {
+            "kind": "int"
+          },
+          "default": {
+            "type": "Int",
+            "value": 1
+          },
+          "description": "Nombre de PV retirés (forme préfixée « DamagePlayer:N »)."
+        }
+      ],
+      "aliases": [],
+      "prefixes": [
+        "DamagePlayer:"
+      ],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "DenyAccess",
+      "flavor": "action",
+      "label": "Refuser l'accès",
+      "category": "World",
+      "description": "Signale le refus d'accès et empêche le passage.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "DestroySelf",
+      "flavor": "action",
+      "label": "Détruire l'objet",
+      "category": "World",
+      "description": "Supprime l'objet du monde de jeu.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "EmitBurst",
+      "flavor": "action",
+      "label": "Gerbe de particules",
+      "category": "World",
+      "description": "Action historique. Forme préfixée : « EmitBurst:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "EmitBurst:"
+      ],
+      "default_argument": "25",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "GiveItem",
+      "flavor": "action",
+      "label": "Donner un objet",
+      "category": "World",
+      "description": "Ajoute un objet à l'inventaire. Forme : « GiveItem:identifiant:quantité ».",
+      "params": [
+        {
+          "name": "item",
+          "label": "Identifiant de l'objet",
+          "param_type": {
+            "kind": "string"
+          },
+          "default": {
+            "type": "String",
+            "value": "coin"
+          },
+          "description": "Clé d'inventaire (ex. « coin », « potion_heal »)."
+        },
+        {
+          "name": "count",
+          "label": "Quantité",
+          "param_type": {
+            "kind": "int"
+          },
+          "default": {
+            "type": "Int",
+            "value": 1
+          },
+          "description": "Nombre d'exemplaires ajoutés."
+        }
+      ],
+      "aliases": [],
+      "prefixes": [
+        "GiveItem:"
+      ],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "HealPlayer",
+      "flavor": "action",
+      "label": "Soigner le joueur",
+      "category": "Combat",
+      "description": "Action historique. Forme préfixée : « HealPlayer:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "HealPlayer:"
+      ],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "IncrementCounter",
+      "flavor": "action",
+      "label": "Incrémenter un compteur",
+      "category": "Progression",
+      "description": "Action historique. Forme préfixée : « IncrementCounter:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "IncrementCounter:"
+      ],
+      "default_argument": "compteur",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "LockAllDoors",
+      "flavor": "action",
+      "label": "Verrouiller toutes les portes",
+      "category": "World",
+      "description": "Ferme immédiatement toute issue pour confiner l'intrus.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "ModifySpeed",
+      "flavor": "action",
+      "label": "Modifier la vitesse",
+      "category": "Movement",
+      "description": "Action historique. Forme préfixée : « ModifySpeed:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "ModifySpeed:"
+      ],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "NavChasePlayer",
+      "flavor": "action",
+      "label": "Traquer le joueur (A*)",
+      "category": "ArtificialIntelligence",
+      "description": "Action historique migrée vers le registre.",
+      "params": [],
+      "aliases": [
+        "ChasePlayer"
+      ],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "NavGoTo",
+      "flavor": "action",
+      "label": "Naviguer vers un point",
+      "category": "ArtificialIntelligence",
+      "description": "Action historique. Forme préfixée : « NavGoTo:… ».",
+      "params": [],
+      "aliases": [
+        "NavigateTo"
+      ],
+      "prefixes": [
+        "NavGoTo:",
+        "NavigateTo:"
+      ],
+      "default_argument": "400,300",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "NavStop",
+      "flavor": "action",
+      "label": "Arrêter la navigation",
+      "category": "ArtificialIntelligence",
+      "description": "Action historique migrée vers le registre.",
+      "params": [],
+      "aliases": [
+        "StopNavigation"
+      ],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnAlert",
+      "flavor": "event",
+      "label": "OnAlert",
+      "category": "ArtificialIntelligence",
+      "description": "Alerte générale.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnBossAttack",
+      "flavor": "event",
+      "label": "OnBossAttack",
+      "category": "Combat",
+      "description": "Attaque télégraphiée d'un boss.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnBossDefeated",
+      "flavor": "event",
+      "label": "OnBossDefeated",
+      "category": "Combat",
+      "description": "Le boss est vaincu.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnCheck",
+      "flavor": "event",
+      "label": "OnCheck",
+      "category": "MathLogic",
+      "description": "Point de contrôle logique (tests unitaires).",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnChestOpened",
+      "flavor": "event",
+      "label": "OnChestOpened",
+      "category": "Interactions",
+      "description": "Un coffre est ouvert.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnDamage",
+      "flavor": "event",
+      "label": "OnDamage",
+      "category": "Combat",
+      "description": "Le joueur ou une entité subit des dégâts.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnDialogueChoice",
+      "flavor": "event",
+      "label": "OnDialogueChoice",
+      "category": "UserInterface",
+      "description": "Choix dans un dialogue.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnDialogueClose",
+      "flavor": "event",
+      "label": "OnDialogueClose",
+      "category": "UserInterface",
+      "description": "Fermeture d'un dialogue.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnDialogueStart",
+      "flavor": "event",
+      "label": "OnDialogueStart",
+      "category": "UserInterface",
+      "description": "Ouverture d'une boîte de dialogue.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnDoorInteract",
+      "flavor": "event",
+      "label": "OnDoorInteract",
+      "category": "Interactions",
+      "description": "Le joueur interagit avec une porte.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnIdle",
+      "flavor": "event",
+      "label": "OnIdle",
+      "category": "ArtificialIntelligence",
+      "description": "Retour à l'état de veille.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnItemPickup",
+      "flavor": "event",
+      "label": "OnItemPickup",
+      "category": "Interactions",
+      "description": "Le joueur ramasse un objet.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnItemUse",
+      "flavor": "event",
+      "label": "OnItemUse",
+      "category": "Interactions",
+      "description": "Le joueur utilise un objet de l'inventaire.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnKeyFound",
+      "flavor": "event",
+      "label": "OnKeyFound",
+      "category": "Interactions",
+      "description": "Une clé est trouvée.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnPlayerInteract",
+      "flavor": "event",
+      "label": "OnPlayerInteract",
+      "category": "Interactions",
+      "description": "Interaction volontaire du joueur (touche d'action).",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnPlayerOverlap",
+      "flavor": "event",
+      "label": "OnPlayerOverlap",
+      "category": "Interactions",
+      "description": "Contact entre le joueur et une entité.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnPlayerSeen",
+      "flavor": "event",
+      "label": "OnPlayerSeen",
+      "category": "ArtificialIntelligence",
+      "description": "Un ennemi aperçoit le joueur.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnPortal",
+      "flavor": "event",
+      "label": "OnPortal",
+      "category": "Interactions",
+      "description": "Le joueur traverse un portail.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnPressurePlate",
+      "flavor": "event",
+      "label": "OnPressurePlate",
+      "category": "Interactions",
+      "description": "Une plaque de pression est activée.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnStart",
+      "flavor": "event",
+      "label": "OnStart",
+      "category": "World",
+      "description": "Déclenché une fois au lancement du niveau.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnSwarmAlert",
+      "flavor": "event",
+      "label": "OnSwarmAlert",
+      "category": "ArtificialIntelligence",
+      "description": "Alerte de meute.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnTalk",
+      "flavor": "event",
+      "label": "OnTalk",
+      "category": "Interactions",
+      "description": "Un dialogue est engagé avec un personnage.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnUse",
+      "flavor": "event",
+      "label": "OnUse",
+      "category": "Interactions",
+      "description": "Action générique d'utilisation.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnVisionAlert",
+      "flavor": "event",
+      "label": "OnVisionAlert",
+      "category": "ArtificialIntelligence",
+      "description": "Alerte visuelle d'une sentinelle.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OnWinConditionMet",
+      "flavor": "event",
+      "label": "OnWinConditionMet",
+      "category": "Progression",
+      "description": "La condition de victoire est remplie.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "OpenDoor",
+      "flavor": "action",
+      "label": "Ouvrir une porte",
+      "category": "World",
+      "description": "Ouvre la porte du graphe (variable « door_is_open »).",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "PlayAnimation2D",
+      "flavor": "action",
+      "label": "Jouer une animation 2D",
+      "category": "World",
+      "description": "Action historique. Forme préfixée : « PlayAnimation2D:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "PlayAnimation2D:"
+      ],
+      "default_argument": "walk",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "PlayAnimation2DOn",
+      "flavor": "action",
+      "label": "Jouer une animation sur une entité",
+      "category": "World",
+      "description": "Action historique. Forme préfixée : « PlayAnimation2DOn:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "PlayAnimation2DOn:"
+      ],
+      "default_argument": "player:walk",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "PlaySound",
+      "flavor": "action",
+      "label": "Jouer un son",
+      "category": "Audio",
+      "description": "Demande un effet sonore au moteur. Forme : « PlaySound:coin »              (coin, alarm, impact, potion_drink, teleport, victory_bell…).",
+      "params": [
+        {
+          "name": "sound",
+          "label": "Identifiant du son",
+          "param_type": {
+            "kind": "string"
+          },
+          "default": {
+            "type": "String",
+            "value": "coin"
+          },
+          "description": ""
+        }
+      ],
+      "aliases": [],
+      "prefixes": [
+        "PlaySound:"
+      ],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "RemoveItem",
+      "flavor": "action",
+      "label": "Retirer un objet",
+      "category": "Progression",
+      "description": "Action historique. Forme préfixée : « RemoveItem:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "RemoveItem:"
+      ],
+      "default_argument": "coin:1",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "ResetScore",
+      "flavor": "action",
+      "label": "Réinitialiser le score",
+      "category": "Progression",
+      "description": "Action historique migrée vers le registre.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SelectHotbarSlot",
+      "flavor": "action",
+      "label": "Choisir un emplacement de barre",
+      "category": "Progression",
+      "description": "Action historique. Forme préfixée : « SelectHotbarSlot:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "SelectHotbarSlot:"
+      ],
+      "default_argument": "0",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SetBossDefeated",
+      "flavor": "action",
+      "label": "Boss : vaincu",
+      "category": "Progression",
+      "description": "Définit le boss comme terrassé et déverrouille l'arène.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SetBossPhase",
+      "flavor": "action",
+      "label": "Boss : changer de phase",
+      "category": "Combat",
+      "description": "Action historique. Forme préfixée : « SetBossPhase:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "SetBossPhase:"
+      ],
+      "default_argument": "2",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SetObjective",
+      "flavor": "action",
+      "label": "Afficher l'objectif",
+      "category": "Progression",
+      "description": "Affiche le texte d'objectif à l'écran. Forme préfixée : « SetObjective:<texte> ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "SetObjective:"
+      ],
+      "default_argument": "objectif",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SetQuest",
+      "flavor": "action",
+      "label": "Définir l'étape d'une quête",
+      "category": "Progression",
+      "description": "Action historique. Forme préfixée : « SetQuest:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "SetQuest:"
+      ],
+      "default_argument": "quete:1",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SetVar",
+      "flavor": "action",
+      "label": "Fixer une variable",
+      "category": "Progression",
+      "description": "Action historique. Forme préfixée : « SetVar:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "SetVar:"
+      ],
+      "default_argument": "score:0",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SetVariable",
+      "flavor": "action",
+      "label": "Définir une variable",
+      "category": "MathLogic",
+      "description": "Fixe une variable typée. Forme : « SetVariable:nom:valeur »              (true/false, entier, décimal ou texte).",
+      "params": [
+        {
+          "name": "name",
+          "label": "Nom de la variable",
+          "param_type": {
+            "kind": "string"
+          },
+          "default": {
+            "type": "String",
+            "value": "flag"
+          },
+          "description": ""
+        },
+        {
+          "name": "value",
+          "label": "Valeur",
+          "param_type": {
+            "kind": "string"
+          },
+          "default": {
+            "type": "String",
+            "value": "true"
+          },
+          "description": ""
+        }
+      ],
+      "aliases": [],
+      "prefixes": [
+        "SetVariable:"
+      ],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "ShowDialogue",
+      "flavor": "action",
+      "label": "Afficher un dialogue",
+      "category": "UserInterface",
+      "description": "Action historique. Forme préfixée : « ShowDialogue:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "ShowDialogue:"
+      ],
+      "default_argument": "PNJ:Bonjour",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "ShowDialogueChoice",
+      "flavor": "action",
+      "label": "Afficher un dialogue à choix",
+      "category": "UserInterface",
+      "description": "Action historique. Forme préfixée : « ShowDialogueChoice:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "ShowDialogueChoice:"
+      ],
+      "default_argument": "PNJ:Bonjour:Oui:Non",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SlowSpeed",
+      "flavor": "action",
+      "label": "Ralentir",
+      "category": "Movement",
+      "description": "Action historique migrée vers le registre.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SpawnSparkles",
+      "flavor": "action",
+      "label": "Étincelles",
+      "category": "World",
+      "description": "Projette des étincelles d'alerte rouge sur le joueur.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "Start",
+      "flavor": "event",
+      "label": "Start",
+      "category": "World",
+      "description": "Déclenché au démarrage de la scène.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": false,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "StopAnimation2D",
+      "flavor": "action",
+      "label": "Arrêter l'animation 2D",
+      "category": "World",
+      "description": "Action historique migrée vers le registre.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SwarmScatter",
+      "flavor": "action",
+      "label": "Meute : se disperser",
+      "category": "ArtificialIntelligence",
+      "description": "Action historique. Forme préfixée : « SwarmScatter:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "SwarmScatter:"
+      ],
+      "default_argument": "1,2.0",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SwarmSetCohesion",
+      "flavor": "action",
+      "label": "Meute : cohésion",
+      "category": "ArtificialIntelligence",
+      "description": "Action historique. Forme préfixée : « SwarmSetCohesion:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "SwarmSetCohesion:"
+      ],
+      "default_argument": "1,1.0",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SwarmSetTarget",
+      "flavor": "action",
+      "label": "Meute : cible",
+      "category": "ArtificialIntelligence",
+      "description": "Action historique. Forme préfixée : « SwarmSetTarget:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "SwarmSetTarget:"
+      ],
+      "default_argument": "1,400,300",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "SwarmTargetPlayer",
+      "flavor": "action",
+      "label": "Meute : traquer le joueur",
+      "category": "ArtificialIntelligence",
+      "description": "Action historique. Forme préfixée : « SwarmTargetPlayer:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "SwarmTargetPlayer:"
+      ],
+      "default_argument": "1",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "TeleportPlayer",
+      "flavor": "action",
+      "label": "Téléporter le joueur",
+      "category": "Movement",
+      "description": "Action historique. Forme préfixée : « TeleportPlayer:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "TeleportPlayer:"
+      ],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "TeleportTo",
+      "flavor": "action",
+      "label": "Téléporter vers des coordonnées",
+      "category": "Movement",
+      "description": "Action historique. Forme préfixée : « TeleportTo:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "TeleportTo:"
+      ],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "ToggleDoor",
+      "flavor": "action",
+      "label": "Ouvrir / fermer une porte",
+      "category": "World",
+      "description": "Bascule l'état ouvert/fermé de la porte.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "ToggleEmitter",
+      "flavor": "action",
+      "label": "Activer / désactiver l'émetteur",
+      "category": "World",
+      "description": "Action historique. Forme préfixée : « ToggleEmitter:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "ToggleEmitter:"
+      ],
+      "default_argument": "true",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "TriggerAlarm",
+      "flavor": "action",
+      "label": "Déclencher l'alerte",
+      "category": "World",
+      "description": "Déclenche l'état d'alerte générale et la sirène.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "TriggerBossRoar",
+      "flavor": "action",
+      "label": "Boss : rugissement",
+      "category": "Combat",
+      "description": "Action historique migrée vers le registre.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "TriggerBossTelegraph",
+      "flavor": "action",
+      "label": "Boss : télégraphier une attaque",
+      "category": "Combat",
+      "description": "Action historique. Forme préfixée : « TriggerBossTelegraph:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "TriggerBossTelegraph:"
+      ],
+      "default_argument": "slam",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "UseItem",
+      "flavor": "action",
+      "label": "Utiliser un objet",
+      "category": "Progression",
+      "description": "Action historique. Forme préfixée : « UseItem:… ».",
+      "params": [],
+      "aliases": [],
+      "prefixes": [
+        "UseItem:"
+      ],
+      "default_argument": "potion_heal",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    }
+  ],
+  "issues": []
+}
