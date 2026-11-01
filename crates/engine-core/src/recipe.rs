@@ -18,7 +18,7 @@ use std::collections::HashMap;
 pub const RECIPE_SCHEMA_VERSION: u32 = 1;
 
 /// Genres de jeu supportés par l'assistant de création
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GameGenre {
     Adventure,
@@ -80,7 +80,7 @@ impl RecipeGenres {
 }
 
 /// Dimension du projet
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GameDimension {
     TwoD,

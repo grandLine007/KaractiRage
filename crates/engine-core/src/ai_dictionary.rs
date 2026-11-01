@@ -162,6 +162,22 @@ impl AiDictionary {
         let graph_json = serde_json::to_string_pretty(&graph_value)? + "\n";
         write_and_hash(out_dir, "schemas/graph.schema.json", graph_json.as_bytes(), &mut files)?;
 
+        // L2 — schémas intention / plan / opérations.
+        let intent_schema = schemars::schema_for!(crate::ai_intent::IntentEnvelope);
+        let intent_value = serde_json::to_value(&intent_schema)?;
+        let intent_json = serde_json::to_string_pretty(&intent_value)? + "\n";
+        write_and_hash(out_dir, "schemas/intent.schema.json", intent_json.as_bytes(), &mut files)?;
+
+        let plan_schema = schemars::schema_for!(crate::ai_plan::AiPlan);
+        let plan_value = serde_json::to_value(&plan_schema)?;
+        let plan_json = serde_json::to_string_pretty(&plan_value)? + "\n";
+        write_and_hash(out_dir, "schemas/plan.schema.json", plan_json.as_bytes(), &mut files)?;
+
+        let ops_schema = schemars::schema_for!(crate::ai_plan::AiOp);
+        let ops_value = serde_json::to_value(&ops_schema)?;
+        let ops_json = serde_json::to_string_pretty(&ops_value)? + "\n";
+        write_and_hash(out_dir, "schemas/ops.schema.json", ops_json.as_bytes(), &mut files)?;
+
         // L3 — catalogue de nœuds KVL (75) émis par l'hôte de plugins.
         let host = crate::plugin::PluginHost::with_builtins();
         let nodes_json = host.catalog_json()? + "\n";
