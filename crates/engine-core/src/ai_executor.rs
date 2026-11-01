@@ -10,7 +10,7 @@ use crate::ai_plan::{AiOp, AiPlan, PlanError};
 use crate::entity::{Entity, Transform2D};
 use crate::project::KaractiProject;
 use crate::recipe::GameGenre;
-use kvl_core::Value;
+use kvl_core::{Connection, Graph, Node, NodeFlavor, NodeKind, Pin, PinDirection, Value};
 
 /// Erreurs d'exécution d'un plan.
 #[derive(Debug, Error)]
@@ -55,6 +55,21 @@ fn apply_op(project: &mut KaractiProject, op: &AiOp) -> Result<(), String> {
             project.scene.entities.push(entity);
             Ok(())
         }
+        AiOp::AddKvlNode { node_id, node_type } => {
+            let registry = catalog_registry();
+            let resolved = registry
+                .resolve(node_type)
+                .ok_or_else(|| format!("type de nœud inconnu du catalogue : {node_type}"))?;
+            let node = build_node(node_id, node_type, resolved.schema);
+            get_or_create_main_graph(project).add_node(node);
+            Ok(())
+        }
+        AiOp::ConnectPins { from, from_pin, to, to_pin } => {
+            let graph = get_or_create_main_graph(project);
+            let conn_id = format!("c_{}_{}", from, graph.connections.len());
+            graph.add_connection(Connection::new(conn_id, from, from_pin, to, to_pin));
+            Ok(())
+        }
         AiOp::SetObjective { text } => {
             project.scene.objective = Some(text.clone());
             Ok(())
@@ -65,6 +80,50 @@ fn apply_op(project: &mut KaractiProject, op: &AiOp) -> Result<(), String> {
         }
         other => Err(format!("opération non encore supportée : {other:?}")),
     }
+}
+
+fn catalog_registry() -> kvl_core::NodeRegistry {
+    let mut registry = kvl_core::NodeRegistry::new();
+    let _ = registry.register_all(kvl_runtime::builtin_node_schemas());
+    registry
+}
+
+fn get_or_create_main_graph(project: &mut KaractiProject) -> &mut Graph {
+    project.kvl_graphs.entry("main".to_string()).or_insert_with(|| {
+        Graph::new("main", "Graphe principal", "Graphe généré par le plan IA")
+    })
+}
+
+fn build_node(node_id: &str, node_type: &str, schema: &kvl_core::NodeSchema) -> Node {
+    let kind = match schema.flavor {
+        NodeFlavor::Event => NodeKind::Event {
+            event_type: node_type.into(),
+        },
+        NodeFlavor::Action => NodeKind::Action {
+            action_type: node_type.into(),
+        },
+        NodeFlavor::Condition => NodeKind::Condition {
+            operator: node_type.into(),
+        },
+        NodeFlavor::Composite => NodeKind::Composite {
+            macro_name: node_type.into(),
+            is_expanded: false,
+        },
+    };
+    let mut node = Node::new(
+        node_id,
+        node_type,
+        schema.category.clone(),
+        schema.description.clone(),
+        kind,
+    );
+    if schema.flow_input {
+        node = node.with_input(Pin::new_trigger("in_trigger", "Exécution", PinDirection::Input));
+    }
+    for output in schema.effective_flow_outputs() {
+        node = node.with_output(Pin::new_trigger(output.as_str(), "Exécution", PinDirection::Output));
+    }
+    node
 }
 
 fn parse_value(raw: &str) -> Value {
@@ -156,5 +215,48 @@ mod tests {
         let mut project = KaractiProject::new_empty("Base", "auteur", GameGenre::Platformer);
         let err = apply_op(&mut project, &AiOp::AddLight { kind: "point".into() });
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn add_kvl_node_creates_graph_and_node() {
+        let mut project = KaractiProject::new_empty("Base", "auteur", GameGenre::Platformer);
+        apply_op(
+            &mut project,
+            &AiOp::AddKvlNode { node_id: "evt".into(), node_type: "OnStart".into() },
+        )
+        .expect("nœud valide");
+        assert!(project.kvl_graphs["main"].nodes.contains_key("evt"));
+        assert!(matches!(
+            project.kvl_graphs["main"].nodes["evt"].kind,
+            NodeKind::Event { .. }
+        ));
+    }
+
+    #[test]
+    fn add_kvl_node_rejects_unknown_type() {
+        let mut project = KaractiProject::new_empty("Base", "auteur", GameGenre::Platformer);
+        let err = apply_op(
+            &mut project,
+            &AiOp::AddKvlNode { node_id: "evt".into(), node_type: "WinGame".into() },
+        );
+        assert!(err.is_err(), "un type inconnu doit être rejeté");
+    }
+
+    #[test]
+    fn connect_pins_adds_connection() {
+        let mut project = KaractiProject::new_empty("Base", "auteur", GameGenre::Platformer);
+        apply_op(&mut project, &AiOp::AddKvlNode { node_id: "evt".into(), node_type: "OnStart".into() }).unwrap();
+        apply_op(&mut project, &AiOp::AddKvlNode { node_id: "act".into(), node_type: "AddScore".into() }).unwrap();
+        apply_op(
+            &mut project,
+            &AiOp::ConnectPins {
+                from: "evt".into(),
+                from_pin: "out_trigger".into(),
+                to: "act".into(),
+                to_pin: "in_trigger".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(project.kvl_graphs["main"].connections.len(), 1);
     }
 }
