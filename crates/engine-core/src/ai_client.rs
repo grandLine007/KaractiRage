@@ -450,6 +450,15 @@ impl LlmBackend for CurlBackend {
     }
 }
 
+/// Extrait l'origine (`scheme://host:port`) d'une URL, qu'elle soit une base ou un chemin complet.
+fn origin_of(endpoint: &str) -> &str {
+    let scheme_end = endpoint.find("://").map(|i| i + 3).unwrap_or(0);
+    match endpoint[scheme_end..].find('/') {
+        Some(i) => &endpoint[..scheme_end + i],
+        None => endpoint,
+    }
+}
+
 /// Pont d'exécution HTTP via curl natif (compatible macOS, Linux, Windows 10/11)
 pub struct AiClient;
 
@@ -613,9 +622,9 @@ impl AiClient {
                 Ok("Moteur Local Déterministe 100% autonome et hors-ligne (Opérationnel)".to_string())
             }
             AiProvider::Ollama => {
-                let endpoint = config.custom_endpoint.as_deref().unwrap_or("http://localhost:11434");
-                let base_url = endpoint.split("/api/").next().unwrap_or(endpoint);
-                let test_url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+                let endpoint = config.custom_endpoint.as_deref().unwrap_or_else(|| config.provider.default_endpoint());
+                let base_url = origin_of(endpoint);
+                let test_url = format!("{}/api/tags", base_url);
                 let mut cmd = Command::new("curl");
                 cmd.arg("-s")
                    .arg("-m").arg("2")
@@ -633,9 +642,9 @@ impl AiClient {
                 }
             }
             AiProvider::LmStudio => {
-                let endpoint = config.custom_endpoint.as_deref().unwrap_or("http://localhost:1234");
-                let base_url = endpoint.split("/v1/").next().unwrap_or(endpoint);
-                let test_url = format!("{}/v1/models", base_url.trim_end_matches('/'));
+                let endpoint = config.custom_endpoint.as_deref().unwrap_or_else(|| config.provider.default_endpoint());
+                let base_url = origin_of(endpoint);
+                let test_url = format!("{}/v1/models", base_url);
                 let mut cmd = Command::new("curl");
                 cmd.arg("-s")
                    .arg("-m").arg("2")
@@ -699,6 +708,19 @@ mod tests {
             assert!(!provider.default_endpoint().is_empty());
             assert!(!provider.default_model().is_empty());
         }
+    }
+
+    #[test]
+    fn origin_of_extracts_host_from_base_or_full_url() {
+        assert_eq!(origin_of("http://127.0.0.1:1234"), "http://127.0.0.1:1234");
+        assert_eq!(
+            origin_of("http://127.0.0.1:1234/v1/chat/completions"),
+            "http://127.0.0.1:1234"
+        );
+        assert_eq!(
+            origin_of("https://api.openai.com/v1/chat/completions"),
+            "https://api.openai.com"
+        );
     }
 
     #[test]

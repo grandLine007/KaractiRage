@@ -9,12 +9,12 @@ interface AiAssistantModalProps {
 }
 
 const PROVIDERS = [
-  { id: 'lmstudio', name: 'LM STUDIO', defaultEndpoint: 'http://127.0.0.1:1234', defaultModel: 'nvidia/nemotron-3-nano-4b' },
-  { id: 'ollama', name: 'OLLAMA', defaultEndpoint: 'http://localhost:11434', defaultModel: 'llama3:latest' },
+  { id: 'lmstudio', name: 'LM STUDIO', defaultEndpoint: 'http://127.0.0.1:1234/v1/chat/completions', defaultModel: 'nvidia/nemotron-3-nano-4b' },
+  { id: 'ollama', name: 'OLLAMA', defaultEndpoint: 'http://localhost:11434/v1/chat/completions', defaultModel: 'llama3:latest' },
   { id: 'claude', name: 'CLAUDE', defaultEndpoint: 'https://api.anthropic.com/v1/messages', defaultModel: 'claude-3-5-sonnet' },
-  { id: 'gemini', name: 'GEMINI', defaultEndpoint: 'https://generativelanguage.googleapis.com', defaultModel: 'gemini-1.5-pro' },
-  { id: 'deepseek', name: 'DEEPSEEK', defaultEndpoint: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat' },
-  { id: 'openai', name: 'OPENAI', defaultEndpoint: 'https://api.openai.com/v1', defaultModel: 'gpt-4o' },
+  { id: 'gemini', name: 'GEMINI', defaultEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', defaultModel: 'gemini-1.5-pro' },
+  { id: 'deepseek', name: 'DEEPSEEK', defaultEndpoint: 'https://api.deepseek.com/v1/chat/completions', defaultModel: 'deepseek-chat' },
+  { id: 'openai', name: 'OPENAI', defaultEndpoint: 'https://api.openai.com/v1/chat/completions', defaultModel: 'gpt-4o' },
   { id: 'offline', name: 'OFFLINE', defaultEndpoint: 'Local In-Engine', defaultModel: 'Règles Déterministes' }
 ];
 
@@ -48,7 +48,7 @@ const PRESETS = [
 export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onClose, onApplyGeneratedLevel }) => {
   const [selectedProvider, setSelectedProvider] = useState('lmstudio');
   const [promptText, setPromptText] = useState('');
-  const [endpoint, setEndpoint] = useState('http://127.0.0.1:1234');
+  const [endpoint, setEndpoint] = useState('http://127.0.0.1:1234/v1/chat/completions');
   const [testStatus, setTestStatus] = useState<{ loading: boolean; success?: boolean; message?: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationOutput, setGenerationOutput] = useState<{ success: boolean; message: string; json?: string } | null>(null);
@@ -177,7 +177,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
                 value={endpoint}
                 onChange={e => setEndpoint(e.target.value)}
                 className="flex-1 text-xs font-mono text-[#38bdf8] bg-[#07040d] border border-[#2d1b4e] rounded px-2.5 py-1"
-                placeholder="http://127.0.0.1:1234"
+                placeholder="http://127.0.0.1:1234/v1/chat/completions"
               />
             </div>
             <button
