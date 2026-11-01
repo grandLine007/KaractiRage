@@ -7744,8 +7744,14 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
 
         // 5. Hotbar & Suivi de quête HUD en Mode Jeu
         if !is_edit_mode {
-            let hotbar_y = if is_embedded { h - 16 } else { bottom_y - 12 };
-            self.inventory.render_hotbar_at(canvas, vx + (vw / 2), hotbar_y);
+            // Un dialogue modal occupe le bas de l'écran : la hotbar est masquée
+            // et ses hitboxes neutralisées pour éviter un clic fantôme.
+            if self.dialogue.is_active {
+                self.inventory.hide_hotbar();
+            } else {
+                let hotbar_y = if is_embedded { h - 16 } else { bottom_y - 12 };
+                self.inventory.render_hotbar_at(canvas, vx + (vw / 2), hotbar_y);
+            }
 
             if let Some(ref q) = self.quest {
                 let q_x = 18;
