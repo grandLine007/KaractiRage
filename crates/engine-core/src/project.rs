@@ -288,9 +288,9 @@ impl KaractiProject {
         Ok(project)
     }
 
-    /// Génère le package standalone HTML5 souverain autonome du projet
-    pub fn to_standalone_html(&self) -> String {
-        let package = crate::exporter::KaractiGamePackage {
+    /// Construit un package autonome à partir des données du projet.
+    pub fn to_game_package(&self) -> crate::exporter::KaractiGamePackage {
+        crate::exporter::KaractiGamePackage {
             metadata: crate::exporter::PackageMetadata {
                 title: self.metadata.title.clone(),
                 author: self.metadata.author.clone(),
@@ -309,8 +309,25 @@ impl KaractiProject {
             initial_variables: self.kvl_variables.clone(),
             sprite_assets: std::collections::HashMap::new(),
             sheet_assets: std::collections::HashMap::new(),
-        };
-        package.generate_standalone_html()
+        }
+    }
+
+    /// Génère le package standalone HTML5 souverain autonome du projet.
+    pub fn to_standalone_html(&self) -> String {
+        self.to_game_package().generate_standalone_html()
+    }
+
+    /// Exporte le projet selon une cible d'export (consomme `export_target`).
+    pub fn export_for_target(&self, target: crate::subsystems::ExportTargetKind) -> Result<String, String> {
+        match target {
+            crate::subsystems::ExportTargetKind::Html => Ok(self.to_standalone_html()),
+            crate::subsystems::ExportTargetKind::Package => {
+                serde_json::to_string_pretty(&self.to_game_package()).map_err(|e| e.to_string())
+            }
+            crate::subsystems::ExportTargetKind::Desktop | crate::subsystems::ExportTargetKind::Wasm => {
+                Err(format!("cible d'export {target:?} non encore supportée (scripts dédiés)"))
+            }
+        }
     }
 }
 
@@ -365,5 +382,15 @@ mod tests {
         assert_eq!(loaded.metadata.genre_primary, GameGenre::ShootEmUp);
 
         let _ = fs::remove_file(file_path);
+    }
+
+    #[test]
+    fn export_for_target_produces_html_and_package() {
+        let project = KaractiProject::new_empty("Mon Jeu", "Auteur", GameGenre::Platformer);
+        let html = project.export_for_target(crate::subsystems::ExportTargetKind::Html).expect("html");
+        assert!(html.contains("Mon Jeu"));
+        let pkg = project.export_for_target(crate::subsystems::ExportTargetKind::Package).expect("package");
+        assert!(pkg.contains("\"scene_name\""));
+        assert!(project.export_for_target(crate::subsystems::ExportTargetKind::Wasm).is_err());
     }
 }
