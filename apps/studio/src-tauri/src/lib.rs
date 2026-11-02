@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -5,8 +6,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
-use karactirage_engine::ai_client::{AiClient, AiClientConfig, AiProvider};
+use tauri::{Emitter, Manager};
+use karactirage_engine::ai_client::{AiClient, AiClientConfig, AiProvider, CurlBackend};
+use karactirage_engine::ai_prompt::PromptAssembler;
+use karactirage_engine::ai_stream::stream_prompt;
 use karactirage_engine::native_api::NativeEngine;
 use karactirage_engine::project_registry::{NewProjectConfig, ProjectRegistry};
 
@@ -304,6 +307,155 @@ async fn ai_start(provider_name: String, intent: String) -> String {
 async fn ai_history() -> Vec<karactirage_engine::ai_history::AiRunLog> {
     let root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     karactirage_engine::ai_history::list_runs(&root)
+}
+
+/// Résout un fournisseur depuis son libellé utilisateur.
+fn provider_from_name(name: &str) -> AiProvider {
+    match name.to_lowercase().as_str() {
+        "lmstudio" | "lm studio" => AiProvider::LmStudio,
+        "ollama" => AiProvider::Ollama,
+        "claude" => AiProvider::Claude,
+        "gemini" => AiProvider::Gemini,
+        "deepseek" => AiProvider::DeepSeek,
+        "openai" => AiProvider::OpenAI,
+        _ => AiProvider::OfflineLocal,
+    }
+}
+
+/// Registre des annulations de flux IA en cours (clé = `run_id`).
+#[derive(Default)]
+pub struct AiStreamState {
+    cancellations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+}
+
+/// Fragment de flux IA émis à chaque delta (événement Tauri `ai_step_delta`).
+#[derive(Clone, Serialize)]
+struct AiStepDelta {
+    run_id: String,
+    delta: String,
+}
+
+/// Résultat final d'un flux IA (événement Tauri `ai_step_done`).
+#[derive(Clone, Serialize)]
+struct AiStepDone {
+    run_id: String,
+    success: bool,
+    title: Option<String>,
+    payload_json: Option<String>,
+}
+
+/// Erreur d'un flux IA (événement Tauri `ai_step_error`).
+#[derive(Clone, Serialize)]
+struct AiStepError {
+    run_id: String,
+    message: String,
+}
+
+/// Génère un niveau IA **en streaming** : renvoie immédiatement, puis émet
+/// `ai_step_delta` (fragments), `ai_step_done` (payload final) ou `ai_step_error`.
+/// `ai_step_cancel(run_id)` interrompt la génération en cours.
+#[tauri::command]
+async fn ai_step(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AiStreamState>,
+    prompt: String,
+    provider_name: Option<String>,
+    endpoint: Option<String>,
+    run_id: String,
+) -> Result<(), String> {
+    let mut config = AiClientConfig::load_or_default();
+    if let Some(p) = provider_name {
+        config.provider = provider_from_name(&p);
+    }
+    if let Some(ep) = endpoint {
+        if !ep.trim().is_empty() {
+            config.custom_endpoint = Some(ep);
+        }
+    }
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    state
+        .cancellations
+        .lock()
+        .unwrap()
+        .insert(run_id.clone(), Arc::clone(&cancel));
+
+    // Émission et génération sur un thread dédié : la commande ne bloque pas l'IPC.
+    let cancellations = state.cancellations.clone();
+    std::thread::spawn(move || {
+        let assembled = PromptAssembler::assemble_full(config.provider, &prompt, None, None);
+
+        let mut on_delta = |d: &str| {
+            let _ = app.emit(
+                "ai_step_delta",
+                AiStepDelta {
+                    run_id: run_id.clone(),
+                    delta: d.to_string(),
+                },
+            );
+        };
+        let cancelled = || cancel.load(Ordering::Relaxed);
+
+        let result = stream_prompt(
+            &config,
+            &assembled.text,
+            &prompt,
+            &CurlBackend,
+            &mut on_delta,
+            &cancelled,
+        );
+
+        match result {
+            Ok(raw) => match AiClient::parse_llm_json_response(&raw) {
+                Ok(payload) => {
+                    let json = serde_json::to_string_pretty(&payload).unwrap_or_default();
+                    let _ = app.emit(
+                        "ai_step_done",
+                        AiStepDone {
+                            run_id: run_id.clone(),
+                            success: true,
+                            title: Some(payload.title),
+                            payload_json: Some(json),
+                        },
+                    );
+                }
+                Err(message) => {
+                    let _ = app.emit(
+                        "ai_step_error",
+                        AiStepError {
+                            run_id: run_id.clone(),
+                            message,
+                        },
+                    );
+                }
+            },
+            Err(message) => {
+                let _ = app.emit(
+                    "ai_step_error",
+                    AiStepError {
+                        run_id: run_id.clone(),
+                        message,
+                    },
+                );
+            }
+        }
+
+        cancellations.lock().unwrap().remove(&run_id);
+    });
+
+    Ok(())
+}
+
+/// Annule un flux IA en cours. Renvoie `true` si le flux a été trouvé.
+#[tauri::command]
+async fn ai_step_cancel(state: tauri::State<'_, AiStreamState>, run_id: String) -> Result<bool, String> {
+    match state.cancellations.lock().unwrap().get(&run_id) {
+        Some(flag) => {
+            flag.store(true, Ordering::Relaxed);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
 }
 
 // ============================================================
@@ -1150,6 +1302,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(shared)
+        .manage(AiStreamState::default())
         .manage(PxlServe(Mutex::new(None)))
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -1182,6 +1335,8 @@ pub fn run() {
             ai_plan,
             ai_start,
             ai_history,
+            ai_step,
+            ai_step_cancel,
             engine_frame,
             engine_frame_packet,
             engine_list_mesh_assets,

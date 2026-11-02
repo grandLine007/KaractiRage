@@ -172,6 +172,9 @@
     engine_reject_ai_patch: () => true,
     test_llm_connection: () => ({ ok: true, model: 'mock', latency_ms: 12 }),
     generate_ai_level: () => ({ ok: true, level_json: '{}' }),
+    ai_plan: () => ({ success: true, intent_json: '{}', plan_json: '{"steps":[]}', needs_clarification: false }),
+    ai_step: () => undefined,
+    ai_step_cancel: () => true,
 
     // Assets & palette
     engine_list_sprite_assets: () => JSON.stringify(SPRITES),

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Bot, X, Sparkles, CheckCircle2, AlertCircle, RefreshCw, Send, Shield, Package, Flame, Zap } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
+import { Bot, X, Sparkles, CheckCircle2, AlertCircle, RefreshCw, Send, Shield, Package, Flame, Zap, Square } from 'lucide-react';
 
 interface AiAssistantModalProps {
   isOpen: boolean;
@@ -53,6 +54,8 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationOutput, setGenerationOutput] = useState<{ success: boolean; message: string; json?: string } | null>(null);
   const [planSummary, setPlanSummary] = useState<string | null>(null);
+  const [streamOutput, setStreamOutput] = useState('');
+  const runIdRef = useRef<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -103,29 +106,72 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
   };
 
   const handleGenerate = async () => {
-    if (!promptText.trim()) return;
+    if (!promptText.trim() || isGenerating) return;
     setIsGenerating(true);
     setGenerationOutput(null);
+    setStreamOutput('');
+
+    const id = `ai_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    runIdRef.current = id;
+
+    const uns: (() => void)[] = [];
+    function cleanup() {
+      runIdRef.current = null;
+      setIsGenerating(false);
+      uns.forEach(u => u());
+      uns.length = 0;
+    }
+
+    // Écoute des événements de flux émis par la commande `ai_step`.
+    const unDelta = await listen('ai_step_delta', (e: any) => {
+      if (e.payload?.run_id !== id) return;
+      setStreamOutput(prev => prev + (e.payload?.delta ?? ''));
+    });
+    const unDone = await listen('ai_step_done', (e: any) => {
+      if (e.payload?.run_id !== id) return;
+      cleanup();
+      if (e.payload?.success && e.payload?.payload_json) {
+        setGenerationOutput({
+          success: true,
+          message: `Niveau généré avec succès : ${e.payload?.title ?? 'IA'}`,
+          json: e.payload.payload_json
+        });
+      }
+    });
+    const unErr = await listen('ai_step_error', (e: any) => {
+      if (e.payload?.run_id !== id) return;
+      cleanup();
+      setGenerationOutput({
+        success: false,
+        message: e.payload?.message ?? 'Erreur du flux IA'
+      });
+    });
+    uns.push(unDelta, unDone, unErr);
 
     try {
-      const res: any = await invoke('generate_ai_level', {
+      // La commande renvoie immédiatement ; le résultat arrive par événements.
+      await invoke('ai_step', {
         prompt: promptText,
         providerName: selectedProvider,
-        endpoint: endpoint.trim() || undefined
-      });
-
-      setGenerationOutput({
-        success: res.success,
-        message: res.message,
-        json: res.payload_json
+        endpoint: endpoint.trim() || undefined,
+        runId: id
       });
     } catch (err: any) {
+      cleanup();
       setGenerationOutput({
         success: false,
         message: err?.toString() || 'Erreur lors de la génération IA'
       });
-    } finally {
-      setIsGenerating(false);
+    }
+  };
+
+  const handleCancelStream = async () => {
+    if (runIdRef.current) {
+      try {
+        await invoke('ai_step_cancel', { runId: runIdRef.current });
+      } catch {
+        /* l'annulation est best-effort */
+      }
     }
   };
 
@@ -279,6 +325,30 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
               ))}
             </div>
           </div>
+
+          {/* Flux de génération en direct (JSON partiel) */}
+          {isGenerating && (
+            <div className="p-3 rounded-lg border text-[10px] bg-[#07040d] border-[#2d1b4e]">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-[#c084fc] uppercase tracking-wider flex items-center gap-2">
+                  <Sparkles size={13} className="animate-pulse text-[#a855f7]" />
+                  Le LLM compose votre jeu…
+                </span>
+                <button
+                  onClick={handleCancelStream}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-[#881337] hover:bg-[#9f1239] border border-[#e11d48] text-[#fda4af] rounded text-[10px] font-bold transition shrink-0"
+                >
+                  <Square size={11} />
+                  Annuler
+                </button>
+              </div>
+              {streamOutput && (
+                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[#38bdf8] leading-relaxed">
+                  {streamOutput}
+                </pre>
+              )}
+            </div>
+          )}
 
           {/* Sortie de génération si disponible */}
           {generationOutput && (
