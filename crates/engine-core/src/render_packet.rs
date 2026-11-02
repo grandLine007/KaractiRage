@@ -25,6 +25,7 @@
 use crate::camera::{Camera3D, CameraProjection};
 use crate::entity::{Entity, MaterialRef, MeshRef, Renderable3D, Transform3D};
 use crate::mesh_assets::{MeshAssetDef, MeshAssetKind, MeshManifest};
+use crate::subsystems::Light3DData;
 
 /// Signature « KRPK » en little-endian.
 pub const MAGIC: u32 = 0x4B50_524B;
@@ -480,6 +481,54 @@ pub fn packet_from_entities(
     }
 }
 
+/// Convertit une couleur `0xRRGGBB` en triplet `[r, g, b]` normalisé (0..1).
+fn color_u32_to_rgb(color: u32) -> [f32; 3] {
+    let r = ((color >> 16) & 0xFF) as f32 / 255.0;
+    let g = ((color >> 8) & 0xFF) as f32 / 255.0;
+    let b = (color & 0xFF) as f32 / 255.0;
+    [r, g, b]
+}
+
+/// Convertit les lumières déclaratives du projet (`subsystems::Light3DData`) en
+/// `(ambient, lights)` pour le renderer 3D.
+///
+/// - Les lumières `ambient` sont repliées dans la composante ambiante globale
+///   (couleur × intensité, plafonnée à 1).
+/// - `directional`, `point` et `spot` deviennent des `LightPacket` typés.
+pub fn lighting_from_project(lights: &[Light3DData]) -> ([f32; 3], Vec<LightPacket>) {
+    let mut ambient = [0.2, 0.2, 0.2];
+    let mut packets: Vec<LightPacket> = Vec::with_capacity(lights.len());
+
+    for l in lights {
+        let rgb = color_u32_to_rgb(l.color);
+        match l.kind.to_lowercase().as_str() {
+            "ambient" => {
+                for (a, c) in ambient.iter_mut().zip(rgb.iter()) {
+                    *a = (*a + c * l.intensity).min(1.0);
+                }
+            }
+            raw => {
+                let kind = match raw {
+                    "directional" | "sun" | "dir" => LightKind::Directional,
+                    "spot" => LightKind::Spot,
+                    _ => LightKind::Point,
+                };
+                packets.push(LightPacket {
+                    kind,
+                    color: rgb,
+                    intensity: l.intensity,
+                    pos: l.position,
+                    dir: [0.0, -1.0, 0.0],
+                    range: if kind == LightKind::Point { 8.0 } else { 0.0 },
+                    spot_cos_cutoff: if kind == LightKind::Spot { 0.86 } else { 0.0 },
+                });
+            }
+        }
+    }
+
+    (ambient, packets)
+}
+
 /// Conversion HSV → couleur opaque prémultipliée `0xAARRGGBB`.
 pub fn hsv_to_argb(h: f32, s: f32, v: f32) -> u32 {
     let c = v * s;
@@ -847,6 +896,48 @@ mod producer_tests {
         assert_eq!(instances, 109, "100 cubes + 8 parties de pilliers + 1 sol");
         let decoded = RenderPacket::decode(&p.encode()).expect("roundtrip démo");
         assert_eq!(decoded, p);
+    }
+
+    #[test]
+    fn lighting_from_project_folds_ambient_and_types_lights() {
+        let lights = vec![
+            Light3DData {
+                kind: "ambient".into(),
+                position: [0.0, 0.0, 0.0],
+                color: 0x00FFFFFF,
+                intensity: 0.3,
+            },
+            Light3DData {
+                kind: "point".into(),
+                position: [1.0, 2.0, 3.0],
+                color: 0x00FF0000,
+                intensity: 2.0,
+            },
+            Light3DData {
+                kind: "directional".into(),
+                position: [0.0, 10.0, 0.0],
+                color: 0x0000FF00,
+                intensity: 1.5,
+            },
+        ];
+
+        let (ambient, packets) = lighting_from_project(&lights);
+
+        // Ambiant de base (0.2) + 1.0 × 0.3 → 0.5.
+        assert!((ambient[0] - 0.5).abs() < 1e-6);
+        assert!((ambient[1] - 0.5).abs() < 1e-6);
+        assert!((ambient[2] - 0.5).abs() < 1e-6);
+
+        assert_eq!(packets.len(), 2);
+        assert_eq!(packets[0].kind, LightKind::Point);
+        assert_eq!(packets[0].pos, [1.0, 2.0, 3.0]);
+        assert!((packets[0].color[0] - 1.0).abs() < 1e-6);
+        assert!((packets[0].color[1] - 0.0).abs() < 1e-6);
+        assert_eq!(packets[0].range, 8.0);
+
+        assert_eq!(packets[1].kind, LightKind::Directional);
+        assert_eq!(packets[1].intensity, 1.5);
+        assert_eq!(packets[1].range, 0.0);
     }
 }
 

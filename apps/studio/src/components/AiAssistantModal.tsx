@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Bot, X, Sparkles, CheckCircle2, AlertCircle, RefreshCw, Send, Shield, Package, Flame, Zap } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
+import { Bot, X, Sparkles, CheckCircle2, AlertCircle, RefreshCw, Send, Shield, Package, Flame, Zap, Square } from 'lucide-react';
 
 interface AiAssistantModalProps {
   isOpen: boolean;
@@ -9,12 +10,12 @@ interface AiAssistantModalProps {
 }
 
 const PROVIDERS = [
-  { id: 'lmstudio', name: 'LM STUDIO', defaultEndpoint: 'http://127.0.0.1:1234', defaultModel: 'nvidia/nemotron-3-nano-4b' },
-  { id: 'ollama', name: 'OLLAMA', defaultEndpoint: 'http://localhost:11434', defaultModel: 'llama3:latest' },
+  { id: 'lmstudio', name: 'LM STUDIO', defaultEndpoint: 'http://127.0.0.1:1234/v1/chat/completions', defaultModel: 'nvidia/nemotron-3-nano-4b' },
+  { id: 'ollama', name: 'OLLAMA', defaultEndpoint: 'http://localhost:11434/v1/chat/completions', defaultModel: 'llama3:latest' },
   { id: 'claude', name: 'CLAUDE', defaultEndpoint: 'https://api.anthropic.com/v1/messages', defaultModel: 'claude-3-5-sonnet' },
-  { id: 'gemini', name: 'GEMINI', defaultEndpoint: 'https://generativelanguage.googleapis.com', defaultModel: 'gemini-1.5-pro' },
-  { id: 'deepseek', name: 'DEEPSEEK', defaultEndpoint: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat' },
-  { id: 'openai', name: 'OPENAI', defaultEndpoint: 'https://api.openai.com/v1', defaultModel: 'gpt-4o' },
+  { id: 'gemini', name: 'GEMINI', defaultEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', defaultModel: 'gemini-1.5-pro' },
+  { id: 'deepseek', name: 'DEEPSEEK', defaultEndpoint: 'https://api.deepseek.com/v1/chat/completions', defaultModel: 'deepseek-chat' },
+  { id: 'openai', name: 'OPENAI', defaultEndpoint: 'https://api.openai.com/v1/chat/completions', defaultModel: 'gpt-4o' },
   { id: 'offline', name: 'OFFLINE', defaultEndpoint: 'Local In-Engine', defaultModel: 'Règles Déterministes' }
 ];
 
@@ -48,10 +49,13 @@ const PRESETS = [
 export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onClose, onApplyGeneratedLevel }) => {
   const [selectedProvider, setSelectedProvider] = useState('lmstudio');
   const [promptText, setPromptText] = useState('');
-  const [endpoint, setEndpoint] = useState('http://127.0.0.1:1234');
+  const [endpoint, setEndpoint] = useState('http://127.0.0.1:1234/v1/chat/completions');
   const [testStatus, setTestStatus] = useState<{ loading: boolean; success?: boolean; message?: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationOutput, setGenerationOutput] = useState<{ success: boolean; message: string; json?: string } | null>(null);
+  const [planSummary, setPlanSummary] = useState<string | null>(null);
+  const [streamOutput, setStreamOutput] = useState('');
+  const runIdRef = useRef<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -85,30 +89,89 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
     }
   };
 
-  const handleGenerate = async () => {
+  const handleShowPlan = async () => {
     if (!promptText.trim()) return;
+    try {
+      const res: any = await invoke('ai_plan', { prompt: promptText });
+      const plan = JSON.parse(res.plan_json);
+      const steps: any[] = plan.steps || [];
+      const chain = steps.map((s: any) => s.artifact).join(' → ');
+      setPlanSummary(
+        (res.needs_clarification ? '⚠️ Clarification requise. ' : '') +
+          `${steps.length} étapes : ${chain || 'aucune'}`
+      );
+    } catch (err: any) {
+      setPlanSummary(err?.toString() || 'Erreur lors du plan');
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!promptText.trim() || isGenerating) return;
     setIsGenerating(true);
     setGenerationOutput(null);
+    setStreamOutput('');
+
+    const id = `ai_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    runIdRef.current = id;
+
+    const uns: (() => void)[] = [];
+    function cleanup() {
+      runIdRef.current = null;
+      setIsGenerating(false);
+      uns.forEach(u => u());
+      uns.length = 0;
+    }
+
+    // Écoute des événements de flux émis par la commande `ai_step`.
+    const unDelta = await listen('ai_step_delta', (e: any) => {
+      if (e.payload?.run_id !== id) return;
+      setStreamOutput(prev => prev + (e.payload?.delta ?? ''));
+    });
+    const unDone = await listen('ai_step_done', (e: any) => {
+      if (e.payload?.run_id !== id) return;
+      cleanup();
+      if (e.payload?.success && e.payload?.payload_json) {
+        setGenerationOutput({
+          success: true,
+          message: `Niveau généré avec succès : ${e.payload?.title ?? 'IA'}`,
+          json: e.payload.payload_json
+        });
+      }
+    });
+    const unErr = await listen('ai_step_error', (e: any) => {
+      if (e.payload?.run_id !== id) return;
+      cleanup();
+      setGenerationOutput({
+        success: false,
+        message: e.payload?.message ?? 'Erreur du flux IA'
+      });
+    });
+    uns.push(unDelta, unDone, unErr);
 
     try {
-      const res: any = await invoke('generate_ai_level', {
+      // La commande renvoie immédiatement ; le résultat arrive par événements.
+      await invoke('ai_step', {
         prompt: promptText,
         providerName: selectedProvider,
-        endpoint: endpoint.trim() || undefined
-      });
-
-      setGenerationOutput({
-        success: res.success,
-        message: res.message,
-        json: res.payload_json
+        endpoint: endpoint.trim() || undefined,
+        runId: id
       });
     } catch (err: any) {
+      cleanup();
       setGenerationOutput({
         success: false,
         message: err?.toString() || 'Erreur lors de la génération IA'
       });
-    } finally {
-      setIsGenerating(false);
+    }
+  };
+
+  const handleCancelStream = async () => {
+    if (runIdRef.current) {
+      try {
+        await invoke('ai_step_cancel', { runId: runIdRef.current });
+      } catch {
+        /* l'annulation est best-effort */
+      }
     }
   };
 
@@ -177,7 +240,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
                 value={endpoint}
                 onChange={e => setEndpoint(e.target.value)}
                 className="flex-1 text-xs font-mono text-[#38bdf8] bg-[#07040d] border border-[#2d1b4e] rounded px-2.5 py-1"
-                placeholder="http://127.0.0.1:1234"
+                placeholder="http://127.0.0.1:1234/v1/chat/completions"
               />
             </div>
             <button
@@ -188,7 +251,20 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
               <RefreshCw size={13} className={testStatus?.loading ? 'animate-spin' : ''} />
               {testStatus?.loading ? 'Test en cours...' : 'Tester la connexion'}
             </button>
+            <button
+              onClick={handleShowPlan}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1e1338] hover:bg-[#2d1b4e] border border-[#a855f7]/60 text-[#c084fc] rounded text-xs font-semibold transition shrink-0"
+            >
+              <Bot size={13} />
+              Voir le plan
+            </button>
           </div>
+
+          {planSummary && (
+            <div className="p-3 rounded-lg border text-xs bg-[#1e1338]/40 border-[#a855f7]/40 text-[#c084fc]">
+              📋 Plan : {planSummary}
+            </div>
+          )}
 
           {/* Résultat du test */}
           {testStatus && (
@@ -250,6 +326,30 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
             </div>
           </div>
 
+          {/* Flux de génération en direct (JSON partiel) */}
+          {isGenerating && (
+            <div className="p-3 rounded-lg border text-[10px] bg-[#07040d] border-[#2d1b4e]">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-[#c084fc] uppercase tracking-wider flex items-center gap-2">
+                  <Sparkles size={13} className="animate-pulse text-[#a855f7]" />
+                  Le LLM compose votre jeu…
+                </span>
+                <button
+                  onClick={handleCancelStream}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-[#881337] hover:bg-[#9f1239] border border-[#e11d48] text-[#fda4af] rounded text-[10px] font-bold transition shrink-0"
+                >
+                  <Square size={11} />
+                  Annuler
+                </button>
+              </div>
+              {streamOutput && (
+                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[#38bdf8] leading-relaxed">
+                  {streamOutput}
+                </pre>
+              )}
+            </div>
+          )}
+
           {/* Sortie de génération si disponible */}
           {generationOutput && (
             <div className={`p-4 rounded-lg border text-xs space-y-2 ${
@@ -290,12 +390,17 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
             <button
               onClick={handleGenerate}
               disabled={isGenerating || !promptText.trim()}
-              className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-[#9333ea] to-[#7e22ce] hover:from-[#a855f7] hover:to-[#9333ea] disabled:opacity-50 text-white font-bold text-xs rounded-lg shadow-lg shadow-purple-950/60 transition"
+              className={`flex items-center gap-2 px-5 py-2 text-white font-bold text-xs rounded-lg shadow-lg shadow-purple-950/60 transition ${
+                isGenerating
+                  ? 'bg-gradient-to-r from-[#7e22ce] to-[#4c1d95] animate-pulse cursor-wait'
+                  : 'bg-gradient-to-r from-[#9333ea] to-[#7e22ce] hover:from-[#a855f7] hover:to-[#9333ea] disabled:opacity-50'
+              }`}
             >
               {isGenerating ? (
                 <>
-                  <RefreshCw size={14} className="animate-spin" />
-                  Génération en cours...
+                  <Sparkles size={14} className="animate-spin" />
+                  <span>Le LLM compose votre jeu</span>
+                  <span className="tracking-widest animate-pulse">…</span>
                 </>
               ) : (
                 <>
