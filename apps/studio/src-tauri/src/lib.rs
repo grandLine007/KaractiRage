@@ -458,6 +458,21 @@ async fn ai_step_cancel(state: tauri::State<'_, AiStreamState>, run_id: String) 
     }
 }
 
+/// Capture la prévisualisation courante comme référence (`ai_review`).
+#[tauri::command]
+async fn ai_review_capture(engine: tauri::State<'_, SharedEngine>) -> Result<String, String> {
+    let mut eng = engine.lock().map_err(|e| e.to_string())?;
+    let cap = eng.capture_review_baseline();
+    Ok(serde_json::to_string(&cap).unwrap_or_default())
+}
+
+/// Diff entre la prévisualisation courante et la référence (`ai_review`).
+#[tauri::command]
+async fn ai_review(engine: tauri::State<'_, SharedEngine>) -> Result<karactirage_engine::preview::ReviewReport, String> {
+    let eng = engine.lock().map_err(|e| e.to_string())?;
+    Ok(eng.review_ai_patch())
+}
+
 // ============================================================
 // Commandes du moteur natif embarqué (un seul moteur, pas de Wasm)
 // ============================================================
@@ -1337,6 +1352,8 @@ pub fn run() {
             ai_history,
             ai_step,
             ai_step_cancel,
+            ai_review,
+            ai_review_capture,
             engine_frame,
             engine_frame_packet,
             engine_list_mesh_assets,

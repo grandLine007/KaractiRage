@@ -52,6 +52,8 @@ pub struct NativeEngine {
     camera3d: Camera3D,
     /// Gestionnaire de sauvegarde (slots) piloté par `game.save_config`.
     save_manager: SaveManager,
+    /// Référence de prévisualisation pour `ai_review` (capturée avant un patch).
+    review_baseline: Option<crate::preview::PreviewCapture>,
 }
 
 /// Résout le chemin de la scène par défaut, quel que soit le répertoire courant
@@ -200,6 +202,7 @@ impl NativeEngine {
                 crate::subsystems::SaveConfig::default(),
                 crate::project_registry::ProjectRegistry::home_dir().join("saves"),
             ),
+            review_baseline: None,
         })
     }
 
@@ -674,6 +677,31 @@ impl NativeEngine {
     /// de `ai_review`) : grille 8×8 en niveaux de gris, diffable via `preview_diff`.
     pub fn capture_preview(&self) -> crate::preview::PreviewCapture {
         crate::preview::capture_preview(&self.canvas.buffer, self.canvas.width, self.canvas.height)
+    }
+
+    /// Capture la prévisualisation courante et la stocke comme référence (`ai_review`).
+    pub fn capture_review_baseline(&mut self) -> crate::preview::PreviewCapture {
+        let cap = self.capture_preview();
+        self.review_baseline = Some(cap);
+        cap
+    }
+
+    /// Diff entre la prévisualisation courante et la référence (`ai_review`).
+    /// Sans référence, renvoie `NoChange` (diff 0).
+    pub fn review_ai_patch(&self) -> crate::preview::ReviewReport {
+        let current = self.capture_preview();
+        match self.review_baseline {
+            Some(baseline) => crate::preview::review_preview(&baseline, &current),
+            None => crate::preview::ReviewReport {
+                diff: 0.0,
+                verdict: crate::preview::ReviewVerdict::NoChange,
+            },
+        }
+    }
+
+    /// Indique si une référence de revue a été capturée.
+    pub fn has_review_baseline(&self) -> bool {
+        self.review_baseline.is_some()
     }
 
     // --- Entrées ---------------------------------------------------------------
@@ -2428,6 +2456,34 @@ mod tests {
         assert!(engine.save_game(5).is_err());
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_ai_review_capture_and_diff() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        engine.render_frame(1.0 / 60.0);
+
+        // Sans référence → NoChange.
+        assert!(!engine.has_review_baseline());
+        assert_eq!(
+            engine.review_ai_patch().verdict,
+            crate::preview::ReviewVerdict::NoChange
+        );
+
+        // Capture de la référence.
+        engine.capture_review_baseline();
+        assert!(engine.has_review_baseline());
+
+        // Aucun changement depuis la capture → diff nul.
+        let report = engine.review_ai_patch();
+        assert_eq!(report.verdict, crate::preview::ReviewVerdict::NoChange);
+        assert_eq!(report.diff, 0.0);
+
+        // Framebuffer radicalement différent → diff majeur.
+        engine.canvas.clear(0x00FFFFFF);
+        let report = engine.review_ai_patch();
+        assert_eq!(report.verdict, crate::preview::ReviewVerdict::Major);
+        assert!(report.diff > 0.9);
     }
 
     #[test]

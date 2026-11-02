@@ -4,6 +4,8 @@
 //! 8×8 (déterministe et peu coûteuse). `preview_diff` mesure la différence moyenne
 //! absolue entre deux captures (0.0 = identique, 1.0 = opposée).
 
+use serde::{Deserialize, Serialize};
+
 /// Taille de la grille de la signature (8×8).
 pub const PREVIEW_GRID: usize = 8;
 
@@ -14,6 +16,38 @@ pub struct PreviewCapture {
     pub height: usize,
     /// Niveaux de gris 0..255 sur une grille `PREVIEW_GRID × PREVIEW_GRID`.
     pub signature: [u8; PREVIEW_GRID * PREVIEW_GRID],
+}
+
+impl Serialize for PreviewCapture {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("PreviewCapture", 3)?;
+        state.serialize_field("width", &self.width)?;
+        state.serialize_field("height", &self.height)?;
+        // `[u8; 64]` n'a pas d'impl `Deserialize` standard → on sérialise en slice.
+        state.serialize_field("signature", self.signature.as_slice())?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for PreviewCapture {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            width: usize,
+            height: usize,
+            signature: Vec<u8>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let mut signature = [0u8; PREVIEW_GRID * PREVIEW_GRID];
+        let n = raw.signature.len().min(signature.len());
+        signature[..n].copy_from_slice(&raw.signature[..n]);
+        Ok(Self {
+            width: raw.width,
+            height: raw.height,
+            signature,
+        })
+    }
 }
 
 /// Capture une signature déterministe d'un framebuffer `0x00RRGGBB`.
@@ -72,7 +106,8 @@ pub fn preview_diff(a: &PreviewCapture, b: &PreviewCapture) -> f32 {
 }
 
 /// Verdict d'une revue de prévisualisation (`ai_review`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ReviewVerdict {
     /// Différence négligeable (capture quasi identique).
     NoChange,
@@ -83,7 +118,7 @@ pub enum ReviewVerdict {
 }
 
 /// Rapport de revue de prévisualisation.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ReviewReport {
     pub diff: f32,
     pub verdict: ReviewVerdict,
