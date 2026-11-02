@@ -138,6 +138,14 @@ pub struct AiGenerationResult {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct AiPlanResult {
+    pub success: bool,
+    pub intent_json: String,
+    pub plan_json: String,
+    pub needs_clarification: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PlayerPosition {
     pub x: f32,
     pub y: f32,
@@ -273,6 +281,17 @@ async fn generate_ai_level(prompt: String, provider_name: Option<String>, endpoi
             message: err,
             payload_json: None,
         },
+    }
+}
+
+#[tauri::command]
+async fn ai_plan(prompt: String) -> AiPlanResult {
+    let (envelope, plan) = karactirage_engine::ai_orchestrator::generate_plan_from_intent(&prompt);
+    AiPlanResult {
+        success: true,
+        intent_json: serde_json::to_string_pretty(&envelope).unwrap_or_default(),
+        plan_json: serde_json::to_string_pretty(&plan).unwrap_or_default(),
+        needs_clarification: envelope.needs_clarification,
     }
 }
 
@@ -1149,6 +1168,7 @@ pub fn run() {
             engine_retry_boot,
             test_llm_connection,
             generate_ai_level,
+            ai_plan,
             engine_frame,
             engine_frame_packet,
             engine_list_mesh_assets,
