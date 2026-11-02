@@ -1,5 +1,5 @@
 {
-  "dictionary_version": "2026.11.1",
+  "dictionary_version": "2026.11.2",
   "engine_api": 1,
   "dimensions": [
     "2d",
@@ -26,7 +26,7 @@
     "schemas/graph.schema.json": "088e9ca2dce0a6e9",
     "schemas/intent.schema.json": "532860c470bea6b6",
     "schemas/level.schema.json": "ac845fc11f886711",
-    "schemas/ops.schema.json": "c39f72a64d5a9ab1",
-    "schemas/plan.schema.json": "a2d7d7fbc354c6c7"
+    "schemas/ops.schema.json": "e7fabd398bcd69b5",
+    "schemas/plan.schema.json": "d2f539e14c2d8b2d"
   }
 }

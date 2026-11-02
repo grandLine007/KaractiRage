@@ -17,7 +17,7 @@ use thiserror::Error;
 use kvl_core::NodeFlavor;
 
 /// Version du dictionnaire (majeure.à.minor) — bump à chaque changement de contrat.
-pub const DICTIONARY_VERSION: &str = "2026.11.1";
+pub const DICTIONARY_VERSION: &str = "2026.11.2";
 /// Version d'API moteur que ce dictionnaire décrit. Incompatibilité → refus de générer.
 pub const ENGINE_API: u32 = 1;
 

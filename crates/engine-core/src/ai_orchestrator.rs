@@ -97,7 +97,7 @@ mod tests {
         let (envelope, plan) = generate_plan_from_intent("Crée un jeu complet de plateforme 2D");
         assert_eq!(envelope.target, IntentTarget::FullGame);
         assert!(plan.validate().is_ok());
-        assert_eq!(plan.steps.len(), 6);
+        assert_eq!(plan.steps.len(), 7);
     }
 
     #[test]

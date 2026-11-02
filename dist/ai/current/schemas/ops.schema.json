@@ -1,4 +1,38 @@
 {
+  "$defs": {
+    "UiElement": {
+      "description": "Élément d'un écran UI (texte, barre, bouton, icône).",
+      "properties": {
+        "bind": {
+          "default": null,
+          "description": "Variable liée (\"player_hp\", \"score\", \"objective\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "\"text\", \"bar\", \"button\", \"icon\".",
+          "type": "string"
+        },
+        "label": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Opération atomique appliquée sur un clone du projet.",
   "oneOf": [
@@ -286,12 +320,28 @@
     },
     {
       "properties": {
+        "elements": {
+          "default": [],
+          "description": "Éléments déclaratifs (texte, jauge, bouton, icône), optionnels.",
+          "items": {
+            "$ref": "#/$defs/UiElement"
+          },
+          "type": "array"
+        },
         "op": {
           "const": "set_ui_screen",
           "type": "string"
         },
         "screen": {
+          "description": "Type d'écran : \"hud\", \"menu\", \"pause\", \"game_over\", \"victory\".",
           "type": "string"
+        },
+        "title": {
+          "description": "Titre affiché (écrans plein écran), optionnel.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

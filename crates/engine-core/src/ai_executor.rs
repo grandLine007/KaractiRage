@@ -174,13 +174,25 @@ fn apply_op(project: &mut KaractiProject, op: &AiOp) -> Result<(), String> {
             });
             Ok(())
         }
-        AiOp::SetUiScreen { screen } => {
-            project.ui_screens.push(UiScreen {
-                id: format!("ui_{}", project.ui_screens.len()),
-                kind: parse_screen_kind(screen),
-                title: None,
-                elements: Vec::new(),
-            });
+        AiOp::SetUiScreen { screen, title, elements } => {
+            let kind = parse_screen_kind(screen);
+            // Idempotent par type d'écran : on met à jour l'écran existant du même
+            // `kind` s'il y en a un, sinon on en crée un nouveau.
+            if let Some(existing) = project.ui_screens.iter_mut().find(|s| s.kind == kind) {
+                if title.is_some() {
+                    existing.title = title.clone();
+                }
+                if !elements.is_empty() {
+                    existing.elements = elements.clone();
+                }
+            } else {
+                project.ui_screens.push(UiScreen {
+                    id: format!("ui_{}", project.ui_screens.len()),
+                    kind,
+                    title: title.clone(),
+                    elements: elements.clone(),
+                });
+            }
             Ok(())
         }
         AiOp::SetSaveConfig { enabled } => {
@@ -285,6 +297,7 @@ fn parse_genre(raw: &str) -> GameGenre {
 mod tests {
     use super::*;
     use crate::ai_plan::AiPlanStep;
+    use crate::subsystems::UiElement;
 
     fn sample_plan() -> AiPlan {
         AiPlan {
@@ -425,7 +438,38 @@ mod tests {
         apply_op(&mut project, &AiOp::SetSaveConfig { enabled: false }).unwrap();
         apply_op(&mut project, &AiOp::ExportTarget { format: "html".into() }).unwrap();
         apply_op(&mut project, &AiOp::AddLevel { name: "niveau_2".into() }).unwrap();
-        apply_op(&mut project, &AiOp::SetUiScreen { screen: "menu".into() }).unwrap();
+        apply_op(
+            &mut project,
+            &AiOp::SetUiScreen {
+                screen: "hud".into(),
+                title: None,
+                elements: vec![
+                    UiElement {
+                        id: "score".into(),
+                        kind: "text".into(),
+                        label: Some("OR".into()),
+                        bind: Some("score".into()),
+                    },
+                    UiElement {
+                        id: "hp".into(),
+                        kind: "bar".into(),
+                        label: Some("VITALITÉ".into()),
+                        bind: Some("player_hp".into()),
+                    },
+                ],
+            },
+        )
+        .unwrap();
+        // Un second `SetUiScreen` de même type met à jour le premier (idempotent).
+        apply_op(
+            &mut project,
+            &AiOp::SetUiScreen {
+                screen: "hud".into(),
+                title: Some("HUD".into()),
+                elements: vec![],
+            },
+        )
+        .unwrap();
         apply_op(&mut project, &AiOp::AddMesh { asset: "pillar".into() }).unwrap();
 
         assert_eq!(project.camera3d.as_ref().unwrap().position, [1.0, 2.0, 3.0]);
@@ -433,8 +477,11 @@ mod tests {
         assert!(!project.save_config.enabled);
         assert_eq!(project.export_target, Some(crate::subsystems::ExportTargetKind::Html));
         assert_eq!(project.levels, vec!["niveau_2".to_string()]);
-        assert_eq!(project.ui_screens.len(), 1);
-        assert_eq!(project.ui_screens[0].kind, crate::subsystems::UiScreenKind::Menu);
+        assert_eq!(project.ui_screens.len(), 1, "upsert par type : pas de doublon HUD");
+        assert_eq!(project.ui_screens[0].kind, crate::subsystems::UiScreenKind::Hud);
+        assert_eq!(project.ui_screens[0].title.as_deref(), Some("HUD"));
+        assert_eq!(project.ui_screens[0].elements.len(), 2);
+        assert_eq!(project.ui_screens[0].elements[0].bind.as_deref(), Some("score"));
         assert!(project.scene.entities[0].renderable3d.is_some());
     }
 }

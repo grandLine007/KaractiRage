@@ -10,6 +10,7 @@ use crate::entity::{Entity, MaterialRef, MeshRef, Renderable3D, Transform2D, Tra
 use crate::game::GameState;
 use crate::input::InputState;
 use crate::renderer::Canvas;
+use crate::save::SaveManager;
 use glam::Vec3;
 use std::path::{Component, Path, PathBuf};
 use winit::keyboard::KeyCode;
@@ -49,6 +50,8 @@ pub struct NativeEngine {
     packet_frame_id: u32,
     /// Caméra 3D de la vue (orbitale dans la démo).
     camera3d: Camera3D,
+    /// Gestionnaire de sauvegarde (slots) piloté par `game.save_config`.
+    save_manager: SaveManager,
 }
 
 /// Résout le chemin de la scène par défaut, quel que soit le répertoire courant
@@ -193,6 +196,10 @@ impl NativeEngine {
             packet_time: 0.0,
             packet_frame_id: 0,
             camera3d: Camera3D::perspective(Vec3::new(0.0, 7.0, 16.0), Vec3::ZERO, 60.0, 0.1, 200.0, 1.5),
+            save_manager: SaveManager::with_root(
+                crate::subsystems::SaveConfig::default(),
+                crate::project_registry::ProjectRegistry::home_dir().join("saves"),
+            ),
         })
     }
 
@@ -594,16 +601,24 @@ impl NativeEngine {
             &refs,
             self.packet_frame_id,
         );
-        packet.ambient = [0.4, 0.4, 0.4];
-        packet.lights = vec![crate::render_packet::LightPacket {
-            kind: crate::render_packet::LightKind::Directional,
-            color: [1.0, 1.0, 1.0],
-            intensity: 2.2,
-            pos: [8.0, 14.0, 6.0],
-            dir: [-0.5, -0.8, -0.4],
-            range: 0.0,
-            spot_cos_cutoff: 0.0,
-        }];
+        if self.game.lights.is_empty() {
+            // Éclairage de démo : ambiant + soleil directionnel.
+            packet.ambient = [0.4, 0.4, 0.4];
+            packet.lights = vec![crate::render_packet::LightPacket {
+                kind: crate::render_packet::LightKind::Directional,
+                color: [1.0, 1.0, 1.0],
+                intensity: 2.2,
+                pos: [8.0, 14.0, 6.0],
+                dir: [-0.5, -0.8, -0.4],
+                range: 0.0,
+                spot_cos_cutoff: 0.0,
+            }];
+        } else {
+            // Lumières déclaratives du projet (`project.lights`).
+            let (ambient, lights) = crate::render_packet::lighting_from_project(&self.game.lights);
+            packet.ambient = ambient;
+            packet.lights = lights;
+        }
         packet
     }
 
@@ -614,13 +629,20 @@ impl NativeEngine {
         if self.count_3d_entities() == 0 {
             self.populate_default_3d_scene();
         }
-        // Orbite lente de la caméra pour une vue dynamique (démo).
-        let angle = self.packet_time * 0.15;
-        let radius = 16.0;
-        let height = 7.0;
-        self.camera3d.position = Vec3::new(radius * angle.sin(), height, radius * angle.cos());
-        self.camera3d.target = Vec3::ZERO;
-        self.camera3d.aspect = 1.5;
+
+        // Caméra : priorité au projet (`project.camera3d`), sinon orbite de démo.
+        if let Some(cam) = self.game.camera3d.clone() {
+            self.camera3d.position = Vec3::from_array(cam.position);
+            self.camera3d.target = Vec3::from_array(cam.target);
+            self.camera3d.aspect = 1.5;
+        } else {
+            let angle = self.packet_time * 0.15;
+            let radius = 16.0;
+            let height = 7.0;
+            self.camera3d.position = Vec3::new(radius * angle.sin(), height, radius * angle.cos());
+            self.camera3d.target = Vec3::ZERO;
+            self.camera3d.aspect = 1.5;
+        }
 
         let packet = self.build_3d_packet();
         self.packet_frame_id = self.packet_frame_id.wrapping_add(1);
@@ -931,6 +953,59 @@ impl NativeEngine {
             .export_current_project()
             .to_json()
             .unwrap_or_else(|_| "{}".to_string())
+    }
+
+    // --- Sauvegarde runtime (slots) ---------------------------------------------
+
+    /// Synchronise la configuration du gestionnaire de sauvegarde avec l'état du jeu
+    /// (elle peut changer via l'op IA `SetSaveConfig`).
+    fn sync_save_config(&mut self) {
+        self.save_manager.config = self.game.save_config.clone();
+    }
+
+    /// Sauvegarde l'état courant du jeu dans un slot (`0..slots`). Renvoie le chemin.
+    pub fn save_game(&mut self, slot: u32) -> Result<String, String> {
+        self.sync_save_config();
+        let project = self.game.export_current_project();
+        let path = self.save_manager.save(&project, slot as usize)?;
+        Ok(path.display().to_string())
+    }
+
+    /// Charge un slot et remplace l'état courant du jeu. `false` si le slot est vide.
+    pub fn load_game(&mut self, slot: u32) -> bool {
+        self.sync_save_config();
+        let project_id = self.game.export_current_project().metadata.id;
+        match self.save_manager.load(&project_id, slot as usize) {
+            Ok(project) => {
+                self.game.load_project(project);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Reprise en session : charge le slot le plus récent pour le projet courant.
+    pub fn resume_game(&mut self) -> bool {
+        self.sync_save_config();
+        let project_id = self.game.export_current_project().metadata.id;
+        match self.save_manager.resume(&project_id) {
+            Some(project) => {
+                self.game.load_project(project);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Avance l'auto-save d'un pas de temps ; renvoie le chemin écrit le cas échéant.
+    pub fn auto_save(&mut self, dt: f32) -> Option<String> {
+        self.sync_save_config();
+        let project = self.game.export_current_project();
+        self.save_manager
+            .auto_save_tick(dt, &project)
+            .ok()
+            .flatten()
+            .map(|p| p.display().to_string())
     }
 
     /// Ouvre un projet (`.karacti`) ou une scène de démo (`.scene.json`) depuis un
@@ -2282,6 +2357,71 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    #[test]
+    fn test_3d_packet_consumes_project_camera_and_lights() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        engine.populate_default_3d_scene();
+
+        // Caméra et lumière déclaratives issues du projet (ex. via l'op IA `SetCamera`/`AddLight`).
+        engine.game.camera3d = Some(crate::subsystems::Camera3DData {
+            position: [5.0, 6.0, 7.0],
+            target: [1.0, 0.0, 0.0],
+        });
+        engine.game.lights = vec![crate::subsystems::Light3DData {
+            kind: "point".into(),
+            position: [2.0, 3.0, 4.0],
+            color: 0x00FF0000,
+            intensity: 2.0,
+        }];
+
+        let bytes = engine.render_packet_frame(1.0 / 60.0);
+        let packet = crate::render_packet::RenderPacket::decode(&bytes).expect("decode");
+
+        // La caméra du packet reflète la caméra déclarative (position/target).
+        assert_eq!(packet.camera.pos, [5.0, 6.0, 7.0]);
+        assert_eq!(packet.camera.target, [1.0, 0.0, 0.0]);
+
+        // La lumière déclarative est convertie en `LightPacket` (point, pas le soleil de démo).
+        assert_eq!(packet.lights.len(), 1);
+        assert_eq!(
+            packet.lights[0].kind,
+            crate::render_packet::LightKind::Point
+        );
+        assert_eq!(packet.lights[0].pos, [2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_save_game_slot_roundtrip_and_resume() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let root = std::env::temp_dir().join(format!(
+            "karacti_engine_save_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        engine.save_manager = SaveManager::with_root(engine.game.save_config.clone(), root.clone());
+
+        // Sauvegarde dans le slot 1.
+        let path = engine.save_game(1).expect("sauvegarde slot 1");
+        assert!(std::path::Path::new(&path).exists());
+
+        // Un slot vide ne se charge pas.
+        assert!(!engine.load_game(2));
+
+        // Modifie l'état (objectif) puis recharge le slot : l'état est restauré.
+        let original_objective = engine.game.scene_objective.clone();
+        engine.game.scene_objective = Some("OBJECTIF MODIFIÉ".into());
+        assert!(engine.load_game(1));
+        assert_eq!(engine.game.scene_objective, original_objective);
+
+        // Reprise en session : recharge le slot le plus récent (slot 1).
+        assert!(engine.resume_game());
+
+        // Slot hors limites → erreur explicite (slots = 3 par défaut).
+        assert!(engine.save_game(5).is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
