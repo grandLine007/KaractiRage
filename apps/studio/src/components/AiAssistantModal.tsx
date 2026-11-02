@@ -52,6 +52,7 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
   const [testStatus, setTestStatus] = useState<{ loading: boolean; success?: boolean; message?: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationOutput, setGenerationOutput] = useState<{ success: boolean; message: string; json?: string } | null>(null);
+  const [planSummary, setPlanSummary] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -82,6 +83,22 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
         success: false,
         message: err?.toString() || 'Erreur lors du test de connexion'
       });
+    }
+  };
+
+  const handleShowPlan = async () => {
+    if (!promptText.trim()) return;
+    try {
+      const res: any = await invoke('ai_plan', { prompt: promptText });
+      const plan = JSON.parse(res.plan_json);
+      const steps: any[] = plan.steps || [];
+      const chain = steps.map((s: any) => s.artifact).join(' → ');
+      setPlanSummary(
+        (res.needs_clarification ? '⚠️ Clarification requise. ' : '') +
+          `${steps.length} étapes : ${chain || 'aucune'}`
+      );
+    } catch (err: any) {
+      setPlanSummary(err?.toString() || 'Erreur lors du plan');
     }
   };
 
@@ -188,7 +205,20 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({ isOpen, onCl
               <RefreshCw size={13} className={testStatus?.loading ? 'animate-spin' : ''} />
               {testStatus?.loading ? 'Test en cours...' : 'Tester la connexion'}
             </button>
+            <button
+              onClick={handleShowPlan}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1e1338] hover:bg-[#2d1b4e] border border-[#a855f7]/60 text-[#c084fc] rounded text-xs font-semibold transition shrink-0"
+            >
+              <Bot size={13} />
+              Voir le plan
+            </button>
           </div>
+
+          {planSummary && (
+            <div className="p-3 rounded-lg border text-xs bg-[#1e1338]/40 border-[#a855f7]/40 text-[#c084fc]">
+              📋 Plan : {planSummary}
+            </div>
+          )}
 
           {/* Résultat du test */}
           {testStatus && (
