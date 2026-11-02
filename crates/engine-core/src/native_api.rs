@@ -670,6 +670,12 @@ impl NativeEngine {
         out
     }
 
+    /// Capture une signature de prévisualisation du framebuffer courant (fondation
+    /// de `ai_review`) : grille 8×8 en niveaux de gris, diffable via `preview_diff`.
+    pub fn capture_preview(&self) -> crate::preview::PreviewCapture {
+        crate::preview::capture_preview(&self.canvas.buffer, self.canvas.width, self.canvas.height)
+    }
+
     // --- Entrées ---------------------------------------------------------------
 
     pub fn on_key_down(&mut self, key: u32) {

@@ -426,6 +426,22 @@ pub trait LlmBackend {
         body: &str,
         timeout_secs: u64,
     ) -> Result<String, String>;
+
+    /// POST JSON en streaming : appelle `on_chunk` pour chaque fragment brut reçu et
+    /// renvoie le corps complet accumulé. L'implémentation par défaut retombe sur
+    /// `post_json` (un seul chunk) — un backend réellement streamant la surcharge.
+    fn post_json_stream(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &str,
+        timeout_secs: u64,
+        on_chunk: &mut dyn FnMut(&str),
+    ) -> Result<String, String> {
+        let full = self.post_json(url, headers, body, timeout_secs)?;
+        on_chunk(&full);
+        Ok(full)
+    }
 }
 
 /// Backend par défaut via `curl` natif (macOS, Linux, Windows 10/11).
