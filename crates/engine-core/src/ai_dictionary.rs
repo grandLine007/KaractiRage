@@ -310,6 +310,30 @@ mod tests {
         let _ = fs::remove_dir_all(&out2);
     }
 
+    /// Non-dérive : le dictionnaire généré depuis le code doit être identique au
+    /// `dist/ai/current` versionné. Échoue si le code a changé sans régénérer `dist/ai`.
+    #[test]
+    fn dictionary_matches_committed_dist() {
+        let root = source_root();
+        let committed = root.join("dist").join("ai").join("current");
+        assert!(committed.is_dir(), "dist/ai/current absent — régénérez avec scripts/ai_dictionary.sh");
+
+        let out = tmp_dir("committed");
+        let manifest = AiDictionary::build(&root, &out).expect("build");
+
+        for rel in manifest.files.keys() {
+            let generated = fs::read(out.join(rel)).expect("fichier généré");
+            let committed_bytes = fs::read(committed.join(rel))
+                .unwrap_or_else(|e| panic!("fichier dist/ai/current/{rel} absent : {e}"));
+            assert_eq!(
+                generated, committed_bytes,
+                "drift détecté dans dist/ai/{rel} — régénérez avec scripts/ai_dictionary.sh"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&out);
+    }
+
     #[test]
     fn load_verifies_hashes_and_rejects_corruption() {
         let out = tmp_dir("load");
