@@ -295,6 +295,17 @@ async fn ai_plan(prompt: String) -> AiPlanResult {
     }
 }
 
+#[tauri::command]
+async fn ai_start(provider_name: String, intent: String) -> String {
+    karactirage_engine::ai_history::new_run_id(&provider_name, &intent)
+}
+
+#[tauri::command]
+async fn ai_history() -> Vec<karactirage_engine::ai_history::AiRunLog> {
+    let root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    karactirage_engine::ai_history::list_runs(&root)
+}
+
 // ============================================================
 // Commandes du moteur natif embarqué (un seul moteur, pas de Wasm)
 // ============================================================
@@ -1169,6 +1180,8 @@ pub fn run() {
             test_llm_connection,
             generate_ai_level,
             ai_plan,
+            ai_start,
+            ai_history,
             engine_frame,
             engine_frame_packet,
             engine_list_mesh_assets,
