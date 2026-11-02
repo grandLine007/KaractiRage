@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Fournisseurs d'Intelligence Artificielle pris en charge par KaractiRage
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -471,6 +471,66 @@ impl LlmBackend for CurlBackend {
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
+
+    fn post_json_stream(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &str,
+        timeout_secs: u64,
+        on_chunk: &mut dyn FnMut(&str),
+    ) -> Result<String, String> {
+        let mut cmd = Command::new("curl");
+        // `-N` désactive le buffering : les chunks SSE arrivent au fil de l'eau.
+        cmd.arg("-s").arg("-N").arg("-X").arg("POST");
+        for (name, value) in headers {
+            cmd.arg("-H").arg(format!("{name}: {value}"));
+        }
+        cmd.arg("-d").arg(body)
+            .arg("--max-time").arg(timeout_secs.to_string())
+            .arg(url)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        let mut child = cmd.spawn().map_err(|e| format!("Échec d'exécution de curl : {e}"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Impossible de lire la sortie de curl.".to_string())?;
+
+        // Lecture incrémentale (l'annulation reste pilotée par l'appelant via `on_chunk`).
+        let result = drain_stream(stdout, on_chunk, &|| false);
+
+        let status = child.wait().map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err(format!("Erreur curl ({status})"));
+        }
+        result
+    }
+}
+
+/// Lit un flux incrémentalement (par blocs) en notifiant `on_chunk` à chaque lecture.
+/// Renvoie le corps complet accumulé. `cancelled` interrompt la lecture.
+fn drain_stream<R: std::io::Read>(
+    mut reader: R,
+    on_chunk: &mut dyn FnMut(&str),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<String, String> {
+    let mut acc = String::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        if cancelled() {
+            return Err("Génération annulée.".into());
+        }
+        let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        let chunk = String::from_utf8_lossy(&buf[..n]);
+        acc.push_str(&chunk);
+        on_chunk(&chunk);
+    }
+    Ok(acc)
 }
 
 /// Extrait l'origine (`scheme://host:port`) d'une URL, qu'elle soit une base ou un chemin complet.
@@ -731,6 +791,21 @@ mod tests {
             assert!(!provider.default_endpoint().is_empty());
             assert!(!provider.default_model().is_empty());
         }
+    }
+
+    #[test]
+    fn drain_stream_reads_incrementally_and_cancels() {
+        let mut chunks = Vec::new();
+        let data = "chunk1|chunk2|chunk3";
+        let out = drain_stream(std::io::Cursor::new(data.as_bytes()), &mut |c| chunks.push(c.to_string()), &|| false)
+            .expect("lecture");
+        assert_eq!(out, data);
+        assert!(!chunks.is_empty(), "au moins un chunk notifié");
+
+        // Annulation : le premier contrôle de `cancelled` interrompt avant toute lecture.
+        let err = drain_stream(std::io::Cursor::new(data.as_bytes()), &mut |_| {}, &|| true)
+            .expect_err("doit être annulé");
+        assert!(err.contains("annulée"), "message : {err}");
     }
 
     #[test]

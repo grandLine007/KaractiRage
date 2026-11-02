@@ -71,6 +71,37 @@ pub fn preview_diff(a: &PreviewCapture, b: &PreviewCapture) -> f32 {
     sum as f32 / (PREVIEW_GRID * PREVIEW_GRID) as f32 / 255.0
 }
 
+/// Verdict d'une revue de prévisualisation (`ai_review`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewVerdict {
+    /// Différence négligeable (capture quasi identique).
+    NoChange,
+    /// Changement modéré.
+    Minor,
+    /// Changement important.
+    Major,
+}
+
+/// Rapport de revue de prévisualisation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReviewReport {
+    pub diff: f32,
+    pub verdict: ReviewVerdict,
+}
+
+/// Compare deux captures et produit un rapport de revue avec seuils.
+pub fn review_preview(before: &PreviewCapture, after: &PreviewCapture) -> ReviewReport {
+    let diff = preview_diff(before, after);
+    let verdict = if diff < 0.01 {
+        ReviewVerdict::NoChange
+    } else if diff < 0.15 {
+        ReviewVerdict::Minor
+    } else {
+        ReviewVerdict::Major
+    };
+    ReviewReport { diff, verdict }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +140,22 @@ mod tests {
         let c = capture_preview(&[], 0, 0);
         assert_eq!(c.signature, [0u8; PREVIEW_GRID * PREVIEW_GRID]);
         assert_eq!(preview_diff(&c, &c), 0.0);
+    }
+
+    #[test]
+    fn review_preview_classifies_by_thresholds() {
+        let w = 64;
+        let h = 64;
+        let black: Vec<u32> = vec![0x00_000000; w * h];
+        let white: Vec<u32> = vec![0x00_FFFFFF; w * h];
+        let gray: Vec<u32> = vec![0x00_808080; w * h];
+
+        let b = capture_preview(&black, w, h);
+        let wcap = capture_preview(&white, w, h);
+        let g = capture_preview(&gray, w, h);
+
+        assert_eq!(review_preview(&b, &b).verdict, ReviewVerdict::NoChange);
+        assert_eq!(review_preview(&b, &g).verdict, ReviewVerdict::Major);
+        assert_eq!(review_preview(&b, &wcap).verdict, ReviewVerdict::Major);
     }
 }
