@@ -7,7 +7,9 @@
 use thiserror::Error;
 
 use crate::ai_plan::{AiOp, AiPlan, PlanError};
-use crate::entity::{Collider2D, Entity, Health2D, Movement2D, Renderable2D, Transform2D, VisionSensing};
+use crate::entity::{Collider2D, Entity, Health2D, MaterialRef, MeshRef, Movement2D, Renderable2D, Renderable3D, Transform2D, Transform3D, VisionSensing};
+use crate::subsystems::{Camera3DData, ExportTargetKind, Light3DData, UiScreen, UiScreenKind};
+use glam::Vec3;
 use crate::project::KaractiProject;
 use crate::recipe::GameGenre;
 use kvl_core::{Connection, Graph, Node, NodeFlavor, NodeKind, Pin, PinDirection, Value};
@@ -117,7 +119,95 @@ fn apply_op(project: &mut KaractiProject, op: &AiOp) -> Result<(), String> {
                 other => Err(format!("composant inconnu : {other}")),
             }
         }
+        AiOp::AddLevel { name } => {
+            project.levels.push(name.clone());
+            Ok(())
+        }
+        AiOp::AddMesh { asset } => {
+            let id = project.scene.entities.len();
+            let mut entity = Entity::new(id, asset.clone(), "mesh", Transform2D::new(0.0, 0.0, 1.0, 1.0));
+            entity.transform3d = Some(Transform3D::from_euler_deg(
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 1.0, 1.0),
+            ));
+            entity.renderable3d = Some(Renderable3D {
+                mesh: MeshRef::Asset { id: asset.clone(), node: None },
+                material: MaterialRef::Solid { color: 0x00FFFFFF, roughness: 0.4, metalness: 0.0 },
+                cast_shadow: true,
+                receive_shadow: true,
+            });
+            project.scene.entities.push(entity);
+            Ok(())
+        }
+        AiOp::SetMaterial { entity, material } => {
+            let target = project
+                .scene
+                .entities
+                .iter_mut()
+                .find(|e| e.name == entity.as_str())
+                .ok_or_else(|| format!("entité introuvable : {entity}"))?;
+            let renderable = target
+                .renderable3d
+                .as_mut()
+                .ok_or_else(|| format!("l'entité {entity} n'a pas de rendu 3D"))?;
+            renderable.material = match material.as_str() {
+                "metal" => MaterialRef::Solid { color: 0x00C0C0C0, roughness: 0.2, metalness: 0.9 },
+                "glow" => MaterialRef::Solid { color: 0x00FFFFFF, roughness: 0.1, metalness: 0.0 },
+                other => return Err(format!("matériau inconnu : {other}")),
+            };
+            Ok(())
+        }
+        AiOp::SetCamera { position } => {
+            project.camera3d = Some(Camera3DData {
+                position: *position,
+                target: [0.0, 0.0, 0.0],
+            });
+            Ok(())
+        }
+        AiOp::AddLight { kind } => {
+            project.lights.push(Light3DData {
+                kind: kind.clone(),
+                position: [0.0, 0.0, 0.0],
+                color: 0x00FFFFFF,
+                intensity: 1.0,
+            });
+            Ok(())
+        }
+        AiOp::SetUiScreen { screen } => {
+            project.ui_screens.push(UiScreen {
+                id: format!("ui_{}", project.ui_screens.len()),
+                kind: parse_screen_kind(screen),
+                title: None,
+                elements: Vec::new(),
+            });
+            Ok(())
+        }
+        AiOp::SetSaveConfig { enabled } => {
+            project.save_config.enabled = *enabled;
+            Ok(())
+        }
+        AiOp::ExportTarget { format } => {
+            project.export_target = Some(match format.to_lowercase().as_str() {
+                "html" => ExportTargetKind::Html,
+                "package" | "json" => ExportTargetKind::Package,
+                "desktop" => ExportTargetKind::Desktop,
+                "wasm" => ExportTargetKind::Wasm,
+                other => return Err(format!("format d'export inconnu : {other}")),
+            });
+            Ok(())
+        }
         other => Err(format!("opération non encore supportée : {other:?}")),
+    }
+}
+
+fn parse_screen_kind(raw: &str) -> UiScreenKind {
+    match raw.to_lowercase().as_str() {
+        "menu" => UiScreenKind::Menu,
+        "pause" => UiScreenKind::Pause,
+        "game_over" | "gameover" => UiScreenKind::GameOver,
+        "victory" => UiScreenKind::Victory,
+        _ => UiScreenKind::Hud,
     }
 }
 
@@ -240,8 +330,8 @@ mod tests {
         let mut plan = sample_plan();
         plan.steps.push(AiPlanStep {
             id: "s4".into(),
-            op: AiOp::AddMesh { asset: "pillar".into() },
-            artifact: "mesh".into(),
+            op: AiOp::SetAudio { sound: "coin".into() },
+            artifact: "audio".into(),
             depends_on: vec!["s3".into()],
         });
         let result = apply_plan(&project, &plan);
@@ -252,7 +342,7 @@ mod tests {
     #[test]
     fn unsupported_op_is_an_error_not_a_silent_noop() {
         let mut project = KaractiProject::new_empty("Base", "auteur", GameGenre::Platformer);
-        let err = apply_op(&mut project, &AiOp::AddLight { kind: "point".into() });
+        let err = apply_op(&mut project, &AiOp::SetAudio { sound: "coin".into() });
         assert!(err.is_err());
     }
 
@@ -323,5 +413,28 @@ mod tests {
         project.scene.entities.clear();
         let err = apply_op(&mut project, &AiOp::SetEntityComponent { entity: "Inconnu".into(), component: "collider".into() });
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn subsystem_ops_set_project_fields() {
+        let mut project = KaractiProject::new_empty("Base", "auteur", GameGenre::Platformer);
+        project.scene.entities.clear();
+
+        apply_op(&mut project, &AiOp::SetCamera { position: [1.0, 2.0, 3.0] }).unwrap();
+        apply_op(&mut project, &AiOp::AddLight { kind: "point".into() }).unwrap();
+        apply_op(&mut project, &AiOp::SetSaveConfig { enabled: false }).unwrap();
+        apply_op(&mut project, &AiOp::ExportTarget { format: "html".into() }).unwrap();
+        apply_op(&mut project, &AiOp::AddLevel { name: "niveau_2".into() }).unwrap();
+        apply_op(&mut project, &AiOp::SetUiScreen { screen: "menu".into() }).unwrap();
+        apply_op(&mut project, &AiOp::AddMesh { asset: "pillar".into() }).unwrap();
+
+        assert_eq!(project.camera3d.as_ref().unwrap().position, [1.0, 2.0, 3.0]);
+        assert_eq!(project.lights.len(), 1);
+        assert!(!project.save_config.enabled);
+        assert_eq!(project.export_target, Some(crate::subsystems::ExportTargetKind::Html));
+        assert_eq!(project.levels, vec!["niveau_2".to_string()]);
+        assert_eq!(project.ui_screens.len(), 1);
+        assert_eq!(project.ui_screens[0].kind, crate::subsystems::UiScreenKind::Menu);
+        assert!(project.scene.entities[0].renderable3d.is_some());
     }
 }

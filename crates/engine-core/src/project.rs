@@ -64,6 +64,18 @@ pub struct KaractiProject {
     pub kvl_graphs: HashMap<String, kvl_core::Graph>,
     #[serde(default)]
     pub kvl_variables: HashMap<String, kvl_core::Value>,
+    #[serde(default)]
+    pub ui_screens: Vec<crate::subsystems::UiScreen>,
+    #[serde(default)]
+    pub save_config: crate::subsystems::SaveConfig,
+    #[serde(default)]
+    pub export_target: Option<crate::subsystems::ExportTargetKind>,
+    #[serde(default)]
+    pub camera3d: Option<crate::subsystems::Camera3DData>,
+    #[serde(default)]
+    pub lights: Vec<crate::subsystems::Light3DData>,
+    #[serde(default)]
+    pub levels: Vec<String>,
 }
 
 impl KaractiProject {
@@ -165,6 +177,12 @@ impl KaractiProject {
             scene,
             kvl_graphs,
             kvl_variables,
+            ui_screens: Vec::new(),
+            save_config: crate::subsystems::SaveConfig::default(),
+            export_target: None,
+            camera3d: None,
+            lights: Vec::new(),
+            levels: Vec::new(),
         }
     }
 
@@ -209,6 +227,12 @@ impl KaractiProject {
             scene,
             kvl_graphs,
             kvl_variables,
+            ui_screens: Vec::new(),
+            save_config: crate::subsystems::SaveConfig::default(),
+            export_target: None,
+            camera3d: None,
+            lights: Vec::new(),
+            levels: Vec::new(),
         }
     }
 

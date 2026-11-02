@@ -22,6 +22,7 @@ pub mod trace;
 pub mod vector;
 pub mod exporter;
 pub mod recipe;
+pub mod subsystems;
 pub mod ai_client;
 pub mod ai_dictionary;
 pub mod ai_executor;

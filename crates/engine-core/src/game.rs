@@ -1350,6 +1350,12 @@ impl GameState {
             scene,
             kvl_graphs: self.kvl_graphs.clone(),
             kvl_variables: kvl_vars,
+            ui_screens: Vec::new(),
+            save_config: crate::subsystems::SaveConfig::default(),
+            export_target: None,
+            camera3d: None,
+            lights: Vec::new(),
+            levels: Vec::new(),
         }
     }
 
