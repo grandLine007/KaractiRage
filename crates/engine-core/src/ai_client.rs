@@ -163,9 +163,9 @@ pub struct AiGeneratedGamePayload {
     pub terrain: Option<AiGeneratedTerrain>,
     #[serde(default)]
     pub gameplay_loop: Option<AiGeneratedGameplayLoop>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_vec_or_default")]
     pub entities: Vec<AiGeneratedEntity>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_vec_or_default")]
     pub kvl_actions: Vec<AiGeneratedKvlAction>,
     #[serde(default)]
     pub variables: Option<std::collections::HashMap<String, String>>,
@@ -176,9 +176,9 @@ pub struct AiGeneratedGamePayload {
 pub struct AiGeneratedTerrain {
     #[serde(default = "default_theme")]
     pub theme: String, // "dungeon", "cyber", "forest", "lava_cave", "castle"
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_vec_or_default")]
     pub platforms: Vec<AiGeneratedPlatform>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_vec_or_default")]
     pub hazards: Vec<AiGeneratedHazard>,
 }
 
@@ -217,11 +217,11 @@ pub struct AiGeneratedHazard {
 /// Boucle de gameplay complète (Objectif, Condition de Victoire, Défaite)
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedGameplayLoop {
-    #[serde(default = "default_objective")]
+    #[serde(default = "default_objective", deserialize_with = "de_objective_or_default")]
     pub objective: String,
-    #[serde(default = "default_win_condition")]
+    #[serde(default = "default_win_condition", deserialize_with = "de_win_condition_or_default")]
     pub win_condition: String, // "CollectAllKeysThenExit", "DefeatBoss", "ReachGoal"
-    #[serde(default = "default_lose_condition")]
+    #[serde(default = "default_lose_condition", deserialize_with = "de_lose_condition_or_default")]
     pub lose_condition: String, // "PlayerHealthZero"
     #[serde(default)]
     pub target_item_name: Option<String>,
@@ -237,6 +237,37 @@ fn default_hazard_damage() -> f32 { 35.0 }
 fn default_objective() -> String { "Explorer et triompher de l'épreuve".to_string() }
 fn default_win_condition() -> String { "CollectAllKeysThenExit".to_string() }
 fn default_lose_condition() -> String { "PlayerHealthZero".to_string() }
+
+/// Tolère `null` (fréquent chez les petits LLM) en retombant sur la valeur par défaut.
+fn de_objective_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_else(default_objective))
+}
+
+fn de_win_condition_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_else(default_win_condition))
+}
+
+fn de_lose_condition_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_else(default_lose_condition))
+}
+
+/// Tolère `null` pour les tableaux (`entities`, `kvl_actions`, `platforms`, `hazards`).
+fn de_vec_or_default<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedEntity {
@@ -328,19 +359,20 @@ pub fn get_karactirage_system_prompt() -> String {
 /// Prompt système haute densité et ultra-rapide optimisé pour les modèles locaux (LM Studio, Ollama)
 pub fn get_karactirage_compact_system_prompt() -> String {
     r##"You are the Lead Game Architect & Technical Artist for KaractiRage 2D engine.
-CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdown, no ```json codeblocks) conforming strictly to this schema:
+CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdown, no ```json codeblocks) conforming strictly to this schema. NEVER output null for any string field — always use the default string values shown in the example.
 {
   "title": "Level Title",
   "description": "Short narrative description",
   "primary_genre": "Platformer",
   "terrain": {
+    "theme": "dungeon",
     "platforms": [{"x": -200, "y": -100, "width": 400, "height": 24, "color_hex": "#334155"}],
     "hazards": [{"x": 0, "y": -150, "width": 60, "height": 20, "kind": "lava", "color_hex": "#EF4444"}]
   },
   "gameplay_loop": {
     "objective": "Mission objective text",
     "win_condition": "DefeatBoss",
-    "loss_condition": "PlayerHealthZero"
+    "lose_condition": "PlayerHealthZero"
   },
   "entities": [
     {
@@ -380,14 +412,15 @@ CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdo
       "action": "PlaySound:victory_bell",
       "target_entity": "Boss_Demon"
     }
-  ]
+  ],
+  "variables": { "score": "0", "objective": "Mission objective text" }
 }
 
 Available sprite_archetype values: "ninja", "knight", "drone", "slime", "skull", "boss", "chest", "key", "potion", "portal", "coin", "spikes".
 Available sprite_asset values (pixel-art pxl prégénéré): "coin", "potion", "key", "chest", "door", "platform", "spikes", "crate", "plate", "boss", "wall". Use "sprite_frame" (ex: "coin") with "sprite_asset":"chars" to pick a frame from the atlas.
 Available movement values: "patrol", "chase", "none".
 Available win_condition values: "DefeatBoss", "CollectAllKeysThenExit", "SurviveTimer".
-Available loss_condition values: "PlayerHealthZero", "TimeOut".
+Available lose_condition values: "PlayerHealthZero", "TimeOut".
 Output raw JSON only."##.to_string()
 }
 
@@ -994,7 +1027,7 @@ Good luck!
     #[test]
     fn test_compact_prompt_has_no_ghost_values() {
         let prompt = get_karactirage_compact_system_prompt();
-        for ghost in ["OnEntityDefeated", "WinGame", "\"jump\"", "SetObjective"] {
+        for ghost in ["OnEntityDefeated", "WinGame", "\"jump\"", "SetObjective", "loss_condition"] {
             assert!(
                 !prompt.contains(ghost),
                 "valeur fantôme encore dans le prompt compact : {ghost}"
@@ -1003,6 +1036,31 @@ Good luck!
         assert!(prompt.contains("PlayerHealthZero"));
         assert!(prompt.contains("OnBossDefeated"));
         assert!(prompt.contains("PlaySound:victory_bell"));
+        // Le champ du schéma est bien `lose_condition` (et l'exemple inclut `variables`).
+        assert!(prompt.contains("lose_condition"));
+        assert!(prompt.contains("\"variables\""));
+    }
+
+    #[test]
+    fn parse_llm_json_response_tolerates_null_gameplay_loop_fields() {
+        // Un petit LLM émet souvent `null` au lieu des valeurs par défaut : on ne doit
+        // pas échouer, mais retomber sur les défauts (objective/win/lose).
+        let raw = r#"{
+            "title": "Wanderer",
+            "description": "A simple 2D platform.",
+            "gameplay_loop": {
+                "objective": null,
+                "win_condition": null,
+                "lose_condition": null
+            },
+            "entities": [],
+            "kvl_actions": []
+        }"#;
+        let parsed = AiClient::parse_llm_json_response(raw).expect("parsing tolérant au null");
+        let loop_spec = parsed.gameplay_loop.expect("gameplay_loop présent");
+        assert_eq!(loop_spec.objective, "Explorer et triompher de l'épreuve");
+        assert_eq!(loop_spec.win_condition, "CollectAllKeysThenExit");
+        assert_eq!(loop_spec.lose_condition, "PlayerHealthZero");
     }
 
     #[test]
