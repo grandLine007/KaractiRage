@@ -341,6 +341,91 @@ fn default_zero() -> f32 { 0.0 }
 fn default_size() -> f32 { 32.0 }
 fn default_health() -> f32 { 3.0 }
 
+/// Plateforme minimale construite à partir d'un simple nom (réparation LLM).
+fn platform_from_name(name: &str) -> serde_json::Value {
+    serde_json::json!({ "name": name, "width": 400.0, "height": 24.0, "is_solid": true })
+}
+
+/// Piège minimal construit à partir d'un simple nom (réparation LLM).
+fn hazard_from_name(name: &str) -> serde_json::Value {
+    serde_json::json!({ "name": name, "width": 60.0, "height": 20.0, "damage": 35.0 })
+}
+
+/// Entité minimale construite à partir d'un simple nom (réparation LLM).
+fn entity_from_name(name: &str, index: usize) -> serde_json::Value {
+    let kind = if index == 0 { "player" } else { "item" };
+    serde_json::json!({ "name": name, "kind": kind })
+}
+
+/// Remplace un tableau de chaînes par un tableau d'objets (si au moins une chaîne).
+fn strings_to_objects(list: &mut serde_json::Value, build: impl Fn(&str) -> serde_json::Value) {
+    let Some(arr) = list.as_array() else { return };
+    let rebuilt: Vec<serde_json::Value> = arr
+        .iter()
+        .filter_map(|v| v.as_str())
+        .map(build)
+        .collect();
+    if !rebuilt.is_empty() {
+        *list = serde_json::Value::Array(rebuilt);
+    }
+}
+
+/// Répare les écarts de forme fréquents des petits LLM avant la désérialisation :
+/// - `terrain` en tableau de chaînes → objet `{ platforms, hazards }` ;
+/// - `platforms` / `hazards` en tableau de chaînes → tableau d'objets ;
+/// - `entities` en tableau de chaînes → tableau d'objets ;
+/// - `variables` en tableau `{name, type}` (ou de chaînes) → objet `{ name: "0" }`.
+pub fn repair_llm_payload(value: &mut serde_json::Value) {
+    let Some(root) = value.as_object_mut() else { return };
+
+    if let Some(terrain) = root.get_mut("terrain") {
+        if let Some(arr) = terrain.as_array() {
+            let platforms: Vec<serde_json::Value> = arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(platform_from_name)
+                .collect();
+            *terrain = serde_json::json!({ "platforms": platforms, "hazards": [] });
+        } else if let Some(t) = terrain.as_object_mut() {
+            if let Some(platforms) = t.get_mut("platforms") {
+                strings_to_objects(platforms, platform_from_name);
+            }
+            if let Some(hazards) = t.get_mut("hazards") {
+                strings_to_objects(hazards, hazard_from_name);
+            }
+        }
+    }
+
+    if let Some(entities) = root.get_mut("entities") {
+        if let Some(arr) = entities.as_array() {
+            let rebuilt: Vec<serde_json::Value> = arr
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| v.as_str().map(|name| entity_from_name(name, i)))
+                .collect();
+            if !rebuilt.is_empty() {
+                *entities = serde_json::Value::Array(rebuilt);
+            }
+        }
+    }
+
+    if let Some(variables) = root.get_mut("variables") {
+        if let Some(arr) = variables.as_array() {
+            let mut map = serde_json::Map::new();
+            for item in arr {
+                if let Some(name) = item.as_str() {
+                    map.insert(name.to_string(), serde_json::Value::String("0".into()));
+                } else if let Some(name) = item.get("name").and_then(|n| n.as_str()) {
+                    map.insert(name.to_string(), serde_json::Value::String("0".into()));
+                }
+            }
+            if !map.is_empty() {
+                *variables = serde_json::Value::Object(map);
+            }
+        }
+    }
+}
+
 /// Spécification de référence universelle KaractiRage intégrée à la compilation
 pub const KARACTI_AI_SPECIFICATION_EMBEDDED: &str = include_str!("../../../KARACTI_AI_SPEC.md");
 
@@ -714,7 +799,8 @@ impl AiClient {
         Ok(content.to_string())
     }
 
-    /// Nettoie les balises markdown (```json ... ```) et extrait le JSON valide
+    /// Nettoie les balises markdown (```json ... ```), répare les écarts de forme
+    /// des petits LLM, puis désérialise le payload.
     pub fn parse_llm_json_response(raw: &str) -> Result<AiGeneratedGamePayload, String> {
         let trimmed = raw.trim();
         let json_str = if let Some(start) = trimmed.find('{') {
@@ -727,7 +813,10 @@ impl AiClient {
             trimmed
         };
 
-        serde_json::from_str::<AiGeneratedGamePayload>(json_str)
+        let mut value: serde_json::Value = serde_json::from_str(json_str)
+            .map_err(|e| format!("JSON du modèle syntaxiquement invalide : {} (Extrait: '{}')", e, json_str))?;
+        repair_llm_payload(&mut value);
+        serde_json::from_value::<AiGeneratedGamePayload>(value)
             .map_err(|e| format!("Échec de parsing JSON du modèle : {} (Extrait: '{}')", e, json_str))
     }
 
@@ -1061,6 +1150,35 @@ Good luck!
         assert_eq!(loop_spec.objective, "Explorer et triompher de l'épreuve");
         assert_eq!(loop_spec.win_condition, "CollectAllKeysThenExit");
         assert_eq!(loop_spec.lose_condition, "PlayerHealthZero");
+    }
+
+    #[test]
+    fn parse_llm_json_response_repairs_string_arrays_and_variables() {
+        // Formes approximatives fréquentes : `platforms: ["grass"]`,
+        // `entities: ["Player", …]`, `variables: [{"name","type"}]`.
+        let raw = r#"{
+            "title": "Garden of Whispers",
+            "description": "Explore a lush garden.",
+            "terrain": { "platforms": ["grass", "stone"], "hazards": [] },
+            "entities": ["Player", "Flower", "Base"],
+            "variables": [ { "name": "collected_flowers", "type": "int" }, { "name": "score", "type": "int" } ],
+            "kvl_actions": []
+        }"#;
+        let parsed = AiClient::parse_llm_json_response(raw).expect("parsing avec réparation");
+
+        let terrain = parsed.terrain.expect("terrain présent");
+        assert_eq!(terrain.platforms.len(), 2);
+        assert_eq!(terrain.platforms[0].name, "grass");
+        assert_eq!(terrain.platforms[0].width, 400.0);
+
+        assert_eq!(parsed.entities.len(), 3);
+        assert_eq!(parsed.entities[0].name, "Player");
+        assert_eq!(parsed.entities[0].kind, "player");
+        assert_eq!(parsed.entities[1].kind, "item");
+
+        let vars = parsed.variables.expect("variables réparées");
+        assert_eq!(vars.get("collected_flowers").map(String::as_str), Some("0"));
+        assert_eq!(vars.len(), 2);
     }
 
     #[test]
