@@ -232,11 +232,13 @@ pub struct GameState {
     /// Seule source de vérité : les variables KVL `menu_active`/`paused`/`game_won`
     /// en sont le miroir en sortie, jamais l'entrée.
     pub screen: crate::screens::GameScreen,
-    /// Scènes enchaînées du projet, dans l'ordre de jeu.
+    /// Niveaux embarqués du projet, dans l'ordre de jeu (niveau 1 = `scenes[0]`).
     ///
-    /// Alimentées par `KaractiProject::levels` ; `next_level` passe à la suivante en
-    /// conservant variables et inventaire.
-    pub levels: Vec<String>,
+    /// Alimentés par `KaractiProject::scenes` : aucun chemin de fichier, donc un projet
+    /// reste auto-porteur à l'export.
+    pub levels: Vec<crate::scene::SceneData>,
+    /// Index du niveau courant dans [`Self::levels`].
+    pub level_index: usize,
     /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
     pub camera3d: Option<crate::subsystems::Camera3DData>,
     /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
@@ -931,6 +933,18 @@ impl GameState {
             }
         };
 
+        Self::from_scene_data(scene_data, path)
+    }
+
+    /// Construit un état de jeu à partir d'une scène **en mémoire**.
+    ///
+    /// Utilisé par les niveaux embarqués d'un projet (`KaractiProject::scenes`) : aucune
+    /// lecture disque. `scene_path` ne sert qu'à la traçabilité et à la résolution des
+    /// scripts KVL référencés par les entités.
+    pub fn from_scene_data(
+        scene_data: SceneData,
+        scene_path: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut entities = scene_data.to_entities();
 
         // Résolution des sprites vectoriels SVG référencés par les entités
@@ -1104,7 +1118,7 @@ impl GameState {
         }
 
         let mut state = Self {
-            scene_path: path.to_string(),
+            scene_path: scene_path.to_string(),
             scene_name: scene_data.name,
             scene_objective,
             entities,
@@ -1129,6 +1143,7 @@ impl GameState {
             ui_screens: Vec::new(),
             screen: crate::screens::GameScreen::Playing,
             levels: Vec::new(),
+            level_index: 0,
             camera3d: None,
             lights: Vec::new(),
             save_config: crate::subsystems::SaveConfig::default(),
@@ -1223,12 +1238,18 @@ impl GameState {
     }
 
     pub fn reload(&mut self) {
-        // Les écrans data-driven viennent du projet, pas de la scène : on les conserve.
+        // Les écrans et les niveaux viennent du projet, pas de la scène : on les conserve.
         let screens = self.ui_screens.clone();
         let levels = self.levels.clone();
-        if let Ok(mut new_state) = Self::load_from_scene(&self.scene_path) {
+        let index = self.level_index;
+        let rebuilt = match levels.get(index) {
+            Some(scene) => Self::from_scene_data(scene.clone(), &format!("projet:niveau_{}", index + 1)),
+            None => Self::load_from_scene(&self.scene_path),
+        };
+        if let Ok(mut new_state) = rebuilt {
             new_state.ui_screens = screens;
             new_state.levels = levels;
+            new_state.level_index = index;
             new_state.screen = crate::screens::GameScreen::initial(
                 new_state.ui_screens.iter().any(|s| s.kind == crate::subsystems::UiScreenKind::Menu),
                 new_state.kvl_context.get_var("menu_active") == Some(&Value::Bool(true)),
@@ -1245,19 +1266,8 @@ impl GameState {
     /// Renvoie `false` s'il n'y a pas de niveau suivant (dernier niveau, ou projet
     /// mono-scène) : l'appelant décide alors de la victoire.
     pub fn next_level(&mut self) -> bool {
-        let current = self
-            .levels
-            .iter()
-            .position(|path| path == &self.scene_path)
-            .or_else(|| {
-                self.levels.iter().position(|path| {
-                    self.scene_path.ends_with(path.as_str()) || path.ends_with(&self.scene_path)
-                })
-            });
-        let Some(index) = current else {
-            return false;
-        };
-        let Some(next_path) = self.levels.get(index + 1).cloned() else {
+        let next_index = self.level_index + 1;
+        let Some(scene) = self.levels.get(next_index).cloned() else {
             return false;
         };
 
@@ -1265,18 +1275,19 @@ impl GameState {
         let screens = self.ui_screens.clone();
         let levels = self.levels.clone();
         let inventory = self.inventory.clone();
-        let Ok(mut fresh) = Self::load_from_scene(&next_path) else {
+        let Ok(mut fresh) = Self::from_scene_data(scene, &format!("projet:niveau_{}", next_index + 1))
+        else {
             return false;
         };
         fresh.kvl_context = context;
         fresh.ui_screens = screens;
         fresh.levels = levels;
+        fresh.level_index = next_index;
         fresh.inventory = inventory;
         fresh.screen = crate::screens::GameScreen::Playing;
         fresh.editor.mode = EditorMode::Play;
         *self = fresh;
-        let total = self.levels.len();
-        self.set_status(format!("Niveau {} / {}", index + 2, total));
+        self.set_status(format!("Niveau {} / {}", next_index + 1, self.levels.len()));
         true
     }
 
@@ -1335,14 +1346,27 @@ impl GameState {
     }
 
     /// Charge un projet KaractiProject complet dans le moteur de jeu
-    pub fn load_project(&mut self, project: crate::project::KaractiProject) {
-        self.scene_name = project.metadata.title;
+    pub fn load_project(&mut self, mut project: crate::project::KaractiProject) {
+        // Niveaux embarqués : niveau 1 = `scenes[0]` (normalisé si le JSON est ancien).
+        let mut scenes = std::mem::take(&mut project.scenes);
+        if scenes.is_empty() {
+            scenes.push(project.scene.clone());
+        }
+        // Le nom affiché est celui du niveau 1 ; le titre du projet reste dans les
+        // métadonnées (et dans le Hub).
+        let level_name = project.scene.name.clone();
+        self.scene_name = if level_name.is_empty() {
+            project.metadata.title
+        } else {
+            level_name
+        };
         self.scene_objective = project.scene.objective;
         self.entities = project.scene.entities;
         self.kvl_graphs = project.kvl_graphs;
         self.kvl_context = ExecutionContext::new();
         self.ui_screens = project.ui_screens;
-        self.levels = project.levels;
+        self.levels = scenes;
+        self.level_index = 0;
         self.camera3d = project.camera3d;
         self.lights = project.lights;
         self.save_config = project.save_config;
@@ -1434,12 +1458,24 @@ impl GameState {
             kvl_vars.insert("score".to_string(), s.clone());
         }
 
+        // Niveaux embarqués : le niveau courant reflète l'état runtime, les autres sont
+        // conservés tels quels (l'export reste auto-porteur, sans chemin de fichier).
+        let mut scenes = self.levels.clone();
+        if scenes.is_empty() {
+            scenes.push(scene.clone());
+        } else {
+            let index = self.level_index.min(scenes.len() - 1);
+            scenes[index] = scene.clone();
+        }
+        let level_names: Vec<String> = (1..=scenes.len()).map(|index| format!("niveau_{index}")).collect();
+
         crate::project::KaractiProject {
             schema_version: crate::project::PROJECT_SCHEMA_VERSION,
             metadata,
             settings,
             recipe: None,
             scene,
+            scenes,
             kvl_graphs: self.kvl_graphs.clone(),
             kvl_variables: kvl_vars,
             ui_screens: self.ui_screens.clone(),
@@ -1447,7 +1483,7 @@ impl GameState {
             export_target: None,
             camera3d: self.camera3d.clone(),
             lights: self.lights.clone(),
-            levels: Vec::new(),
+            levels: level_names,
         }
     }
 
@@ -1886,12 +1922,16 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
     /// les écrans déclarés du projet sont conservés (ils vivent dans le projet, pas
     /// dans la scène).
     pub fn start_game(&mut self) {
-        let scene_path = self.scene_path.clone();
         let screens = self.ui_screens.clone();
         let levels = self.levels.clone();
-        if let Ok(mut fresh) = Self::load_from_scene(&scene_path) {
+        let rebuilt = match levels.first() {
+            Some(first) => Self::from_scene_data(first.clone(), "projet:niveau_1"),
+            None => Self::load_from_scene(&self.scene_path),
+        };
+        if let Ok(mut fresh) = rebuilt {
             fresh.ui_screens = screens;
             fresh.levels = levels;
+            fresh.level_index = 0;
             fresh.editor.mode = EditorMode::Play;
             *self = fresh;
         }
@@ -11859,25 +11899,29 @@ mod tests {
         assert_eq!(state.screen, GameScreen::Menu);
     }
 
+    /// Scène embarquée de test, renommée pour identifier le niveau.
+    fn level_scene(name: &str) -> crate::scene::SceneData {
+        let mut scene = crate::scene::SceneData::from_json_str(include_str!(
+            "../../../assets/scenes/level_01.scene.json"
+        ))
+        .expect("scène de test lisible");
+        scene.name = name.to_string();
+        scene
+    }
+
     #[test]
     fn level_complete_advances_and_keeps_progress() {
         use crate::screens::GameScreen;
         let mut state = state_with_screens();
-        state.levels = vec![
-            "assets/scenes/level_01.scene.json".to_string(),
-            "assets/scenes/platformer_01.scene.json".to_string(),
-        ];
-        state.scene_path = state.levels[0].clone();
+        state.levels = vec![level_scene("NIVEAU 1"), level_scene("NIVEAU 2")];
+        state.level_index = 0;
         state.kvl_context.set_var("score", Value::Int(42));
 
         state.kvl_context.set_var("level_complete", Value::Int(1));
         step(&mut state, &mut InputState::new(), 1);
 
-        assert!(
-            state.scene_path.contains("platformer_01"),
-            "niveau suivant attendu, obtenu {}",
-            state.scene_path
-        );
+        assert_eq!(state.level_index, 1, "le niveau 2 est chargé");
+        assert_eq!(state.scene_name, "NIVEAU 2", "la scène embarquée est instanciée");
         assert_eq!(
             state.kvl_context.get_var("score"),
             Some(&Value::Int(42)),
@@ -11896,8 +11940,8 @@ mod tests {
     fn level_complete_on_the_last_level_shows_victory() {
         use crate::screens::GameScreen;
         let mut state = state_with_screens();
-        state.levels = vec!["assets/scenes/level_01.scene.json".to_string()];
-        state.scene_path = state.levels[0].clone();
+        state.levels = vec![level_scene("NIVEAU UNIQUE")];
+        state.level_index = 0;
 
         state.kvl_context.set_var("level_complete", Value::Int(1));
         step(&mut state, &mut InputState::new(), 1);
@@ -11909,6 +11953,74 @@ mod tests {
     fn next_level_without_declared_levels_returns_false() {
         let mut state = state_with_screens();
         assert!(!state.next_level(), "aucun niveau déclaré → pas de passage");
+    }
+
+    #[test]
+    fn legacy_project_without_scenes_is_normalized() {
+        let project = crate::project::KaractiProject::new_empty("Héritage", "auteur", crate::recipe::GameGenre::Platformer);
+        let mut value: serde_json::Value = serde_json::to_value(&project).expect("projet sérialisable");
+        // Simule un projet écrit avant l'ajout de `scenes`.
+        value.as_object_mut().expect("objet").remove("scenes");
+        let legacy = serde_json::to_string(&value).expect("json");
+
+        let loaded = crate::project::KaractiProject::from_json(&legacy).expect("projet relu");
+        assert_eq!(loaded.scenes.len(), 1, "un projet mono-scène est normalisé");
+        assert_eq!(loaded.scenes[0].name, loaded.scene.name);
+        assert_eq!(loaded.level_count(), 1);
+    }
+
+    #[test]
+    fn project_scenes_roundtrip_preserves_levels() {
+        let mut project = crate::project::KaractiProject::new_empty("Niveaux", "auteur", crate::recipe::GameGenre::Platformer);
+        project.scenes = vec![level_scene("NIVEAU A"), level_scene("NIVEAU B"), level_scene("NIVEAU C")];
+        project.scene = project.scenes[0].clone();
+        let json = project.to_json().expect("sérialisation");
+        let loaded = crate::project::KaractiProject::from_json(&json).expect("relecture");
+
+        assert_eq!(loaded.level_count(), 3);
+        assert_eq!(loaded.scenes[1].name, "NIVEAU B");
+        assert_eq!(loaded.scenes[2].name, "NIVEAU C");
+    }
+
+    #[test]
+    fn load_project_starts_on_the_first_embedded_level() {
+        let mut project = crate::project::KaractiProject::new_empty("Niveaux", "auteur", crate::recipe::GameGenre::Platformer);
+        project.scenes = vec![level_scene("PREMIER"), level_scene("SECOND")];
+        project.scene = project.scenes[0].clone();
+
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
+        state.load_project(project);
+
+        assert_eq!(state.scene_name, "PREMIER", "le niveau 1 est instancié");
+        assert_eq!(state.level_index, 0);
+        assert_eq!(state.levels.len(), 2);
+    }
+
+    #[test]
+    fn export_current_project_keeps_all_levels_and_the_current_edit() {
+        let mut state = state_with_screens();
+        state.levels = vec![level_scene("NIVEAU 1"), level_scene("NIVEAU 2")];
+        state.level_index = 1;
+        state.scene_name = "NIVEAU 2 EDITE".to_string();
+
+        let project = state.export_current_project();
+        assert_eq!(project.scenes.len(), 2, "l'export embarque tous les niveaux");
+        assert_eq!(project.scenes[1].name, "NIVEAU 2 EDITE", "le niveau courant reflète l'état");
+        assert_eq!(project.scenes[0].name, "NIVEAU 1", "les autres niveaux sont intacts");
+        assert_eq!(project.levels.len(), 2, "les noms de niveaux sont renseignés");
+    }
+
+    #[test]
+    fn start_game_returns_to_the_first_level() {
+        let mut state = state_with_screens();
+        state.levels = vec![level_scene("NIVEAU 1"), level_scene("NIVEAU 2")];
+        state.level_index = 1;
+        state.scene_name = "NIVEAU 2".to_string();
+
+        state.start_game();
+
+        assert_eq!(state.level_index, 0, "une nouvelle partie repart du niveau 1");
+        assert_eq!(state.scene_name, "NIVEAU 1");
     }
 
     #[test]

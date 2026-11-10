@@ -61,6 +61,12 @@ pub struct KaractiProject {
     pub settings: ProjectSettings,
     pub recipe: Option<KaractiGameRecipe>,
     pub scene: SceneData,
+    /// Niveaux embarqués du jeu, dans l'ordre de jeu.
+    ///
+    /// `scenes[0]` reflète toujours `scene` (compatibilité des projets mono-scène).
+    /// Un projet exporté reste ainsi **auto-porteur** : aucun chemin de fichier externe.
+    #[serde(default)]
+    pub scenes: Vec<SceneData>,
     pub kvl_graphs: HashMap<String, kvl_core::Graph>,
     #[serde(default)]
     pub kvl_variables: HashMap<String, kvl_core::Value>,
@@ -174,6 +180,7 @@ impl KaractiProject {
             metadata,
             settings,
             recipe: None,
+            scenes: vec![scene.clone()],
             scene,
             kvl_graphs,
             kvl_variables,
@@ -224,6 +231,7 @@ impl KaractiProject {
             metadata,
             settings,
             recipe: Some(recipe),
+            scenes: vec![scene.clone()],
             scene,
             kvl_graphs,
             kvl_variables,
@@ -265,9 +273,31 @@ impl KaractiProject {
         serde_json::to_string_pretty(self)
     }
 
-    /// Désérialise un projet depuis une chaîne JSON
+    /// Désérialise un projet depuis une chaîne JSON.
+    ///
+    /// Les projets antérieurs à `scenes` (mono-scène) sont normalisés à la lecture :
+    /// `scenes` reçoit alors le niveau `scene`.
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+        let mut project: Self = serde_json::from_str(json)?;
+        project.normalize_levels();
+        Ok(project)
+    }
+
+    /// Garantit la cohérence entre `scene` et `scenes`.
+    ///
+    /// - `scenes` vide → il reçoit `scene` (projet mono-scène) ;
+    /// - sinon `scenes[0]` reflète `scene`, qui reste le niveau courant éditable.
+    pub fn normalize_levels(&mut self) {
+        if self.scenes.is_empty() {
+            self.scenes.push(self.scene.clone());
+        } else {
+            self.scenes[0] = self.scene.clone();
+        }
+    }
+
+    /// Nombre de niveaux du projet (au moins 1).
+    pub fn level_count(&self) -> usize {
+        self.scenes.len().max(1)
     }
 
     /// Sauvegarde le projet complet dans un fichier `.karacti`
