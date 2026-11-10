@@ -52,6 +52,14 @@ Un jeu qui possède **les six briques suivantes**, chacune vérifiable :
 - [ ] Réglages persistants (volume, mute) séparés de la sauvegarde de partie.
 
 ### P1.3 — Jeu de référence L3
+
+> **Avancement (10/11/2026)** : l'**enchaînement de niveaux** existe
+> (`GameState::levels` + `next_level` + `level_complete` consommé par la machine à
+> états, 3 tests). Blocage de conception à trancher avant d'écrire le contenu :
+> `KaractiProject` n'embarque qu'**une** scène (`scene`), alors que `levels` ne contient
+> que des noms. Deux options : `scenes: Vec<SceneData>` dans le projet (auto-porteur à
+> l'export) ou `levels` = chemins de fichiers de scène (plus léger, dépend du disque).
+
 - [ ] Un jeu de démonstration **livré avec le Studio** : 3 scènes, un objectif par scène,
       un boss final, une condition de défaite.
 - [ ] Construit **uniquement** avec les outils du Studio et les ops IA (aucun contenu

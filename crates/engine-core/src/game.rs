@@ -232,6 +232,11 @@ pub struct GameState {
     /// Seule source de vérité : les variables KVL `menu_active`/`paused`/`game_won`
     /// en sont le miroir en sortie, jamais l'entrée.
     pub screen: crate::screens::GameScreen,
+    /// Scènes enchaînées du projet, dans l'ordre de jeu.
+    ///
+    /// Alimentées par `KaractiProject::levels` ; `next_level` passe à la suivante en
+    /// conservant variables et inventaire.
+    pub levels: Vec<String>,
     /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
     pub camera3d: Option<crate::subsystems::Camera3DData>,
     /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
@@ -1123,6 +1128,7 @@ impl GameState {
             quest,
             ui_screens: Vec::new(),
             screen: crate::screens::GameScreen::Playing,
+            levels: Vec::new(),
             camera3d: None,
             lights: Vec::new(),
             save_config: crate::subsystems::SaveConfig::default(),
@@ -1219,8 +1225,10 @@ impl GameState {
     pub fn reload(&mut self) {
         // Les écrans data-driven viennent du projet, pas de la scène : on les conserve.
         let screens = self.ui_screens.clone();
+        let levels = self.levels.clone();
         if let Ok(mut new_state) = Self::load_from_scene(&self.scene_path) {
             new_state.ui_screens = screens;
+            new_state.levels = levels;
             new_state.screen = crate::screens::GameScreen::initial(
                 new_state.ui_screens.iter().any(|s| s.kind == crate::subsystems::UiScreenKind::Menu),
                 new_state.kvl_context.get_var("menu_active") == Some(&Value::Bool(true)),
@@ -1230,6 +1238,46 @@ impl GameState {
         } else {
             self.status_message = "Erreur de rechargement JSON.".into();
         }
+    }
+
+    /// Passe à la scène suivante du projet, en conservant variables et inventaire.
+    ///
+    /// Renvoie `false` s'il n'y a pas de niveau suivant (dernier niveau, ou projet
+    /// mono-scène) : l'appelant décide alors de la victoire.
+    pub fn next_level(&mut self) -> bool {
+        let current = self
+            .levels
+            .iter()
+            .position(|path| path == &self.scene_path)
+            .or_else(|| {
+                self.levels.iter().position(|path| {
+                    self.scene_path.ends_with(path.as_str()) || path.ends_with(&self.scene_path)
+                })
+            });
+        let Some(index) = current else {
+            return false;
+        };
+        let Some(next_path) = self.levels.get(index + 1).cloned() else {
+            return false;
+        };
+
+        let context = self.kvl_context.clone();
+        let screens = self.ui_screens.clone();
+        let levels = self.levels.clone();
+        let inventory = self.inventory.clone();
+        let Ok(mut fresh) = Self::load_from_scene(&next_path) else {
+            return false;
+        };
+        fresh.kvl_context = context;
+        fresh.ui_screens = screens;
+        fresh.levels = levels;
+        fresh.inventory = inventory;
+        fresh.screen = crate::screens::GameScreen::Playing;
+        fresh.editor.mode = EditorMode::Play;
+        *self = fresh;
+        let total = self.levels.len();
+        self.set_status(format!("Niveau {} / {}", index + 2, total));
+        true
     }
 
     pub fn cycle_scene_forward(&mut self) {
@@ -1294,6 +1342,7 @@ impl GameState {
         self.kvl_graphs = project.kvl_graphs;
         self.kvl_context = ExecutionContext::new();
         self.ui_screens = project.ui_screens;
+        self.levels = project.levels;
         self.camera3d = project.camera3d;
         self.lights = project.lights;
         self.save_config = project.save_config;
@@ -1839,8 +1888,10 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
     pub fn start_game(&mut self) {
         let scene_path = self.scene_path.clone();
         let screens = self.ui_screens.clone();
+        let levels = self.levels.clone();
         if let Ok(mut fresh) = Self::load_from_scene(&scene_path) {
             fresh.ui_screens = screens;
+            fresh.levels = levels;
             fresh.editor.mode = EditorMode::Play;
             *self = fresh;
         }
@@ -1912,6 +1963,26 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             self.sync_screen_variables();
             self.audio.play(SoundType::QuestSuccess);
             self.set_status("Victoire");
+            return;
+        }
+
+        // Passage de niveau : `level_complete` (posé par `SetVar:level_complete:1`).
+        // Sur le dernier niveau — ou dans un projet mono-scène — c'est une victoire.
+        let level_done = matches!(
+            self.kvl_context.get_var("level_complete"),
+            Some(Value::Int(value)) if *value != 0
+        ) || self.kvl_context.get_var("level_complete") == Some(&Value::Bool(true));
+        if level_done {
+            self.kvl_context.set_var("level_complete", Value::Int(0));
+            if self.next_level() {
+                return;
+            }
+            if self.has_screen(UiScreenKind::Victory) {
+                self.screen = GameScreen::Victory;
+                self.sync_screen_variables();
+                self.audio.play(SoundType::QuestSuccess);
+                self.set_status("Dernier niveau terminé : victoire");
+            }
         }
     }
 
@@ -11786,6 +11857,58 @@ mod tests {
         back.on_key_down(KeyCode::Enter);
         step(&mut state, &mut back, 1);
         assert_eq!(state.screen, GameScreen::Menu);
+    }
+
+    #[test]
+    fn level_complete_advances_and_keeps_progress() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.levels = vec![
+            "assets/scenes/level_01.scene.json".to_string(),
+            "assets/scenes/platformer_01.scene.json".to_string(),
+        ];
+        state.scene_path = state.levels[0].clone();
+        state.kvl_context.set_var("score", Value::Int(42));
+
+        state.kvl_context.set_var("level_complete", Value::Int(1));
+        step(&mut state, &mut InputState::new(), 1);
+
+        assert!(
+            state.scene_path.contains("platformer_01"),
+            "niveau suivant attendu, obtenu {}",
+            state.scene_path
+        );
+        assert_eq!(
+            state.kvl_context.get_var("score"),
+            Some(&Value::Int(42)),
+            "le score traverse le passage de niveau"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("level_complete"),
+            Some(&Value::Int(0)),
+            "le drapeau est consommé (pas de double passage)"
+        );
+        assert_eq!(state.screen, GameScreen::Playing);
+        assert_eq!(state.ui_screens.len(), 4, "les écrans du projet survivent");
+    }
+
+    #[test]
+    fn level_complete_on_the_last_level_shows_victory() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.levels = vec!["assets/scenes/level_01.scene.json".to_string()];
+        state.scene_path = state.levels[0].clone();
+
+        state.kvl_context.set_var("level_complete", Value::Int(1));
+        step(&mut state, &mut InputState::new(), 1);
+
+        assert_eq!(state.screen, GameScreen::Victory);
+    }
+
+    #[test]
+    fn next_level_without_declared_levels_returns_false() {
+        let mut state = state_with_screens();
+        assert!(!state.next_level(), "aucun niveau déclaré → pas de passage");
     }
 
     #[test]
