@@ -1,0 +1,126 @@
+name: CI
+
+# Gates minimales de la branche : moteur Rust, dictionnaire IA, Studio TypeScript,
+# backend Tauri. L'audit visuel (`npm run audit:ui --strict`) reste une gate LOCALE :
+# son rendu de polices dépend de la plateforme et ferait échouer la CI pour rien.
+
+on:
+  push:
+    branches:
+      - main
+      - feat/tauri-react-studio
+      - feat/ux-consolidation
+  pull_request:
+    branches:
+      - main
+      - feat/tauri-react-studio
+
+# Un nouveau push sur la même branche annule l'exécution précédente.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  moteur:
+    name: Moteur Rust (engine, KVL, wasm)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer la toolchain Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo --version
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: cargo check
+        run: cargo check --all-targets -p engine-core -p kvl-core -p kvl-runtime -p kvl-cli -p engine-wasm
+
+      - name: cargo test
+        run: cargo test -p engine-core -p kvl-core -p kvl-runtime -p kvl-cli
+
+      - name: Non-dérive du dictionnaire IA (dist/ai)
+        run: bash scripts/ci_ai_dictionary.sh
+
+  studio:
+    name: Studio TypeScript
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/studio
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+
+      - name: Installer
+        run: npm ci
+
+      - name: Build (tsc + vite)
+        run: npm run build
+
+      - name: Lint (oxlint)
+        run: npm run lint
+
+  tauri:
+    name: Backend Tauri
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances système (prérequis Tauri v2, Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+
+      # `tauri-build` lit `apps/studio/dist` : le frontend doit exister avant cargo check.
+      - name: Construire le frontend
+        working-directory: apps/studio
+        run: |
+          npm ci
+          npm run build
+
+      - name: Installer la toolchain Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: cargo check (backend Tauri)
+        run: cargo check -p karactirage-studio
