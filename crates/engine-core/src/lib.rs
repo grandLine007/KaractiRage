@@ -27,6 +27,7 @@ pub mod subsystems;
 pub mod ai_client;
 pub mod ai_dictionary;
 pub mod ai_edit;
+pub mod ai_edit_resolver;
 pub mod ai_executor;
 pub mod ai_history;
 pub mod ai_intent;

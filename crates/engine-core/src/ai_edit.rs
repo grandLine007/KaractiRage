@@ -2222,6 +2222,16 @@ fn collider_size(collider: Option<&Collider2D>) -> String {
     }
 }
 
+/// Libellé compact d'un maillage 3D (réutilisé par le prompt micro).
+pub fn mesh_debug(mesh: &MeshRef) -> String {
+    mesh_label(Some(mesh))
+}
+
+/// Libellé compact d'un matériau 3D (réutilisé par le prompt micro).
+pub fn material_debug(material: &MaterialRef) -> String {
+    material_label(Some(material))
+}
+
 fn mesh_label(mesh: Option<&MeshRef>) -> String {
     match mesh {
         None => String::new(),

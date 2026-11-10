@@ -6,6 +6,7 @@
 //! une seule compilation.
 
 use crate::camera::Camera3D;
+use crate::ai_plan::AiOp;
 use crate::entity::{Entity, MaterialRef, MeshRef, Renderable3D, Transform2D, Transform3D};
 use crate::game::GameState;
 use crate::input::InputState;
@@ -1095,6 +1096,137 @@ impl NativeEngine {
         self.game.selected_entity_id()
     }
 
+    // ------------------------------------------------------------------
+    // Édition IA ciblée (plan IA inline, sprint 1)
+    // ------------------------------------------------------------------
+
+    /// Contexte d'édition : ce que voit l'IA (sélection, scène, dimension, outil actif).
+    ///
+    /// Jamais la scène entière : la sélection est transmise telle quelle par identifiant.
+    pub fn ai_edit_context(&self) -> crate::ai_edit::EditContext {
+        use crate::ai_edit::{ActivePanel, Dimension, EditContext, TargetRef};
+
+        // Le moteur n'a pas de champ « dimension » : on la déduit de la présence de 3D.
+        let dimension = if self
+            .game
+            .entities
+            .iter()
+            .any(|entity| entity.transform3d.is_some() || entity.renderable3d.is_some())
+        {
+            Dimension::ThreeD
+        } else {
+            Dimension::TwoD
+        };
+
+        EditContext {
+            project_id: format!("proj_{:x}", (self.game.scene_name.len() as u64) ^ 0xCAFE_BABE),
+            scene_id: self.game.scene_name.clone(),
+            dimension,
+            selection: self
+                .get_selected_entity_id()
+                .map(|id| vec![TargetRef::EntityId(id)])
+                .unwrap_or_default(),
+            hover: None,
+            cursor_world: None,
+            active_panel: ActivePanel::Viewport,
+            active_tool: format!("{:?}", self.game.editor.active_tool).to_lowercase(),
+            camera: self.game.camera3d.clone(),
+            recent_ops: Vec::new(),
+        }
+    }
+
+    /// Aperçu par le résolveur déterministe.
+    ///
+    /// `Ok(None)` = aucune règle certaine : l'appelant doit passer par le LLM avec le
+    /// prompt micro. `Err(message)` = la demande est compréhensible mais incomplète.
+    pub fn ai_edit_preview(
+        &self,
+        instruction: &str,
+    ) -> Result<Option<crate::ai_edit::EditProposal>, String> {
+        use crate::ai_edit_resolver::{Resolution, resolve_instruction};
+
+        let project = self.game.export_current_project();
+        let context = self.ai_edit_context();
+        let Some(resolution) = resolve_instruction(instruction, &project, &context) else {
+            return Ok(None);
+        };
+        match resolution {
+            Resolution::NeedsClarification(message) => Err(message),
+            Resolution::Ops(ops) => {
+                let intent_id =
+                    format!("int_{}", crate::ai_dictionary::hash_text(instruction.as_bytes()));
+                crate::ai_edit::build_proposal(&project, &context, &intent_id, ops, instruction)
+                    .map(Some)
+                    .map_err(|error| error.to_string())
+            }
+        }
+    }
+
+    /// Construit une proposition depuis des ops JSON (sortie LLM).
+    ///
+    /// Accepte `[...]`, `{"ops":[...]}` ou une proposition complète : seule la liste `ops`
+    /// est utilisée, puis tout est revalidé par le moteur.
+    pub fn ai_edit_propose(&self, raw_json: &str) -> Result<crate::ai_edit::EditProposal, String> {
+        let ops = parse_ai_ops(raw_json)?;
+        let project = self.game.export_current_project();
+        let context = self.ai_edit_context();
+        let intent_id = format!("int_{}", crate::ai_dictionary::hash_text(raw_json.as_bytes()));
+        crate::ai_edit::build_proposal(&project, &context, &intent_id, ops, "proposition LLM")
+            .map_err(|error| error.to_string())
+    }
+
+    /// Prompt micro prêt à envoyer au fournisseur (blocs cible/voisins/schéma).
+    pub fn ai_edit_prompt(
+        &self,
+        provider: crate::ai_client::AiProvider,
+        instruction: &str,
+    ) -> crate::ai_prompt::AssembledPrompt {
+        let project = self.game.export_current_project();
+        let context = self.ai_edit_context();
+        crate::ai_prompt::assemble_micro(provider, &project, &context, instruction)
+    }
+
+    /// Applique une proposition à la scène courante : `(rapport JSON, transaction)`.
+    ///
+    /// La scène est mise à jour **sur place** (sélection, mode et caméra conservés) ;
+    /// l'annulation passe par la transaction, pas par la pile d'undo de l'éditeur.
+    pub fn ai_edit_apply(
+        &mut self,
+        proposal: &crate::ai_edit::EditProposal,
+    ) -> Result<(String, crate::ai_edit::AiTransaction), String> {
+        let project = self.game.export_current_project();
+        let applied =
+            crate::ai_edit::apply_edit(&project, proposal).map_err(|error| error.to_string())?;
+        self.apply_ai_edit_project(&applied.project);
+        let report = serde_json::json!({
+            "transaction_id": applied.transaction.id,
+            "intent_id": applied.transaction.intent_id,
+            "changes": proposal.preview.changes,
+            "risk": proposal.risk,
+        });
+        Ok((report.to_string(), applied.transaction))
+    }
+
+    /// Applique un projet édité à la scène : entités, graphes, nom et objectif seulement.
+    ///
+    /// Contrairement à `load_project`, la sélection, le mode d'édition et la caméra sont
+    /// conservés : c'est ce qui permet d'enchaîner plusieurs micro-éditions.
+    pub fn apply_ai_edit_project(&mut self, project: &crate::project::KaractiProject) {
+        self.game.entities = project.scene.entities.clone();
+        self.game.kvl_graphs = project.kvl_graphs.clone();
+        self.game.scene_name = project.scene.name.clone();
+        self.game.scene_objective = project.scene.objective.clone();
+        self.game.rebuild_static_spatial_grid();
+    }
+
+    /// Restaure un projet sérialisé (annulation d'une édition IA).
+    pub fn ai_edit_restore(&mut self, project_json: &str) -> Result<(), String> {
+        let project = crate::project::KaractiProject::from_json(project_json)
+            .map_err(|error| format!("projet illisible : {error}"))?;
+        self.apply_ai_edit_project(&project);
+        Ok(())
+    }
+
     pub fn delete_selected_entity(&mut self) -> bool {
         self.game.remove_selected_entity()
     }
@@ -2165,6 +2297,22 @@ fn ensure_graph_target_free(
     Ok(())
 }
 
+/// Lit une liste d'`AiOp` depuis une sortie LLM.
+///
+/// Accepte une liste nue (`[...]`), un objet `{"ops":[...]}` ou une proposition complète :
+/// le moteur ne fait jamais confiance au reste du JSON, il ne prend que les ops.
+pub fn parse_ai_ops(raw_json: &str) -> Result<Vec<AiOp>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw_json.trim()).map_err(|error| format!("JSON invalide : {error}"))?;
+    let ops_value = value.get("ops").cloned().unwrap_or(value);
+    let ops: Vec<AiOp> =
+        serde_json::from_value(ops_value).map_err(|error| format!("ops invalides : {error}"))?;
+    if ops.is_empty() {
+        return Err("aucune opération proposée".to_string());
+    }
+    Ok(ops)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2671,5 +2819,148 @@ mod tests {
         assert!(!engine.delete_kvl_graph("../../evil.kvl.json"));
         assert!(engine.delete_kvl_graph(&path));
         assert!(!engine.game.kvl_graphs.contains_key(&path));
+    }
+}
+
+#[cfg(test)]
+mod ai_edit_tests {
+    use super::*;
+
+    /// Première entité dotée d'un rendu 2D (cible sûre pour une édition de couleur).
+    fn first_drawn_entity(engine: &NativeEngine) -> Option<(usize, u32)> {
+        engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.renderable.is_some())
+            .map(|entity| (entity.id, entity.renderable.as_ref().expect("rendu").color))
+    }
+
+    #[test]
+    fn context_reports_selection_scene_and_tool() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let Some((id, _)) = first_drawn_entity(&engine) else {
+            panic!("la scène de démonstration doit contenir une entité dessinée");
+        };
+        engine.select_entity(id);
+
+        let context = engine.ai_edit_context();
+        assert_eq!(context.scene_id, engine.game.scene_name);
+        assert_eq!(context.selection, vec![crate::ai_edit::TargetRef::EntityId(id)]);
+        assert!(!context.active_tool.is_empty());
+    }
+
+    #[test]
+    fn preview_without_selection_is_explicit() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        engine.game.editor.selected = crate::editor::SelectedEntity::None;
+        let error = engine.ai_edit_preview("mets-le en rouge").expect_err("sans sélection");
+        assert!(error.contains("sélection"), "message : {error}");
+    }
+
+    #[test]
+    fn template_preview_then_apply_then_restore() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let Some((id, _)) = first_drawn_entity(&engine) else {
+            panic!("scène de démonstration vide");
+        };
+        engine.select_entity(id);
+
+        let proposal = engine
+            .ai_edit_preview("mets-le en rouge")
+            .expect("aperçu")
+            .expect("le template doit résoudre cette instruction");
+        assert!(!proposal.preview.changes.is_empty());
+        // L'aperçu ne modifie rien.
+        let before = engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
+        let applied = engine.ai_edit_apply(&proposal).expect("application");
+        let after = engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
+        assert_ne!(before, after, "la couleur a changé");
+        assert_eq!(after, Some(0x00DC2626));
+        // La sélection survit à l'application (édition enchaînable).
+        assert_eq!(engine.get_selected_entity_id(), Some(id));
+
+        let report: serde_json::Value = serde_json::from_str(&applied.0).expect("rapport JSON");
+        assert!(report.get("transaction_id").is_some());
+        assert!(report.get("changes").is_some());
+    }
+
+    #[test]
+    fn llm_ops_are_revalidated_by_the_engine() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let Some((id, color)) = first_drawn_entity(&engine) else {
+            panic!("scène vide");
+        };
+        let new_color = color ^ 0x0000FF;
+        let raw = format!(
+            r#"[{{"op":"update_entity","target":{{"entity_id":{id}}},"patch":{{"color":{new_color}}}}}]"#
+        );
+        let proposal = engine.ai_edit_propose(&raw).expect("proposition");
+        engine.ai_edit_apply(&proposal).expect("application");
+        let applied_color = engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
+        assert_eq!(applied_color, Some(new_color));
+    }
+
+    #[test]
+    fn unknown_field_from_llm_is_rejected() {
+        let engine = NativeEngine::init().expect("init moteur");
+        let Some((id, _)) = first_drawn_entity(&engine) else {
+            panic!("scène vide");
+        };
+        let raw = format!(
+            r#"[{{"op":"set_entity_property","target":{{"entity_id":{id}}},"path":"couleur_magique","value":{{"type":"int","value":1}}}}]"#
+        );
+        let error = engine.ai_edit_propose(&raw).expect_err("champ inconnu");
+        assert!(error.contains("propriété inconnue"), "message : {error}");
+    }
+
+    #[test]
+    fn restore_undoes_an_applied_edit() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let Some((id, color)) = first_drawn_entity(&engine) else {
+            panic!("scène vide");
+        };
+        let before_json = engine.export_project_json();
+        engine.select_entity(id);
+
+        let proposal = engine
+            .ai_edit_preview("mets-le en rouge")
+            .expect("aperçu")
+            .expect("template");
+        engine.ai_edit_apply(&proposal).expect("application");
+        engine.ai_edit_restore(&before_json).expect("restauration");
+
+        let restored = engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
+        assert_eq!(restored, Some(color));
+    }
+
+    #[test]
+    fn parse_ai_ops_accepts_list_and_wrapped_forms() {
+        let list = parse_ai_ops(r#"[{"op":"set_scene_setting","key":"objective","value":{"type":"string","value":"GAGNER"}}]"#);
+        assert_eq!(list.expect("liste").len(), 1);
+        let wrapped = parse_ai_ops(r#"{"ops":[{"op":"set_scene_setting","key":"name","value":{"type":"string","value":"Salle"}}]}"#);
+        assert_eq!(wrapped.expect("objet ops").len(), 1);
+        assert!(parse_ai_ops("[]").is_err());
+        assert!(parse_ai_ops("pas du json").is_err());
     }
 }
