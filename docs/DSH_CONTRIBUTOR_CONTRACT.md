@@ -406,8 +406,9 @@ non poussées) jusqu'à correction.
 - [ ] Créer le clone/worktree dédié + config Git locale.
 - [x] Template de PR : `.github/pull_request_template.md` (reprend la DoD du §6).
 - [ ] Créer les labels GitHub (`agent:dsh`, `area:*`, `risk:*`) : action humaine ou API.
-- [x] Workflow CI minimal : `.github/workflows/ci.yml` (moteur, dictionnaire, Studio, Tauri),
-  **à confirmer au premier run** — la CI n'a pas encore tourné sur GitHub.
+- [x] Workflow CI minimal : `.github/workflows/ci.yml` (moteur, dictionnaire, Studio, Tauri).
+  **Premier run vert le 10/11/2026** sur `feat/ux-consolidation` : 3 jobs, ~5 min chacun
+  (dont un correctif de prérequis `libasound2-dev`, invisible depuis macOS).
 - [ ] Lancer le pilote de 10 tâches.
 - [ ] Décider L2 permanent ou rétrogradation.
 
