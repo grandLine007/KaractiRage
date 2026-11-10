@@ -26,7 +26,7 @@
     "schemas/graph.schema.json": "088e9ca2dce0a6e9",
     "schemas/intent.schema.json": "532860c470bea6b6",
     "schemas/level.schema.json": "ac845fc11f886711",
-    "schemas/ops.schema.json": "e7fabd398bcd69b5",
-    "schemas/plan.schema.json": "d2f539e14c2d8b2d"
+    "schemas/ops.schema.json": "5b55ad8148868c5e",
+    "schemas/plan.schema.json": "7c44af805eb3c4cf"
   }
 }

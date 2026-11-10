@@ -7,10 +7,16 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::ai_dictionary::hash_text;
+use crate::ai_edit::{EntityPatch, PropertyValue, TargetRef};
 use crate::ai_intent::{IntentEnvelope, IntentTarget};
 use crate::subsystems::UiElement;
 
 /// Opération atomique appliquée sur un clone du projet.
+///
+/// Les ops de **création** (`AddEntity`, `CreateScene`, …) construisent un niveau ; les ops
+/// de **mutation** (`UpdateEntity`, `DeleteEntity`, `SetTransform2D`, …) éditent un élément
+/// existant et portent une [`TargetRef`]. Une cible contextuelle (`Selected`, `Hovered`)
+/// doit être liée à des identifiants concrets avant exécution (voir `ai_edit::bind_ops`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "op")]
 pub enum AiOp {
@@ -40,6 +46,41 @@ pub enum AiOp {
     },
     SetSaveConfig { enabled: bool },
     ExportTarget { format: String },
+
+    // ----- Ops de mutation (édition d'un élément existant) -----
+    /// Applique un patch partiel typé à la cible (`name`, `tag`, `color`, transform, vitesse…).
+    UpdateEntity { target: TargetRef, patch: EntityPatch },
+    /// Supprime les entités ciblées (risque destructif).
+    DeleteEntity { targets: Vec<TargetRef> },
+    /// Duplique les entités ciblées avec un décalage monde `(dx, dy)`.
+    DuplicateEntity { targets: Vec<TargetRef>, offset: [f32; 2] },
+    /// Pose un transform 2D complet.
+    #[serde(rename = "set_transform_2d")]
+    SetTransform2D { target: TargetRef, x: f32, y: f32, w: f32, h: f32 },
+    /// Pose un transform 3D complet (rotation Euler en degrés).
+    #[serde(rename = "set_transform_3d")]
+    SetTransform3D {
+        target: TargetRef,
+        position: [f32; 3],
+        rotation_euler_deg: [f32; 3],
+        scale: [f32; 3],
+    },
+    /// Écrit une propriété par chemin (`transform.x`, `renderable.color`, `speed`…).
+    SetEntityProperty { target: TargetRef, path: String, value: PropertyValue },
+    /// Ajoute un composant (`collider`, `movement`, `health`, `vision`, `transform3d`…).
+    AddComponent { target: TargetRef, component: String },
+    /// Retire un composant (risque destructif).
+    RemoveComponent { target: TargetRef, component: String },
+    /// Règle un paramètre de nœud KVL (`position_x`, `name`, `input.<pin>`…).
+    SetKvlNodeParam { target: TargetRef, param: String, value: PropertyValue },
+    /// Supprime un nœud KVL et ses connexions (risque destructif).
+    DeleteKvlNode { target: TargetRef },
+    /// Supprime une connexion par identifiant (`graph` vide = recherche globale).
+    RemoveConnection { graph: Option<String>, id: String },
+    /// Règle un réglage de scène (`name`, `description`, `objective`).
+    SetSceneSetting { key: String, value: PropertyValue },
+    /// Applique plusieurs ops en une seule intention (tout ou rien).
+    Batch { ops: Vec<AiOp> },
 }
 
 /// Étape d'un plan.

@@ -35,7 +35,12 @@ pub fn apply_plan(project: &KaractiProject, plan: &AiPlan) -> Result<KaractiProj
     Ok(working)
 }
 
-fn apply_op(project: &mut KaractiProject, op: &AiOp) -> Result<(), String> {
+/// Applique une opération à un projet (muté sur place).
+///
+/// Les ops de mutation (`UpdateEntity`, `DeleteEntity`, …) sont déléguées à
+/// [`crate::ai_edit`] qui valide la cible, les types et les bornes. Une cible
+/// contextuelle non liée (`Selected`, `Hovered`) est une **erreur**, jamais un no-op.
+pub(crate) fn apply_op(project: &mut KaractiProject, op: &AiOp) -> Result<(), String> {
     match op {
         AiOp::CreateProject { title, genre } => {
             project.metadata.title = title.clone();
@@ -208,6 +213,58 @@ fn apply_op(project: &mut KaractiProject, op: &AiOp) -> Result<(), String> {
                 other => return Err(format!("format d'export inconnu : {other}")),
             });
             Ok(())
+        }
+        AiOp::Batch { ops } => {
+            for (index, nested) in ops.iter().enumerate() {
+                apply_op(project, nested)
+                    .map_err(|message| format!("batch[{index}] : {message}"))?;
+            }
+            Ok(())
+        }
+        // ----- Ops de mutation : déléguées à `ai_edit` (validation + bornes) -----
+        AiOp::UpdateEntity { target, patch } => crate::ai_edit::apply_entity_patch(project, target, patch)
+            .map_err(|error| error.to_string()),
+        AiOp::DeleteEntity { targets } => {
+            crate::ai_edit::delete_entities(project, targets).map_err(|error| error.to_string())
+        }
+        AiOp::DuplicateEntity { targets, offset } => {
+            crate::ai_edit::duplicate_entities(project, targets, *offset)
+                .map_err(|error| error.to_string())
+        }
+        AiOp::SetTransform2D { target, x, y, w, h } => {
+            crate::ai_edit::set_transform_2d(project, target, *x, *y, *w, *h)
+                .map_err(|error| error.to_string())
+        }
+        AiOp::SetTransform3D { target, position, rotation_euler_deg, scale } => {
+            crate::ai_edit::set_transform_3d(project, target, *position, *rotation_euler_deg, *scale)
+                .map_err(|error| error.to_string())
+        }
+        AiOp::SetEntityProperty { target, path, value } => {
+            crate::ai_edit::set_entity_property(project, target, path, value)
+                .map_err(|error| error.to_string())
+        }
+        AiOp::AddComponent { target, component } => {
+            crate::ai_edit::add_component(project, target, component)
+                .map_err(|error| error.to_string())
+        }
+        AiOp::RemoveComponent { target, component } => {
+            crate::ai_edit::remove_component(project, target, component)
+                .map_err(|error| error.to_string())
+        }
+        AiOp::SetKvlNodeParam { target, param, value } => {
+            crate::ai_edit::set_kvl_node_param(project, target, param, value)
+                .map_err(|error| error.to_string())
+        }
+        AiOp::DeleteKvlNode { target } => {
+            crate::ai_edit::delete_kvl_node(project, target).map_err(|error| error.to_string())
+        }
+        AiOp::RemoveConnection { graph, id } => {
+            crate::ai_edit::remove_connection(project, graph.as_deref(), id)
+                .map_err(|error| error.to_string())
+        }
+        AiOp::SetSceneSetting { key, value } => {
+            crate::ai_edit::set_scene_setting(project, key, value)
+                .map_err(|error| error.to_string())
         }
         other => Err(format!("opération non encore supportée : {other:?}")),
     }
