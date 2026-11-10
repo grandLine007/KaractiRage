@@ -309,6 +309,12 @@ Verdicts : **ADOPT** (on intègre), **DÉJÀ** (présent dans le moteur), **DIFF
 
 ## 9. Plan proposé (6 phases, chacune finie et démontrable)
 
+> **Ce plan est décliné en deux documents opposables** :
+> [`P1_JEU_2D_COMPLET.md`](P1_JEU_2D_COMPLET.md) (périmètre gelé, critères AC1-AC6) et
+> [`PLAN_INTEGRATION_OUTILS.md`](PLAN_INTEGRATION_OUTILS.md) (objectifs, fonctionnalités,
+> impacts, résultats attendus par phase). Le suivi des versions et les rapports obligatoires
+> sont dans [`VERSIONS.md`](VERSIONS.md).
+
 | Phase | Objectif | Livrable vérifiable | Durée indicative |
 |---|---|---|---|
 | **P0 — Cadrage** | figer les niveaux et les invariants | ce document validé | 0,5 j |
