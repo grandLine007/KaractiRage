@@ -6,6 +6,11 @@
 > **Périmètre supposé** : le **jeu/projet** produit par le moteur, pas le code source du
 > moteur lui-même. Si l'objectif inclut la génération du moteur, voir §14 (décision D0).
 > **Statut** : plan directeur — à valider avant implémentation.
+>
+> **Mise à jour — 3 novembre 2026** : le socle de ce plan est désormais implémenté
+> (dictionnaire compilé, intention, plan, exécuteur, prompt budgété, streaming,
+> historique, revue ; **344 tests**). La prochaine étape — l'édition à la volée sans
+> page dédiée — est traitée dans [PLAN_IA_INLINE_EDITING.md](PLAN_IA_INLINE_EDITING.md).
 
 ---
 
