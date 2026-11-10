@@ -41,6 +41,12 @@ jobs:
           rustup default stable
           cargo --version
 
+      # `tinyaudio` tire `alsa-sys` sur Linux : invisible depuis macOS, fatal ici.
+      - name: Dépendances système (audio Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -102,6 +108,8 @@ jobs:
             librsvg2-dev \
             libxdo-dev \
             libssl-dev \
+            libasound2-dev \
+            pkg-config \
             file
 
       - uses: actions/setup-node@v4
