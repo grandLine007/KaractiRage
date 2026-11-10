@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Fournisseurs d'Intelligence Artificielle pris en charge par KaractiRage
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,12 +116,19 @@ pub struct AiClientConfig {
 }
 
 impl AiClientConfig {
-    /// Charge la configuration depuis karactirage.ai.json si présent, sinon utilise la configuration par défaut
+    /// Charge la configuration depuis `karactirage.ai.json` (recherche depuis le CWD vers la racine).
     pub fn load_or_default() -> Self {
-        if let Ok(content) = std::fs::read_to_string("karactirage.ai.json") {
-            if let Ok(cfg) = serde_json::from_str::<AiClientConfig>(&content) {
-                return cfg;
+        let mut current = std::env::current_dir().ok();
+        while let Some(dir) = current {
+            let candidate = dir.join("karactirage.ai.json");
+            if candidate.is_file() {
+                if let Ok(content) = std::fs::read_to_string(&candidate) {
+                    if let Ok(cfg) = serde_json::from_str::<AiClientConfig>(&content) {
+                        return cfg;
+                    }
+                }
             }
+            current = dir.parent().map(|p| p.to_path_buf());
         }
         Self::default()
     }
@@ -140,7 +147,7 @@ impl Default for AiClientConfig {
             custom_endpoint: None,
             custom_model: None,
             custom_api_key: None,
-            timeout_seconds: 25,
+            timeout_seconds: 120,
         }
     }
 }
@@ -419,6 +426,22 @@ pub trait LlmBackend {
         body: &str,
         timeout_secs: u64,
     ) -> Result<String, String>;
+
+    /// POST JSON en streaming : appelle `on_chunk` pour chaque fragment brut reçu et
+    /// renvoie le corps complet accumulé. L'implémentation par défaut retombe sur
+    /// `post_json` (un seul chunk) — un backend réellement streamant la surcharge.
+    fn post_json_stream(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &str,
+        timeout_secs: u64,
+        on_chunk: &mut dyn FnMut(&str),
+    ) -> Result<String, String> {
+        let full = self.post_json(url, headers, body, timeout_secs)?;
+        on_chunk(&full);
+        Ok(full)
+    }
 }
 
 /// Backend par défaut via `curl` natif (macOS, Linux, Windows 10/11).
@@ -448,6 +471,75 @@ impl LlmBackend for CurlBackend {
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
+
+    fn post_json_stream(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &str,
+        timeout_secs: u64,
+        on_chunk: &mut dyn FnMut(&str),
+    ) -> Result<String, String> {
+        let mut cmd = Command::new("curl");
+        // `-N` désactive le buffering : les chunks SSE arrivent au fil de l'eau.
+        cmd.arg("-s").arg("-N").arg("-X").arg("POST");
+        for (name, value) in headers {
+            cmd.arg("-H").arg(format!("{name}: {value}"));
+        }
+        cmd.arg("-d").arg(body)
+            .arg("--max-time").arg(timeout_secs.to_string())
+            .arg(url)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        let mut child = cmd.spawn().map_err(|e| format!("Échec d'exécution de curl : {e}"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Impossible de lire la sortie de curl.".to_string())?;
+
+        // Lecture incrémentale (l'annulation reste pilotée par l'appelant via `on_chunk`).
+        let result = drain_stream(stdout, on_chunk, &|| false);
+
+        let status = child.wait().map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err(format!("Erreur curl ({status})"));
+        }
+        result
+    }
+}
+
+/// Lit un flux incrémentalement (par blocs) en notifiant `on_chunk` à chaque lecture.
+/// Renvoie le corps complet accumulé. `cancelled` interrompt la lecture.
+fn drain_stream<R: std::io::Read>(
+    mut reader: R,
+    on_chunk: &mut dyn FnMut(&str),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<String, String> {
+    let mut acc = String::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        if cancelled() {
+            return Err("Génération annulée.".into());
+        }
+        let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        let chunk = String::from_utf8_lossy(&buf[..n]);
+        acc.push_str(&chunk);
+        on_chunk(&chunk);
+    }
+    Ok(acc)
+}
+
+/// Extrait l'origine (`scheme://host:port`) d'une URL, qu'elle soit une base ou un chemin complet.
+fn origin_of(endpoint: &str) -> &str {
+    let scheme_end = endpoint.find("://").map(|i| i + 3).unwrap_or(0);
+    match endpoint[scheme_end..].find('/') {
+        Some(i) => &endpoint[..scheme_end + i],
+        None => endpoint,
+    }
 }
 
 /// Pont d'exécution HTTP via curl natif (compatible macOS, Linux, Windows 10/11)
@@ -465,6 +557,17 @@ impl AiClient {
         prompt: &str,
         backend: &dyn LlmBackend,
     ) -> Result<AiGeneratedGamePayload, String> {
+        let system_prompt = get_system_prompt_for_provider(config.provider);
+        Self::send_prompt_with_system_prompt(config, &system_prompt, prompt, backend)
+    }
+
+    /// Appel avec un prompt système fourni (permet de brancher l'assembleur RAG).
+    pub fn send_prompt_with_system_prompt(
+        config: &AiClientConfig,
+        system_prompt: &str,
+        user_prompt: &str,
+        backend: &dyn LlmBackend,
+    ) -> Result<AiGeneratedGamePayload, String> {
         if config.provider == AiProvider::OfflineLocal {
             return Err("Fournisseur OfflineLocal : utilisez AiPatchBuilder localement.".into());
         }
@@ -473,12 +576,10 @@ impl AiClient {
         let model = config.custom_model.as_deref().unwrap_or_else(|| config.provider.default_model());
         let api_key = config.custom_api_key.clone().or_else(|| config.provider.get_api_key());
 
-        let system_prompt = get_system_prompt_for_provider(config.provider);
-
         let raw_output = if config.provider == AiProvider::Claude {
-            Self::call_claude(backend, endpoint, model, api_key.as_deref(), &system_prompt, prompt, config.timeout_seconds)?
+            Self::call_claude(backend, endpoint, model, api_key.as_deref(), system_prompt, user_prompt, config.timeout_seconds)?
         } else {
-            Self::call_openai_compatible(backend, endpoint, model, api_key.as_deref(), &system_prompt, prompt, config.timeout_seconds)?
+            Self::call_openai_compatible(backend, endpoint, model, api_key.as_deref(), system_prompt, user_prompt, config.timeout_seconds)?
         };
 
         Self::parse_llm_json_response(&raw_output)
@@ -604,9 +705,9 @@ impl AiClient {
                 Ok("Moteur Local Déterministe 100% autonome et hors-ligne (Opérationnel)".to_string())
             }
             AiProvider::Ollama => {
-                let endpoint = config.custom_endpoint.as_deref().unwrap_or("http://localhost:11434");
-                let base_url = endpoint.split("/api/").next().unwrap_or(endpoint);
-                let test_url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+                let endpoint = config.custom_endpoint.as_deref().unwrap_or_else(|| config.provider.default_endpoint());
+                let base_url = origin_of(endpoint);
+                let test_url = format!("{}/api/tags", base_url);
                 let mut cmd = Command::new("curl");
                 cmd.arg("-s")
                    .arg("-m").arg("2")
@@ -624,9 +725,9 @@ impl AiClient {
                 }
             }
             AiProvider::LmStudio => {
-                let endpoint = config.custom_endpoint.as_deref().unwrap_or("http://localhost:1234");
-                let base_url = endpoint.split("/v1/").next().unwrap_or(endpoint);
-                let test_url = format!("{}/v1/models", base_url.trim_end_matches('/'));
+                let endpoint = config.custom_endpoint.as_deref().unwrap_or_else(|| config.provider.default_endpoint());
+                let base_url = origin_of(endpoint);
+                let test_url = format!("{}/v1/models", base_url);
                 let mut cmd = Command::new("curl");
                 cmd.arg("-s")
                    .arg("-m").arg("2")
@@ -690,6 +791,34 @@ mod tests {
             assert!(!provider.default_endpoint().is_empty());
             assert!(!provider.default_model().is_empty());
         }
+    }
+
+    #[test]
+    fn drain_stream_reads_incrementally_and_cancels() {
+        let mut chunks = Vec::new();
+        let data = "chunk1|chunk2|chunk3";
+        let out = drain_stream(std::io::Cursor::new(data.as_bytes()), &mut |c| chunks.push(c.to_string()), &|| false)
+            .expect("lecture");
+        assert_eq!(out, data);
+        assert!(!chunks.is_empty(), "au moins un chunk notifié");
+
+        // Annulation : le premier contrôle de `cancelled` interrompt avant toute lecture.
+        let err = drain_stream(std::io::Cursor::new(data.as_bytes()), &mut |_| {}, &|| true)
+            .expect_err("doit être annulé");
+        assert!(err.contains("annulée"), "message : {err}");
+    }
+
+    #[test]
+    fn origin_of_extracts_host_from_base_or_full_url() {
+        assert_eq!(origin_of("http://127.0.0.1:1234"), "http://127.0.0.1:1234");
+        assert_eq!(
+            origin_of("http://127.0.0.1:1234/v1/chat/completions"),
+            "http://127.0.0.1:1234"
+        );
+        assert_eq!(
+            origin_of("https://api.openai.com/v1/chat/completions"),
+            "https://api.openai.com"
+        );
     }
 
     #[test]

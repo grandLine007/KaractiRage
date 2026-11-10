@@ -8,6 +8,7 @@ use thiserror::Error;
 
 use crate::ai_dictionary::hash_text;
 use crate::ai_intent::{IntentEnvelope, IntentTarget};
+use crate::subsystems::UiElement;
 
 /// Opération atomique appliquée sur un clone du projet.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -28,7 +29,15 @@ pub enum AiOp {
     AddLight { kind: String },
     GenerateSprite { archetype: String },
     SetAudio { sound: String },
-    SetUiScreen { screen: String },
+    SetUiScreen {
+        /// Type d'écran : "hud", "menu", "pause", "game_over", "victory".
+        screen: String,
+        /// Titre affiché (écrans plein écran), optionnel.
+        title: Option<String>,
+        /// Éléments déclaratifs (texte, jauge, bouton, icône), optionnels.
+        #[serde(default)]
+        elements: Vec<UiElement>,
+    },
     SetSaveConfig { enabled: bool },
     ExportTarget { format: String },
 }
@@ -132,13 +141,15 @@ pub fn plan_for(envelope: &IntentEnvelope) -> AiPlan {
             add(&mut steps, "s3", AiOp::AddEntity { name: "Joueur".into(), kind: "player".into() }, "entities", &["s2"]);
             add(&mut steps, "s4", AiOp::AddKvlNode { node_id: "evt_start".into(), node_type: "OnStart".into() }, "graph", &["s3"]);
             add(&mut steps, "s5", AiOp::SetObjective { text: envelope.raw_text.clone() }, "objective", &["s4"]);
-            add(&mut steps, "s6", AiOp::ExportTarget { format: "html".into() }, "export", &["s5"]);
+            add(&mut steps, "s6", hud_op(), "ui", &["s5"]);
+            add(&mut steps, "s7", AiOp::ExportTarget { format: "html".into() }, "export", &["s6"]);
         }
         IntentTarget::Level => {
             add(&mut steps, "s1", AiOp::CreateScene { name: "niveau".into() }, "scene", &[]);
             add(&mut steps, "s2", AiOp::AddEntity { name: "Joueur".into(), kind: "player".into() }, "entities", &["s1"]);
             add(&mut steps, "s3", AiOp::AddKvlNode { node_id: "evt_start".into(), node_type: "OnStart".into() }, "graph", &["s2"]);
             add(&mut steps, "s4", AiOp::SetObjective { text: envelope.raw_text.clone() }, "objective", &["s3"]);
+            add(&mut steps, "s5", hud_op(), "ui", &["s4"]);
         }
         IntentTarget::Mechanic => {
             add(&mut steps, "s1", AiOp::AddKvlNode { node_id: "evt".into(), node_type: "OnPlayerOverlap".into() }, "graph", &[]);
@@ -157,6 +168,34 @@ pub fn plan_for(envelope: &IntentEnvelope) -> AiPlan {
         plan_id: format!("plan_{}", hash_text(envelope.intent_id.as_bytes())),
         intent_id: envelope.intent_id.clone(),
         steps,
+    }
+}
+
+/// Éléments HUD par défaut produits par le plan déterministe : score (texte) et
+/// vitalité (jauge liée à `player_hp` / `player_max_hp`).
+fn hud_elements() -> Vec<UiElement> {
+    vec![
+        UiElement {
+            id: "score".into(),
+            kind: "text".into(),
+            label: Some("OR".into()),
+            bind: Some("score".into()),
+        },
+        UiElement {
+            id: "hp".into(),
+            kind: "bar".into(),
+            label: Some("VITALITÉ".into()),
+            bind: Some("player_hp".into()),
+        },
+    ]
+}
+
+/// Op `SetUiScreen` qui crée un HUD data-driven (consommé par `ui_render`).
+fn hud_op() -> AiOp {
+    AiOp::SetUiScreen {
+        screen: "hud".into(),
+        title: None,
+        elements: hud_elements(),
     }
 }
 
@@ -191,9 +230,21 @@ mod tests {
         let envelope = normalize_intent("Crée un jeu complet de plateforme 2D");
         let plan = plan_for(&envelope);
         assert!(plan.validate().is_ok());
-        assert_eq!(plan.steps.len(), 6);
+        assert_eq!(plan.steps.len(), 7);
         assert_eq!(plan.steps[0].artifact, "project");
-        assert_eq!(plan.steps[5].artifact, "export");
+        assert_eq!(plan.steps[5].artifact, "ui");
+        assert_eq!(plan.steps[6].artifact, "export");
+        // L'écran HUD du plan est peuplé (score + jauge de vitalité).
+        match &plan.steps[5].op {
+            AiOp::SetUiScreen { screen, title, elements } => {
+                assert_eq!(screen, "hud");
+                assert!(title.is_none());
+                assert_eq!(elements.len(), 2);
+                assert_eq!(elements[0].bind.as_deref(), Some("score"));
+                assert_eq!(elements[1].bind.as_deref(), Some("player_hp"));
+            }
+            other => panic!("attendu SetUiScreen, obtenu {other:?}"),
+        }
     }
 
     #[test]

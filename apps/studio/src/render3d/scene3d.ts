@@ -16,6 +16,9 @@ import {
   Color,
   AmbientLight,
   DirectionalLight,
+  PointLight,
+  SpotLight,
+  Object3D,
   Matrix4,
   Vector2,
   Vector3,
@@ -154,6 +157,84 @@ export async function startScene3D(
   const sun = new DirectionalLight(0xffffff, 2.2);
   scene.add(ambient, sun);
 
+  // Lumières ponctuelles / spot gérées dynamiquement (pool aligné sur `p.lights`).
+  const dynamicLights: { kind: number; light: PointLight | SpotLight; target: Object3D | null }[] = [];
+
+  function ensureDynamicLight(index: number, kind: number): (typeof dynamicLights)[number] {
+    if (index < dynamicLights.length && dynamicLights[index].kind !== kind) {
+      const old = dynamicLights[index];
+      scene.remove(old.light);
+      if (old.target) scene.remove(old.target);
+    }
+    if (index >= dynamicLights.length || dynamicLights[index].kind !== kind) {
+      const entry =
+        kind === 2
+          ? (() => {
+              const spot = new SpotLight(0xffffff, 1, 0, Math.PI / 4, 0.5, 2);
+              return { kind: 2, light: spot, target: spot.target };
+            })()
+          : { kind: 1, light: new PointLight(0xffffff, 1, 0, 2), target: null };
+      scene.add(entry.light);
+      if (entry.target) scene.add(entry.target);
+      if (index < dynamicLights.length) dynamicLights[index] = entry;
+      else dynamicLights.push(entry);
+    }
+    return dynamicLights[index];
+  }
+
+  function applyLights(p: DecodedPacket) {
+    // Ambiant : couleur × intensité déjà composée côté Rust (0..1 par canal).
+    ambient.color.setRGB(p.ambient[0], p.ambient[1], p.ambient[2]);
+    ambient.intensity = 1.0;
+
+    // Directionnel : première lumière de type 0 (sinon soleil masqué).
+    const dir = p.lights.find(l => l.kind === 0);
+    if (dir) {
+      sun.visible = true;
+      sun.intensity = dir.intensity;
+      sun.color.setRGB(dir.color[0], dir.color[1], dir.color[2]);
+      sun.position.set(dir.pos[0], dir.pos[1], dir.pos[2]);
+      if (dir.dir[0] !== 0 || dir.dir[1] !== 0 || dir.dir[2] !== 0) {
+        sun.target.position.set(dir.pos[0] + dir.dir[0], dir.pos[1] + dir.dir[1], dir.pos[2] + dir.dir[2]);
+        sun.target.updateMatrixWorld();
+      }
+    } else {
+      sun.visible = false;
+    }
+
+    // Point / Spot : pool dynamique aligné sur les lumières de type 1 et 2.
+    const others = p.lights.filter(l => l.kind === 1 || l.kind === 2);
+    for (let i = 0; i < others.length; i++) {
+      const lp = others[i];
+      const entry = ensureDynamicLight(i, lp.kind);
+      entry.light.color.setRGB(lp.color[0], lp.color[1], lp.color[2]);
+      entry.light.intensity = lp.intensity;
+      entry.light.position.set(lp.pos[0], lp.pos[1], lp.pos[2]);
+      entry.light.visible = true;
+      if (lp.range > 0) {
+        entry.light.distance = lp.range;
+        entry.light.decay = 2;
+      }
+      if (entry.target) {
+        const spot = entry.light as SpotLight;
+        entry.target.position.set(
+          lp.pos[0] + lp.dir[0],
+          lp.pos[1] + (lp.dir[1] !== 0 ? lp.dir[1] : -1),
+          lp.pos[2] + lp.dir[2],
+        );
+        entry.target.updateMatrixWorld();
+        const cutoff = Math.min(Math.max(lp.spotCosCutoff, 0.0), 1.0);
+        spot.angle = Math.acos(cutoff) || Math.PI / 4;
+      }
+    }
+    // Retire les lumières en surplus.
+    while (dynamicLights.length > others.length) {
+      const removed = dynamicLights.pop()!;
+      scene.remove(removed.light);
+      if (removed.target) scene.remove(removed.target);
+    }
+  }
+
   const geometryOf = (meshId: number) => {
     switch (meshId) {
       case 1:
@@ -182,13 +263,7 @@ export async function startScene3D(
     camera.lookAt(p.camera.target[0], p.camera.target[1], p.camera.target[2]);
     camera.updateProjectionMatrix();
 
-    ambient.intensity = p.ambient[0];
-    const light = p.lights[0];
-    if (light) {
-      sun.intensity = light.intensity;
-      sun.color.setRGB(light.color[0], light.color[1], light.color[2]);
-      sun.position.set(light.pos[0], light.pos[1], light.pos[2]);
-    }
+    applyLights(p);
 
     let total = 0;
     for (const b of p.batches) {
