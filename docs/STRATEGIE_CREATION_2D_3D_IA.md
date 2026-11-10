@@ -264,6 +264,49 @@ deviennent interchangeables, et images/audio/vidéo passent par le même tuyau.
 
 ---
 
+### 8.4 Arbitrage de la liste élargie (vérifié sur crates.io, 10/11/2026)
+
+Verdicts : **ADOPT** (on intègre), **DÉJÀ** (présent dans le moteur), **DIFFÉRÉ**
+(utile mais pas maintenant), **REJET** (contraire à l'architecture ou mort).
+
+| Crate | Version / date | Verdict | Raison |
+|---|---|---|---|
+| [`tiled`](https://github.com/mapeditor/rs-tiled) | 0.16.0 / 2026-07 | **ADOPT (P2)** | Importer une carte `.tmx` (Tiled) → entités + collisions + couches. **Le plus gros gain de « création facile »** de la liste : le créateur dessine dans un outil gratuit et répandu. |
+| [`gltf`](https://crates.io/crates/gltf) | 1.4.1 / 2024-05 | **ADOPT (P4)** | Parseur standard, stable, 11,7 M téléchargements. Aucune alternative sérieuse. |
+| [`kira`](https://github.com/tesselode/kira) | 0.12.6 / 2026-10 | **ADOPT (P2)** | Le moteur **synthétise** ses sons (`tinyaudio`, enum `SoundType`) et ne lit **aucun fichier audio**. Kira apporte lecture OGG/MP3, bus, effets, synchro musicale. |
+| [`gilrs`](https://gitlab.com/gilrs-project/gilrs) | 0.11.2 / 2026-05 | **DIFFÉRÉ (L2/L3)** | Aucune manette aujourd'hui (`input.rs` = clavier seulement). Ajout peu coûteux quand le jeu « canapé » arrive. |
+| [`image`](https://github.com/image-rs/image) | 0.25.10 / 2026-03 | **DIFFÉRÉ (P2)** | Le moteur ne décode que du PNG (`vector::decode_png`). JPEG/WebP utiles pour les assets importés, mais c'est une grosse dépendance : à mesurer en temps de build. |
+| [`parry2d`](https://github.com/dimforge/parry) | 0.31.1 / 2026-09 | **DIFFÉRÉ** | Uniquement si les requêtes précises (raycast vs forme tournée) manquent au `spatial.rs` maison. |
+| [`rapier2d`](https://crates.io/crates/rapier2d) / `rapier3d` | 0.36.1 / 2026-10 | **DIFFÉRÉ (L6)** | Le moteur a sa physique AABB déterministe + grille spatiale. Migrer maintenant = régressions et perte du déterminisme de replay. |
+| [`wgpu`](https://github.com/gfx-rs/wgpu) | 30.0.1 / 2026-08 | **REJET (pour l'instant)** | Remplacerait le rendu logiciel, contre le budget low-end et le `RenderPacket`. La 3D est déjà rendue par three.js dans le Studio. |
+| [`ash`](https://github.com/ash-rs/ash) | 0.38.0 / 2024-04 | **REJET** | Vulkan brut : encore plus loin de nos contraintes. |
+| [`winit`](https://github.com/rust-windowing/winit) | 0.31.0-beta.4 | **DÉJÀ (0.29)** | Utilisé pour `KeyCode` seulement. Ne pas suivre la bêta : stabiliser d'abord. |
+| [`glam`](https://github.com/bitshifter/glam-rs) | 0.34.3 / 2026-11 | **DÉJÀ** | Dépendance workspace. |
+| [`rend3`](https://github.com/BVE-Reborn/rend3) | **0.3.0 / 2022-02** | **REJET** | Abandonné (aucune release depuis 2022, ~0 téléchargement). La liste le présente comme vivant : c'est faux. |
+| [`pixels`](https://github.com/parasyte/pixels) | 0.17.2 / 2026-07 | **REJET** | Présentation GPU d'un buffer de pixels ; notre `Canvas` est déjà un `u32` en mémoire, sans dépendance GPU. |
+| [`lyon`](https://github.com/nical/lyon) | 1.0.19 / 2026-03 | **REJET** | Tessellation pour GPU ; nous rastérisons en logiciel. |
+| [`salva2d`](https://github.com/dimforge/salva) | 0.11.0 / 2026-11 | **REJET** | Fluides : hors périmètre jeu 2D low-end. |
+| [`avian2d`](https://github.com/avianphysics/avian) | 0.8.0 / 2026-10 | **REJET** | Physique ECS (bevy) : incompatible avec notre modèle d'entités sérialisé. |
+| [`hecs`](https://github.com/Ralith/hecs) / [`shipyard`](https://github.com/leudz/shipyard) / [`legion`](https://github.com/amethyst/legion) | 0.11.2 / 0.11.5 / **0.4.0 (2021)** | **REJET** | Le format de projet est un `Vec<Entity>` ordonné avec composants `Option` : c'est ce que sérialisent les sauvegardes **et** les ops IA. Passer en ECS casserait les deux. Legion est de surcroît abandonné (2021). |
+| [`flecs`](https://github.com/jazzay/flecs-rs) | 0.1.5 / **2023-10** | **REJET** | FFI C/C++ (contredit « pur Rust »), 0.1.5, ~0 téléchargement. |
+| [`nalgebra`](https://github.com/dimforge/nalgebra) | 0.35.0 / 2026-05 | **REJET** | Doublon de `glam` ; nous n'utilisons que `Vec3`/`Quat`/`Mat4`. |
+| [`egui`](https://github.com/emilk/egui) | 0.37.0 / 2026-10 | **REJET (Studio)** | Le Studio est React/Tauri ; réécrire l'éditeur en egui serait un changement de produit, pas une dépendance. |
+| [`cosmic-text`](https://github.com/pop-os/cosmic-text) | 0.19.0 / 2026-04 | **REJET** | Le moteur rend son texte par `fontdue` + police bitmap ; inutile ici. |
+| [`pathfinding`](https://github.com/evenfurther/pathfinding) | 4.16.0 / 2026-09 | **REJET** | **Déjà implémenté** : A* sur grille optimisé dans `navigation.rs`. |
+| [`renet`](https://github.com/lucaspoffo/renet) | 2.0.1 / 2026-10 | **REJET (v1)** | Multijoueur/rollback = autre produit. La promesse v1 est un jeu local déterministe exportable. |
+
+**Candidats absents de la liste, plus utiles que la moitié de celle-ci :**
+
+| Crate | Pourquoi |
+|---|---|
+| `notify` | Rechargement à chaud des assets et des scripts KVL quand un fichier change sur disque (confort d'authoring). |
+| `symphonia` | Décodage OGG/MP3/FLAC pour Kira (déjà utilisé en amont par Kira via feature). |
+| `zip` | Export desktop et packaging d'assets. |
+| `meshopt` / `ktx2` | Compression des maillages et textures à l'export (budget low-end). |
+| `png` (déjà là) | À conserver : décodage minimal, build rapide, suffisant pour le pixel art. |
+
+---
+
 ## 9. Plan proposé (6 phases, chacune finie et démontrable)
 
 | Phase | Objectif | Livrable vérifiable | Durée indicative |
