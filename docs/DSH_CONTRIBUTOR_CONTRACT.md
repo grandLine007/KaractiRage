@@ -389,6 +389,8 @@ non poussées) jusqu'à correction.
 5. **Revue** : un humain approuve chaque PR, aucun auto-merge.
 6. **Taille** : 10 fichiers / 400 lignes par PR (seuil souple).
 7. **CI** : créer un workflow GitHub Actions avant le pilote, ou gates locales seulement ?
+   — un workflow minimal est proposé (`.github/workflows/ci.yml`) ; **D7 reste à trancher**,
+   y compris le périmètre (l'audit visuel reste local, son rendu dépend de la plateforme).
 8. **Espace** : clone dédié pour DSH (recommandé) ou worktree partagé ?
 
 ---
@@ -398,11 +400,14 @@ non poussées) jusqu'à correction.
 - [x] Trancher l'identité : compte personnel + trailers `Agent:`/`Task:` (D1, 10/11/2026).
 - [x] Créer un token fine-grained et le stocker au trousseau macOS.
 - [ ] Restreindre le token à *Contents* + *Pull requests* et retirer toute permission admin.
-- [ ] Protéger `main` et la branche d'intégration (`feat/tauri-react-studio`).
+- [ ] Protéger `main` et la branche d'intégration (`feat/tauri-react-studio`). **Action humaine** :
+  le §4.3 interdit à DSH de toucher aux règles de protection.
 - [ ] Créer `AGENTS.md` (commandes, invariants, checklist).
 - [ ] Créer le clone/worktree dédié + config Git locale.
-- [ ] Ajouter le template de PR et les labels.
-- [ ] Ajouter un workflow CI (si décision 7 = oui).
+- [x] Template de PR : `.github/pull_request_template.md` (reprend la DoD du §6).
+- [ ] Créer les labels GitHub (`agent:dsh`, `area:*`, `risk:*`) : action humaine ou API.
+- [x] Workflow CI minimal : `.github/workflows/ci.yml` (moteur, dictionnaire, Studio, Tauri),
+  **à confirmer au premier run** — la CI n'a pas encore tourné sur GitHub.
 - [ ] Lancer le pilote de 10 tâches.
 - [ ] Décider L2 permanent ou rétrogradation.
 
