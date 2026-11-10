@@ -33,11 +33,18 @@ Un jeu qui possède **les six briques suivantes**, chacune vérifiable :
 ## 3. Périmètre IN (engagé)
 
 ### P1.1 — Écrans et navigation
-- [ ] Écrans `menu`, `pause`, `game_over`, `victory` consommés par le runtime (le modèle
-      `ui_screens` et `ui_render` existent ; il manque la **navigation**).
-- [ ] Transitions : `Entrée`/clic pour valider, `Échap` pour pause, reprise de la partie.
-- [ ] Focus clavier fiable : aucune touche « avalée » entre écrans.
-- [ ] Aucune régression : le HUD actuel reste tel quel.
+
+> **Avancement (10/11/2026)** : machine à états `GameScreen` livrée
+> ([`screens.rs`](../crates/engine-core/src/screens.rs), 13 tests) — transitions,
+> gel de la simulation, miroir des variables KVL, compatibilité totale quand aucun
+> écran n'est déclaré. Reste à faire dans ce lot : le **contenu** des écrans
+> (boutons/labels) porté par le jeu de référence (P1.3), et la validation du focus.
+
+- [x] Écrans `menu`, `pause`, `game_over`, `victory` consommés par le runtime (état
+      `GameScreen` + rendu overlay ; la résolution par variables KVL est remplacée).
+- [x] Transitions : `Entrée`/clic pour valider, `Échap` pour pause, reprise de la partie.
+- [ ] Focus clavier fiable : aucune touche « avalée » entre écrans (à valider sur le jeu de référence).
+- [x] Aucune régression : le HUD actuel reste tel quel (419 tests verts).
 
 ### P1.2 — Progression et sauvegarde
 - [ ] Sauvegarde de la progression (scène courante, variables, score) via `save_config`.

@@ -227,6 +227,11 @@ pub struct GameState {
     pub quest: Option<QuestTracker>,
     /// Écrans UI déclaratifs (HUD, menu, pause, victoire, game over) issus du projet.
     pub ui_screens: Vec<crate::subsystems::UiScreen>,
+    /// État d'écran courant du runtime (menu / jeu / pause / défaite / victoire).
+    ///
+    /// Seule source de vérité : les variables KVL `menu_active`/`paused`/`game_won`
+    /// en sont le miroir en sortie, jamais l'entrée.
+    pub screen: crate::screens::GameScreen,
     /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
     pub camera3d: Option<crate::subsystems::Camera3DData>,
     /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
@@ -1117,6 +1122,7 @@ impl GameState {
             dialogue_cooldown: 0.0,
             quest,
             ui_screens: Vec::new(),
+            screen: crate::screens::GameScreen::Playing,
             camera3d: None,
             lights: Vec::new(),
             save_config: crate::subsystems::SaveConfig::default(),
@@ -1211,7 +1217,14 @@ impl GameState {
     }
 
     pub fn reload(&mut self) {
-        if let Ok(new_state) = Self::load_from_scene(&self.scene_path) {
+        // Les écrans data-driven viennent du projet, pas de la scène : on les conserve.
+        let screens = self.ui_screens.clone();
+        if let Ok(mut new_state) = Self::load_from_scene(&self.scene_path) {
+            new_state.ui_screens = screens;
+            new_state.screen = crate::screens::GameScreen::initial(
+                new_state.ui_screens.iter().any(|s| s.kind == crate::subsystems::UiScreenKind::Menu),
+                new_state.kvl_context.get_var("menu_active") == Some(&Value::Bool(true)),
+            );
             *self = new_state;
             self.status_message = "Hot-Reloading ECS réussi depuis les fichiers JSON !".into();
         } else {
@@ -1298,6 +1311,14 @@ impl GameState {
             "edit" => EditorMode::Edit,
             _ => EditorMode::Play,
         };
+        // Écran de départ : menu si le projet en déclare un et le demande (`menu_active`).
+        self.screen = crate::screens::GameScreen::initial(
+            self.ui_screens
+                .iter()
+                .any(|screen| screen.kind == crate::subsystems::UiScreenKind::Menu),
+            self.kvl_context.get_var("menu_active") == Some(&Value::Bool(true)),
+        );
+        self.sync_screen_variables();
 
         if let Some(p_idx) = self.player_index() {
             let px = self.entities[p_idx].transform.center_x();
@@ -1797,6 +1818,103 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
     }
 }
 
+    /// Vrai si le projet déclare un écran de ce type.
+    fn has_screen(&self, kind: crate::subsystems::UiScreenKind) -> bool {
+        self.ui_screens.iter().any(|screen| screen.kind == kind)
+    }
+
+    /// Reflète l'état d'écran dans les variables KVL (sortie, jamais entrée).
+    fn sync_screen_variables(&mut self) {
+        self.kvl_context
+            .set_var("menu_active", Value::Bool(self.screen == crate::screens::GameScreen::Menu));
+        self.kvl_context
+            .set_var("paused", Value::Bool(self.screen == crate::screens::GameScreen::Paused));
+    }
+
+    /// Démarre (ou redémarre) une partie : scène rechargée, écran `Playing`.
+    ///
+    /// Le rechargement remet le joueur debout, les variables et les entités à neuf ;
+    /// les écrans déclarés du projet sont conservés (ils vivent dans le projet, pas
+    /// dans la scène).
+    pub fn start_game(&mut self) {
+        let scene_path = self.scene_path.clone();
+        let screens = self.ui_screens.clone();
+        if let Ok(mut fresh) = Self::load_from_scene(&scene_path) {
+            fresh.ui_screens = screens;
+            fresh.editor.mode = EditorMode::Play;
+            *self = fresh;
+        }
+        self.screen = crate::screens::GameScreen::Playing;
+        self.sync_screen_variables();
+        self.set_status("Partie démarrée");
+    }
+
+    /// Applique les entrées d'écran (`Entrée`/clic = valider, `Échap` = pause).
+    fn advance_screen_flow(&mut self, input: &InputState) {
+        use crate::screens::GameScreen;
+        use crate::subsystems::UiScreenKind;
+
+        let mut next = self.screen;
+        if input.is_key_just_pressed(KeyCode::Enter) || input.mouse_just_clicked {
+            next = next.confirm();
+        }
+        if input.is_key_just_pressed(KeyCode::Escape) {
+            next = next.pause_toggle();
+        }
+        if next == self.screen {
+            return;
+        }
+
+        // On ne bascule que vers un écran réellement déclaré : jamais d'écran vide.
+        let allowed = match next {
+            GameScreen::Playing => true,
+            GameScreen::Menu => self.has_screen(UiScreenKind::Menu),
+            GameScreen::Paused => self.has_screen(UiScreenKind::Pause),
+            GameScreen::GameOver => self.has_screen(UiScreenKind::GameOver),
+            GameScreen::Victory => self.has_screen(UiScreenKind::Victory),
+        };
+        if !allowed {
+            return;
+        }
+
+        if next == GameScreen::Playing && self.screen != GameScreen::Paused {
+            // Menu, défaite ou victoire → nouvelle partie.
+            self.start_game();
+        } else {
+            self.screen = next;
+            self.sync_screen_variables();
+            self.set_status(format!("Écran : {}", next.label()));
+        }
+    }
+
+    /// Détecte la fin de partie (mort du joueur, victoire KVL) et bascule l'écran.
+    fn detect_screen_outcome(&mut self) {
+        use crate::screens::GameScreen;
+        use crate::subsystems::UiScreenKind;
+
+        if self.screen != GameScreen::Playing {
+            return;
+        }
+        let player_dead = self
+            .player_index()
+            .and_then(|index| self.entities[index].health.as_ref())
+            .map_or(false, |health| health.is_dead);
+        if player_dead && self.has_screen(UiScreenKind::GameOver) {
+            self.screen = GameScreen::GameOver;
+            self.sync_screen_variables();
+            self.audio.play(SoundType::PlayerDeath);
+            self.set_status("Défaite");
+            return;
+        }
+        let won = self.kvl_context.get_var("game_won") == Some(&Value::Bool(true));
+        if won && self.has_screen(UiScreenKind::Victory) {
+            self.screen = GameScreen::Victory;
+            self.sync_screen_variables();
+            self.audio.play(SoundType::QuestSuccess);
+            self.set_status("Victoire");
+        }
+    }
+
     pub fn update(&mut self, dt: f32, input: &InputState) {
         self.elapsed_time += dt;
         self.sim_tick += 1;
@@ -1807,6 +1925,17 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         // Disponibilité universelle des coordonnées souris pour le survol (hover) et les infobulles
         self.editor.mouse_x = input.mouse_x;
         self.editor.mouse_y = input.mouse_y;
+
+        // --- Écrans (P1.1) : hors `Playing`, le monde est figé et seules les
+        // transitions d'écran consomment l'entrée. En mode Édition, l'atelier garde
+        // la main (aucun gel, aucune bascule). ---
+        if self.editor.mode == EditorMode::Play {
+            self.detect_screen_outcome();
+            self.advance_screen_flow(input);
+            if !self.screen.is_playing() {
+                return;
+            }
+        }
 
         // Auto-fade du message de statut vers le repos sobre après 4 secondes
         if self.status_timer > 0.0 {
@@ -7804,11 +7933,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         // superposés au HUD en mode jeu selon l'état runtime (joueur mort, `game_won`,
         // `paused` ou `menu_active`).
         if !is_edit_mode {
-            let player_dead = self
-                .player_index()
-                .and_then(|i| self.entities[i].health.as_ref())
-                .map_or(false, |h| h.is_dead);
-            let trigger = crate::ui_render::resolve_screen_trigger(&self.kvl_context, player_dead);
+            let trigger = self.screen.trigger();
             if trigger != crate::ui_render::ScreenTrigger::Hud {
                 if let Some(screen) = crate::ui_render::active_screen(&self.ui_screens, trigger) {
                     crate::ui_render::render_overlay(canvas, screen, &self.kvl_context, vx, vy, vw, vh);
@@ -11439,9 +11564,232 @@ mod tests {
         assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "TogglePushable"));
     }
 
+    // ------------------------------------------------------------------
+    // P1.1 — Écrans : menu, pause, défaite, victoire
+    // ------------------------------------------------------------------
+
+    fn screens_fixture() -> Vec<crate::subsystems::UiScreen> {
+        use crate::subsystems::{UiScreen, UiScreenKind};
+        [
+            ("menu", UiScreenKind::Menu, "MENU"),
+            ("pause", UiScreenKind::Pause, "PAUSE"),
+            ("over", UiScreenKind::GameOver, "PERDU"),
+            ("win", UiScreenKind::Victory, "GAGNÉ"),
+        ]
+        .into_iter()
+        .map(|(id, kind, title)| UiScreen {
+            id: id.to_string(),
+            kind,
+            title: Some(title.to_string()),
+            elements: Vec::new(),
+        })
+        .collect()
+    }
+
+    fn state_with_screens() -> GameState {
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("Scène de test");
+        state.ui_screens = screens_fixture();
+        state.editor.mode = EditorMode::Play;
+        state
+    }
+
+    /// Fait avancer `frames` pas en imitant la boucle réelle (entrées transitoires purgées).
+    fn step(state: &mut GameState, input: &mut InputState, frames: usize) {
+        for _ in 0..frames {
+            state.update(0.016, input);
+            input.clear_transient();
+        }
+    }
+
     #[test]
-    fn test_data_driven_objective_hierarchy() {
-        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+    fn menu_screen_freezes_the_world() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.screen = GameScreen::Menu;
+        let player = state.player_index().expect("joueur");
+        let before = state.entities[player].transform.x;
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyD);
+        step(&mut state, &mut input, 20);
+
+        assert_eq!(
+            state.entities[player].transform.x, before,
+            "au menu, le monde ne doit pas avancer"
+        );
+        assert_eq!(state.screen, GameScreen::Menu);
+    }
+
+    #[test]
+    fn enter_leaves_the_menu_and_starts_playing() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.screen = GameScreen::Menu;
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut input, 1);
+
+        assert_eq!(state.screen, GameScreen::Playing, "Entrée démarre la partie");
+        assert!(state.player_index().is_some(), "la scène rechargée a un joueur");
+    }
+
+    #[test]
+    fn escape_pauses_freezes_and_resumes() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        assert_eq!(state.screen, GameScreen::Playing);
+
+        // 1. Échap → pause.
+        let mut escape = InputState::new();
+        escape.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut escape, 1);
+        assert_eq!(state.screen, GameScreen::Paused);
+        assert_eq!(
+            state.kvl_context.get_var("paused"),
+            Some(&Value::Bool(true)),
+            "la variable KVL miroir doit suivre"
+        );
+
+        // 2. En pause, le monde est figé.
+        let player = state.player_index().expect("joueur");
+        let frozen_x = state.entities[player].transform.x;
+        let mut right = InputState::new();
+        right.on_key_down(KeyCode::KeyD);
+        step(&mut state, &mut right, 20);
+        assert_eq!(state.entities[player].transform.x, frozen_x, "pause = monde figé");
+
+        // 3. Échap → reprise, et le monde réagit de nouveau.
+        let mut resume = InputState::new();
+        resume.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut resume, 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+        assert_eq!(state.kvl_context.get_var("paused"), Some(&Value::Bool(false)));
+        let resumed_x = state.entities[player].transform.x;
+        step(&mut state, &mut right, 30);
+        assert!(
+            (state.entities[player].transform.x - resumed_x).abs() > 1.0,
+            "après reprise, le joueur bouge"
+        );
+    }
+
+    #[test]
+    fn player_death_switches_to_game_over_screen() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        let player = state.player_index().expect("joueur");
+        if let Some(health) = state.entities[player].health.as_mut() {
+            health.current = 0.0;
+            health.is_dead = true;
+        }
+
+        step(&mut state, &mut InputState::new(), 1);
+        assert_eq!(state.screen, GameScreen::GameOver);
+    }
+
+    #[test]
+    fn game_won_variable_switches_to_victory_screen() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.kvl_context.set_var("game_won", Value::Bool(true));
+
+        step(&mut state, &mut InputState::new(), 1);
+        assert_eq!(state.screen, GameScreen::Victory);
+    }
+
+    #[test]
+    fn game_over_confirm_returns_to_the_menu() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.screen = GameScreen::GameOver;
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut input, 1);
+
+        assert_eq!(state.screen, GameScreen::Menu);
+    }
+
+    #[test]
+    fn project_without_screens_never_freezes_or_switches() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.ui_screens.clear();
+
+        // Mort du joueur : sans écran de défaite déclaré, le jeu continue (compatibilité).
+        let player = state.player_index().expect("joueur");
+        if let Some(health) = state.entities[player].health.as_mut() {
+            health.is_dead = true;
+        }
+        step(&mut state, &mut InputState::new(), 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+
+        // Échap sans écran de pause : aucun gel invisible.
+        let mut escape = InputState::new();
+        escape.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut escape, 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+    }
+
+    #[test]
+    fn editing_mode_is_never_frozen_by_screens() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.editor.mode = EditorMode::Edit;
+        // Même avec un état d'écran non-joueur, l'atelier garde la main.
+        state.screen = GameScreen::Menu;
+
+        let tick_before = state.sim_tick;
+        let mut escape = InputState::new();
+        escape.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut escape, 3);
+
+        assert_eq!(state.screen, GameScreen::Menu, "l'édition ne bascule pas d'écran");
+        assert_eq!(state.sim_tick, tick_before + 3, "l'atelier n'est jamais gelé");
+    }
+
+    #[test]
+    fn full_screen_lifecycle_from_menu_to_game_over_and_back() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.screen = GameScreen::Menu;
+
+        // Menu → jeu
+        let mut enter = InputState::new();
+        enter.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut enter, 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+
+        // Jeu → pause
+        let mut pause = InputState::new();
+        pause.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut pause, 1);
+        assert_eq!(state.screen, GameScreen::Paused);
+
+        // Pause → jeu
+        let mut resume = InputState::new();
+        resume.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut resume, 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+
+        // Jeu → défaite
+        let player = state.player_index().expect("joueur");
+        if let Some(health) = state.entities[player].health.as_mut() {
+            health.current = 0.0;
+            health.is_dead = true;
+        }
+        step(&mut state, &mut InputState::new(), 1);
+        assert_eq!(state.screen, GameScreen::GameOver);
+
+        // Défaite → menu
+        let mut back = InputState::new();
+        back.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut back, 1);
+        assert_eq!(state.screen, GameScreen::Menu);
+    }
+
+    #[test]
+    fn test_data_driven_objective_hierarchy() {        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
             .expect("Scène chargée");
 
         // 1. Scene objective chargé depuis le JSON
@@ -11521,7 +11869,13 @@ mod tests {
             title: Some("VICTOIRE".into()),
             elements: vec![],
         }];
+        state.editor.mode = EditorMode::Play;
         state.kvl_context.set_var("game_won", Value::Bool(true));
+
+        // Depuis P1.1, la variable KVL est une **entrée** lue par la machine à états :
+        // un pas de simulation suffit à basculer l'écran, qui fait ensuite autorité.
+        state.update(0.016, &InputState::new());
+        assert_eq!(state.screen, crate::screens::GameScreen::Victory);
 
         let mut canvas = Canvas::new(1200, 800);
         state.render(&mut canvas);
