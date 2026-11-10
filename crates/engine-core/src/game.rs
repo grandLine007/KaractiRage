@@ -257,6 +257,11 @@ pub struct GameState {
     pub anim_states: HashMap<usize, crate::sheet::AnimState>,
     /// Hôte de plugins : catalogue de nœuds, handlers et packs de contenu.
     pub plugins: crate::plugin::PluginHost,
+    /// Dossier de destination des exports (par défaut `export/`).
+    ///
+    /// Configurable pour que les tests, les projets ouverts hors du dépôt et les
+    /// exports dirigés n'écrivent jamais dans le répertoire courant du processus.
+    pub export_root: std::path::PathBuf,
 }
 
 impl GameState {
@@ -1130,6 +1135,7 @@ impl GameState {
             sheet_cache,
             anim_states,
             plugins,
+            export_root: std::path::PathBuf::from("export"),
         };
         state.rebuild_static_spatial_grid();
         Ok(state)
@@ -8995,16 +9001,20 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         let author = self.editor.export_author.clone();
         let fmt = self.editor.export_format_idx;
 
-        // Création du répertoire d'export local
-        let _ = std::fs::create_dir_all("export");
+        // Création du répertoire d'export local (configurable, cf. `export_root`).
+        let export_root = self.export_root.clone();
+        let _ = std::fs::create_dir_all(&export_root);
 
         match fmt {
             0 => {
                 // 1. Export Web HTML5 Standalone (fichier autonome unique)
                 let html_content = crate::exporter::StandaloneExporter::export_html(self, &title, &author);
-                let out_path = "export/standalone_game.html";
-                if std::fs::write(out_path, &html_content).is_ok() {
-                    self.set_status(&format!("✨ Jeu exporté en HTML5 autonome dans '{}' (Prêt à jouer) !", out_path));
+                let out_path = export_root.join("standalone_game.html");
+                if std::fs::write(&out_path, &html_content).is_ok() {
+                    self.set_status(&format!(
+                        "✨ Jeu exporté en HTML5 autonome dans '{}' (Prêt à jouer) !",
+                        out_path.display()
+                    ));
                 } else {
                     self.set_status(&format!("✨ Export HTML5 prêt en mémoire : {} Ko !", html_content.len() / 1024));
                 }
@@ -9013,21 +9023,29 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                 // 2. Export Package universel .karacti.json
                 let json_content = crate::exporter::StandaloneExporter::export_package_json(self, &title, &author)
                     .unwrap_or_else(|_| "{}".to_string());
-                let out_path = "export/game.karacti.json";
-                if std::fs::write(out_path, &json_content).is_ok() {
-                    self.set_status(&format!("💾 Package complet exporté dans '{}' ({} Ko) !", out_path, json_content.len() / 1024));
+                let out_path = export_root.join("game.karacti.json");
+                if std::fs::write(&out_path, &json_content).is_ok() {
+                    self.set_status(&format!(
+                        "💾 Package complet exporté dans '{}' ({} Ko) !",
+                        out_path.display(),
+                        json_content.len() / 1024
+                    ));
                 } else {
                     self.set_status("💾 Package universel sérialisé avec succès !");
                 }
             }
             _ => {
                 // 3. Export Dossier Bundle Desktop avec lanceurs autonomes
-                let _ = std::fs::create_dir_all("export/desktop_bundle");
+                let bundle = export_root.join("desktop_bundle");
+                let _ = std::fs::create_dir_all(&bundle);
                 let html_content = crate::exporter::StandaloneExporter::export_html(self, &title, &author);
-                let _ = std::fs::write("export/desktop_bundle/index.html", &html_content);
+                let _ = std::fs::write(bundle.join("index.html"), &html_content);
                 let runner_script = "#!/bin/bash\necho 'Lancement de KaractiRage Standalone...'\nopen index.html || xdg-open index.html\n";
-                let _ = std::fs::write("export/desktop_bundle/lancer_jeu.sh", runner_script);
-                self.set_status("🖥️ Bundle Desktop distribuable généré dans 'export/desktop_bundle/' !");
+                let _ = std::fs::write(bundle.join("lancer_jeu.sh"), runner_script);
+                self.set_status(&format!(
+                    "🖥️ Bundle Desktop distribuable généré dans '{}' !",
+                    bundle.display()
+                ));
             }
         }
 
@@ -13608,6 +13626,10 @@ mod tests {
     #[test]
     fn test_standalone_exporter_lifecycle_and_modal() {
         let mut state = GameState::load_from_scene(get_test_scene_path()).unwrap();
+        // L'export écrit sur disque : on le redirige vers un répertoire temporaire.
+        let export_root = std::env::temp_dir().join(format!("karactirage_export_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&export_root);
+        state.export_root = export_root.clone();
         let mut canvas = Canvas::new(1200, 800);
 
         // 1. Rendu initial pour générer le bouton [📦 EXPORT] dans l'en-tête
@@ -13648,6 +13670,11 @@ mod tests {
 
         assert!(!state.editor.show_export_modal, "La modale doit se fermer après confirmation d'export");
         assert!(state.status_message.contains("exporté"), "Un message de confirmation doit s'afficher");
+        // Le fichier a été écrit dans le répertoire temporaire, pas dans le dépôt.
+        assert!(
+            export_root.join("standalone_game.html").is_file(),
+            "export HTML5 attendu sous la racine temporaire"
+        );
 
         // 7. Vérification de l'intégrité du package généré et réimportation
         let pkg_json = crate::exporter::StandaloneExporter::export_package_json(&state, "Jeu Test", "Testeur").unwrap();
@@ -13661,6 +13688,7 @@ mod tests {
         let mut imported_state = GameState::load_from_scene(get_test_scene_path()).unwrap();
         crate::exporter::StandaloneExporter::import_package(&mut imported_state, &loaded_pkg);
         assert_eq!(imported_state.entities.len(), state.entities.len());
+        let _ = std::fs::remove_dir_all(&export_root);
         assert_eq!(imported_state.scene_name, state.scene_name);
     }
 

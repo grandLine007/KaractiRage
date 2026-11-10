@@ -91,6 +91,9 @@ jobs:
       - name: Lint (oxlint)
         run: npm run lint
 
+      - name: Versions alignées (Cargo / package.json / Tauri)
+        run: npm run check:versions
+
   tauri:
     name: Backend Tauri
     runs-on: ubuntu-24.04

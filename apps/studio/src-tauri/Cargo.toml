@@ -1,6 +1,6 @@
 [package]
 name = "karactirage-studio"
-version = "0.1.0"
+version.workspace = true
 description = "KaractiRage Studio — 2D Engine & Visual Logic"
 authors = ["KaractiRage Team"]
 license = "MIT OR Apache-2.0"

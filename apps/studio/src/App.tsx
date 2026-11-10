@@ -597,7 +597,7 @@ export function App() {
             <HelpCircle size={13} />
             Aide clavier
           </button>
-          <span className="text-[#a855f7] font-semibold">KaractiRage Studio v0.2.0</span>
+          <span className="text-[#a855f7] font-semibold">KaractiRage Studio v{__APP_VERSION__}</span>
         </div>
       </footer>
 

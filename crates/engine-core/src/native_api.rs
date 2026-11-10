@@ -55,6 +55,11 @@ pub struct NativeEngine {
     save_manager: SaveManager,
     /// Référence de prévisualisation pour `ai_review` (capturée avant un patch).
     review_baseline: Option<crate::preview::PreviewCapture>,
+    /// Racine du projet pour les écritures d'authoring (assets KVL, sprites).
+    ///
+    /// `None` = racine compilée (`CARGO_MANIFEST_DIR/../..`). Les tests et les projets
+    /// ouverts hors du dépôt la remplacent pour ne jamais écrire dans le code source.
+    workspace_root: Option<std::path::PathBuf>,
 }
 
 /// Résout le chemin de la scène par défaut, quel que soit le répertoire courant
@@ -204,6 +209,22 @@ impl NativeEngine {
                 crate::project_registry::ProjectRegistry::home_dir().join("saves"),
             ),
             review_baseline: None,
+            workspace_root: None,
+        })
+    }
+
+    /// Redirige toutes les écritures d'authoring (graphes KVL, sprites importés)
+    /// sous `root` au lieu de la racine compilée du dépôt.
+    ///
+    /// Utilisé par les tests et par l'ouverture d'un projet situé ailleurs sur le disque.
+    pub fn set_workspace_root(&mut self, root: impl Into<std::path::PathBuf>) {
+        self.workspace_root = Some(root.into());
+    }
+
+    /// Racine du projet pour les écritures d'authoring.
+    pub fn workspace_root(&self) -> std::path::PathBuf {
+        self.workspace_root.clone().unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
         })
     }
 
@@ -1855,7 +1876,7 @@ impl NativeEngine {
     // --- Import d'images & vectorisation --------------------------------------
 
     fn repo_root(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+        self.workspace_root()
     }
 
     fn valid_id(&self, id: &str) -> Result<(), String> {
@@ -2320,6 +2341,10 @@ mod tests {
     #[test]
     fn test_guided_graph_builds_valid_mechanics() {
         let mut engine = NativeEngine::init().expect("init moteur");
+        // Écritures d'authoring redirigées : le test ne doit jamais salir le dépôt.
+        let workspace = std::env::temp_dir().join(format!("karactirage_guided_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&workspace);
+        engine.set_workspace_root(workspace.clone());
 
         let recipes = ["collectible", "hazard", "teleport", "switch", "chest", "door"];
         for recipe in recipes {
@@ -2351,6 +2376,12 @@ mod tests {
                 out
             );
         }
+        // Les graphes ont bien été écrits… dans le répertoire temporaire.
+        assert!(
+            workspace.join("assets/scripts").is_dir(),
+            "écriture attendue sous la racine temporaire"
+        );
+        let _ = std::fs::remove_dir_all(&workspace);
     }
 
     #[test]
