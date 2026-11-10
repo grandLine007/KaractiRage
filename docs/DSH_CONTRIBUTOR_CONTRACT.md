@@ -1,7 +1,8 @@
 # Contrat de contribution — DSH dans KaractiRage
 
-> **Version** : proposition 1.0 — 10 novembre 2026
-> **Statut** : à valider avant création de l'identité Git et des droits GitHub.
+> **Version** : proposition 1.1 — 10 novembre 2026 (D1 amendée, cf. §3.1)
+> **Statut** : D1 tranchée le 10/11/2026 ; D2 à D8 restent à valider avant la mise en place
+> des droits GitHub et le pilote de 10 tâches.
 > **Décision structurante** : DSH est un **contributeur de niveau 2** (branche + commits +
 > PR draft), **jamais mergeur**, au service de l'objectif final de KaractiRage.
 
@@ -95,25 +96,40 @@ seul un humain merge.
 
 ### 3.1 Identité dédiée
 
-Ne pas utiliser l'identité personnelle `husseir <irahusse@gmail.com>` pour les commits
-de l'agent. Créer une identité distincte :
+Les commits de l'agent ne portent pas l'identité personnelle `husseir <irahusse@gmail.com>`.
+Ils portent une identité d'agent distincte :
 
 ```text
 DSH Agent <dsh-agent@karactirage.local>
 ```
 
-Deux options GitHub :
+**Décision D1 (10 novembre 2026) : compte personnel + trailers.** Le push s'effectue avec un
+token fine-grained du compte propriétaire ; aucun machine user `karacti-dsh` n'est créé à ce
+stade. Le bot n'existe donc pas comme compte GitHub : il est identifié par l'auteur du commit
+et par les trailers `Agent:` / `Task:` (§3.2).
 
-| Option | Avantages | Inconvénients |
-|---|---|---|
-| **Machine user** (`karacti-dsh`) avec accès Write | simple, PR/commits normaux, audit clair | compte supplémentaire, token à gérer |
-| **GitHub App** | permissions fines, installation contrôlée | mise en place plus lourde |
-| Compte personnel + trailers | zéro compte | attribution ambiguë, droits trop larges |
+| Option | Avantages | Inconvénients | Statut |
+|---|---|---|---|
+| **Machine user** (`karacti-dsh`) + accès Write | simple, PR/commits normaux, audit clair | compte supplémentaire, token à gérer | **écarté pour l'instant** |
+| **GitHub App** | permissions fines, installation contrôlée | mise en place plus lourde | écarté |
+| **Compte personnel + trailers** | zéro compte, mise en route immédiate | attribution non vérifiée côté GitHub, droits trop larges | **retenu** |
 
-**Recommandation v1 : machine user + token fine-grained**, accès **Write** uniquement,
-aucun droit d'administration, aucune permission de merge sur les branches protégées.
+Limites assumées de D1 :
+
+- côté GitHub, `DSH Agent` apparaît comme un auteur **non vérifié**, rattaché à aucun compte ;
+- le token hérite des droits du compte propriétaire (**admin** sur ce dépôt) : le périmètre
+  du §4 est une discipline, pas un garde-fou technique ;
+- la révocation est globale (révoquer le token), pas sélective par permission ;
+- l'audit log GitHub attribue les push au compte propriétaire, pas à l'agent.
+
+**Réexamen obligatoire** si l'une des conditions suivantes survient : un incident de
+permission (§8), un push non autorisé constaté, ou l'échec des cibles du pilote. Dans ce cas,
+réouvrir D1 et basculer sur un machine user.
 
 ### 3.2 Trailer de commit obligatoire
+
+C'est le **seul** mécanisme d'identification retenu par D1 : sans `Agent:` et `Task:`, aucun
+commit de l'agent n'est distinguable des commits humains, et l'audit devient impossible.
 
 Chaque commit de DSH porte :
 
@@ -133,7 +149,8 @@ Cela permet de retrouver les commits, de les filtrer et de les auditer.
 
 ### 3.3 Signature
 
-- clé SSH de signature dédiée au bot ;
+- clé SSH de signature portée par le compte propriétaire (D1 n'introduit pas de compte bot
+  distinct, donc la clé ne peut pas être isolée par compte) ;
 - commits signés si GitHub le permet ;
 - sinon, `Agent:` + PR suffisent pour la v1, mais la signature est recommandée.
 
@@ -247,6 +264,13 @@ Selon le changement :
 - jamais de merge par DSH ;
 - DSH répond aux commentaires, corrige, re-push (sans force push).
 
+**État constaté le 10/11/2026** : le dépôt n'utilise pas encore de PR. `feat/ux-consolidation`
+est **64 commits d'avance** sur `feat/tauri-react-studio`, et tout y est empilé par merges
+locaux. Une PR dans ce sens serait un merge de consolidation, pas une PR de tâche : elle
+contredirait le §5.5. Conséquence : le canal PR (template, labels, CI) doit être installé
+**avant** le pilote, et chaque tâche du pilote partira d'une branche `agent/dsh/…` créée
+depuis la base validée, pas depuis une branche de consolidation déjà empilée.
+
 ### 5.6 Revue et merge
 
 - un humain approuve ;
@@ -337,7 +361,13 @@ non poussées) jusqu'à correction.
 
 ## 9. Sécurité et révocation
 
-- token du bot stocké hors dépôt (trousseau/CI secret), jamais dans un fichier du projet ;
+- token fine-grained du compte stocké dans le **trousseau macOS**
+  (`security add-generic-password -a dsh-agent -s karactirage-pat -w`), jamais dans un fichier
+  du projet, jamais dans l'URL du remote, jamais dans l'historique de commande ;
+- un token collé en clair (conversation, ticket, log, capture) est **révoqué immédiatement**
+  et remplacé : il est considéré comme public dès qu'il a été affiché ;
+- périmètre du token : *Contents: Read and write* + *Pull requests: Read and write*, rien
+  d'autre — en particulier **aucune permission Administration**, quel que soit le compte ;
 - permissions minimales : Write sur le dépôt, pas d'admin, pas de bypass ;
 - branches `main` et d'intégration protégées : PR obligatoire, review, checks, no force
   push, no deletion ;
@@ -350,8 +380,10 @@ non poussées) jusqu'à correction.
 
 ## 10. Décisions à valider
 
-1. **Identité** : machine user `karacti-dsh` (recommandé) ou GitHub App ?
-2. **Droits** : L2 (branche + PR draft, pas de merge) — recommandé.
+1. **Identité** : ✅ **tranchée le 10/11/2026 — compte personnel + trailers `Agent:`/`Task:`**
+   (§3.1). Machine user et GitHub App écartés pour l'instant ; réexamen prévu en cas
+   d'incident ou d'échec du pilote.
+2. **Droits** : L2 (branche + PR draft, pas de merge) — recommandé, **à valider**.
 3. **Base** : `feat/tauri-react-studio` pour l'instant, `main` plus tard ?
 4. **Périmètre** : code/tests/docs/ai ; CI/release/deps sur approbation ?
 5. **Revue** : un humain approuve chaque PR, aucun auto-merge.
@@ -363,9 +395,10 @@ non poussées) jusqu'à correction.
 
 ## 11. Mise en place (après validation)
 
-- [ ] Créer l'identité bot et le token.
-- [ ] Ajouter le bot comme collaborateur Write.
-- [ ] Protéger `main` et la branche d'intégration.
+- [x] Trancher l'identité : compte personnel + trailers `Agent:`/`Task:` (D1, 10/11/2026).
+- [x] Créer un token fine-grained et le stocker au trousseau macOS.
+- [ ] Restreindre le token à *Contents* + *Pull requests* et retirer toute permission admin.
+- [ ] Protéger `main` et la branche d'intégration (`feat/tauri-react-studio`).
 - [ ] Créer `AGENTS.md` (commandes, invariants, checklist).
 - [ ] Créer le clone/worktree dédié + config Git locale.
 - [ ] Ajouter le template de PR et les labels.
@@ -378,4 +411,4 @@ non poussées) jusqu'à correction.
 ## 12. Règle finale
 
 > **DSH contribue au projet, il ne possède pas le projet.**
-> Le bot propose, les gates prouvent, l'humain merge.
+> L'agent propose, les gates prouvent, l'humain merge.
