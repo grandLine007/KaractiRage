@@ -1,0 +1,42 @@
+{
+  "id": "graph_ref_porte_niveau",
+  "name": "Logique : Porte de niveau",
+  "description": "Franchir la porte marque le niveau comme terminé ; le moteur enchaîne ou déclare la victoire.",
+  "version": 1,
+  "variables": {},
+  "nodes": {
+    "evt_door": {
+      "id": "evt_door",
+      "name": "Interaction Porte",
+      "category": "Interactions",
+      "description": "Déclenché quand le joueur interagit avec la porte (touche E).",
+      "kind": { "Event": { "event_type": "OnDoorInteract" } },
+      "inputs": [],
+      "outputs": [
+        { "id": "out_trigger", "name": "Exécution", "direction": "Output", "data_type": "Trigger", "default_value": null }
+      ],
+      "ui": { "position_x": 0.0, "position_y": 0.0, "color_tag": null }
+    },
+    "act_complete": {
+      "id": "act_complete",
+      "name": "Niveau terminé",
+      "category": "Progression",
+      "description": "Fixe level_complete : le moteur passe au niveau suivant, ou déclare la victoire.",
+      "kind": { "Action": { "action_type": "SetVariable:level_complete:true" } },
+      "inputs": [
+        { "id": "in_trigger", "name": "Exécution", "direction": "Input", "data_type": "Trigger", "default_value": null }
+      ],
+      "outputs": [],
+      "ui": { "position_x": 240.0, "position_y": 0.0, "color_tag": null }
+    }
+  },
+  "connections": [
+    {
+      "id": "conn_door_complete",
+      "from_node": "evt_door",
+      "from_pin": "out_trigger",
+      "to_node": "act_complete",
+      "to_pin": "in_trigger"
+    }
+  ]
+}

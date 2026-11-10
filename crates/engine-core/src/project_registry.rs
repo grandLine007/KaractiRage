@@ -349,6 +349,15 @@ impl ProjectRegistry {
     /// Découvre les projets et scènes de démonstration dans les sources par défaut.
     pub fn scan_default_sources(&self) -> Vec<ProjectEntry> {
         let mut dirs: Vec<PathBuf> = scene_source_dirs();
+        // Projets livrés avec le dépôt (jeu de référence P1, modèles, tutoriels).
+        for candidate in [
+            PathBuf::from("assets/projects"),
+            PathBuf::from(format!("{}/../../assets/projects", env!("CARGO_MANIFEST_DIR"))),
+        ] {
+            if candidate.exists() && !dirs.contains(&candidate) {
+                dirs.push(candidate);
+            }
+        }
         let home_projects = self.home.join("projects");
         if !dirs.contains(&home_projects) {
             dirs.push(home_projects);
@@ -665,8 +674,24 @@ mod tests {
     }
 
     #[test]
-    fn test_slugify() {
-        assert_eq!(slugify("Mon Projet — Édition Finale!"), "mon-projet-édition-finale");
+    fn default_sources_expose_the_shipped_reference_game() {
+        let home = temp_home("reference_scan");
+        let registry = ProjectRegistry::open_at(home.clone());
+        let entries = registry.scan_default_sources();
+
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.path.contains("jeu_reference.karacti")),
+            "le jeu de référence livré doit apparaître dans le Hub : {:?}",
+            entries.iter().map(|entry| entry.path.clone()).collect::<Vec<_>>()
+        );
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn test_slugify() {        assert_eq!(slugify("Mon Projet — Édition Finale!"), "mon-projet-édition-finale");
         assert_eq!(slugify("   "), "projet");
         assert_eq!(slugify("Odyssée 2D"), "odyssée-2d");
     }

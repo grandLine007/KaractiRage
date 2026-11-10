@@ -1,0 +1,407 @@
+{
+  "name": "Niveau 1 : Salle des Émeraudes",
+  "description": "Référence P1 : collecter les pièces, puis franchir la porte.",
+  "objective": "COLLECTEZ LES 3 PIÈCES PUIS FRANCHISSEZ LA PORTE (E)",
+  "entities": [
+    {
+      "id": 1,
+      "name": "Joueur",
+      "tag": "player",
+      "transform": {
+        "x": 120.0,
+        "y": 500,
+        "w": 44.0,
+        "h": 44.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 3718648,
+        "outline_color": 16777215,
+        "outline_width": 2,
+        "z_index": 10,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 44.0,
+        "h": 44.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": {
+        "vx": 0.0,
+        "vy": 0.0,
+        "speed": 300.0,
+        "is_player_controlled": true,
+        "patrol": null,
+        "mode": "TopDown"
+      },
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": {
+        "current": 3.0,
+        "max": 3.0,
+        "invulnerability_timer": 0.0,
+        "is_dead": false
+      },
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 2,
+      "name": "sol",
+      "tag": "wall",
+      "transform": {
+        "x": 0,
+        "y": 568,
+        "w": 1000,
+        "h": 32,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 1000,
+        "h": 32,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 3,
+      "name": "plafond",
+      "tag": "wall",
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "w": 1000,
+        "h": 32,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 1000,
+        "h": 32,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 4,
+      "name": "mur_gauche",
+      "tag": "wall",
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "w": 32,
+        "h": 600,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32,
+        "h": 600,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 5,
+      "name": "mur_droit",
+      "tag": "wall",
+      "transform": {
+        "x": 968,
+        "y": 0,
+        "w": 32,
+        "h": 600,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 1976635,
+        "outline_color": 4674921,
+        "outline_width": 2,
+        "z_index": 1,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 32,
+        "h": 600,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": null,
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 6,
+      "name": "piece_6",
+      "tag": "collectible",
+      "transform": {
+        "x": 308.0,
+        "y": 508.0,
+        "w": 24.0,
+        "h": 24.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": {
+          "Circle": {
+            "radius": 12.0
+          }
+        },
+        "color": 16096779,
+        "outline_color": null,
+        "outline_width": 0,
+        "z_index": 5,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 24.0,
+        "h": 24.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": {
+        "script_path": "assets/scripts/coin_pickup.kvl.json",
+        "on_overlap_event": "OnPlayerOverlap",
+        "on_interact_event": null,
+        "on_seen_event": null
+      },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 7,
+      "name": "piece_7",
+      "tag": "collectible",
+      "transform": {
+        "x": 508.0,
+        "y": 508.0,
+        "w": 24.0,
+        "h": 24.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": {
+          "Circle": {
+            "radius": 12.0
+          }
+        },
+        "color": 16096779,
+        "outline_color": null,
+        "outline_width": 0,
+        "z_index": 5,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 24.0,
+        "h": 24.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": {
+        "script_path": "assets/scripts/coin_pickup.kvl.json",
+        "on_overlap_event": "OnPlayerOverlap",
+        "on_interact_event": null,
+        "on_seen_event": null
+      },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 8,
+      "name": "piece_8",
+      "tag": "collectible",
+      "transform": {
+        "x": 688.0,
+        "y": 508.0,
+        "w": 24.0,
+        "h": 24.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": {
+          "Circle": {
+            "radius": 12.0
+          }
+        },
+        "color": 16096779,
+        "outline_color": null,
+        "outline_width": 0,
+        "z_index": 5,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 24.0,
+        "h": 24.0,
+        "is_solid": false,
+        "is_trigger": true,
+        "is_pushable": false,
+        "layer": 2
+      },
+      "movement": null,
+      "vision": null,
+      "script": {
+        "script_path": "assets/scripts/coin_pickup.kvl.json",
+        "on_overlap_event": "OnPlayerOverlap",
+        "on_interact_event": null,
+        "on_seen_event": null
+      },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    },
+    {
+      "id": 9,
+      "name": "porte_niveau",
+      "tag": "door",
+      "transform": {
+        "x": 900,
+        "y": 440,
+        "w": 40.0,
+        "h": 120.0,
+        "rotation": 0.0
+      },
+      "renderable": {
+        "shape": "Rect",
+        "color": 15680580,
+        "outline_color": null,
+        "outline_width": 0,
+        "z_index": 2,
+        "visible": true
+      },
+      "collider": {
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "w": 40.0,
+        "h": 120.0,
+        "is_solid": true,
+        "is_trigger": false,
+        "is_pushable": false,
+        "layer": 1
+      },
+      "movement": null,
+      "vision": null,
+      "script": {
+        "script_path": "assets/scripts/ref_porte_niveau.kvl.json",
+        "on_overlap_event": null,
+        "on_interact_event": "OnDoorInteract",
+        "on_seen_event": null
+      },
+      "emitter": null,
+      "projectile": null,
+      "health": null,
+      "dialogue": null,
+      "item_pickup": null,
+      "is_active": true
+    }
+  ],
+  "player": null,
+  "coins": [],
+  "doors": [],
+  "walls": [],
+  "enemies": []
+}

@@ -12023,6 +12023,85 @@ mod tests {
         assert_eq!(state.scene_name, "NIVEAU 1");
     }
 
+    /// Chemin du jeu de référence livré (robuste au répertoire courant des tests).
+    fn reference_project_path() -> &'static str {
+        if std::path::Path::new("assets/projects/jeu_reference.karacti").exists() {
+            "assets/projects/jeu_reference.karacti"
+        } else {
+            "../../assets/projects/jeu_reference.karacti"
+        }
+    }
+
+    #[test]
+    fn reference_game_plays_two_levels_to_victory() {
+        use crate::screens::GameScreen;
+
+        let project = crate::project::KaractiProject::load_from_file(reference_project_path())
+            .expect("projet de référence lisible");
+        assert_eq!(project.scenes.len(), 2, "deux niveaux embarqués");
+        assert_eq!(project.ui_screens.len(), 4, "menu, pause, défaite, victoire");
+
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
+        state.load_project(project);
+
+        assert_eq!(state.screen, GameScreen::Menu, "menu_active démarre au menu");
+        assert_eq!(state.level_index, 0);
+        assert_eq!(state.scene_name, "Niveau 1 : Salle des Émeraudes");
+
+        // Entrée → niveau 1 jouable.
+        let mut enter = InputState::new();
+        enter.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut enter, 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+        let player = state.player_index().expect("joueur du niveau 1");
+        assert_eq!(
+            state.entities[player].health.as_ref().map(|health| health.max),
+            Some(3.0),
+            "le joueur du niveau 1 a bien ses PV"
+        );
+
+        // Le niveau 1 est terminé → niveau 2.
+        state.kvl_context.set_var("level_complete", Value::Int(1));
+        step(&mut state, &mut InputState::new(), 1);
+        assert_eq!(state.level_index, 1, "niveau 2 chargé");
+        assert_eq!(state.scene_name, "Niveau 2 : Crypte du Sanctuaire");
+
+        // Le dernier niveau est terminé → victoire.
+        state.kvl_context.set_var("level_complete", Value::Int(1));
+        step(&mut state, &mut InputState::new(), 1);
+        assert_eq!(state.screen, GameScreen::Victory);
+    }
+
+    #[test]
+    fn reference_door_graph_marks_the_level_complete() {
+        let path = if std::path::Path::new("assets/scripts/ref_porte_niveau.kvl.json").exists() {
+            "assets/scripts/ref_porte_niveau.kvl.json"
+        } else {
+            "../../assets/scripts/ref_porte_niveau.kvl.json"
+        };
+        let content = std::fs::read_to_string(path).expect("graphe de porte lisible");
+        let graph = kvl_core::Graph::from_json(&content).expect("graphe KVL valide");
+        assert_eq!(graph.nodes.len(), 2, "un événement + une action");
+
+        let action = graph
+            .nodes
+            .values()
+            .find_map(|node| match &node.kind {
+                kvl_core::NodeKind::Action { action_type } => Some(action_type.clone()),
+                _ => None,
+            })
+            .expect("action présente");
+        assert_eq!(action, "SetVariable:level_complete:true");
+
+        let diagnostics = kvl_core::Validator::validate(&graph);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.severity == kvl_core::ValidationSeverity::Error),
+            "le graphe de référence ne doit pas produire d'erreur : {diagnostics:?}"
+        );
+    }
+
     #[test]
     fn test_data_driven_objective_hierarchy() {        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
             .expect("Scène chargée");
