@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Sliders, Move, Sparkles, Trash2, Copy } from 'lucide-react';
 import type { StudioEntitySummary } from '../services/engineBridge';
+import { AiSparkle } from './AiSparkle';
 
 interface EntityInspectorProps {
   selectedEntity: StudioEntitySummary | null;
   onUpdateTransform: (id: number, x: number, y: number, w: number, h: number) => void;
   onDuplicate: (id: number) => void;
   onDelete: (id: number) => void;
+  /** Ouvre la barre d'édition IA avec le champ d'origine en indice. */
+  onAiEdit: (field: string) => void;
 }
 
 const TAG_COLORS: Record<string, string> = {
@@ -34,6 +37,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
   onUpdateTransform,
   onDuplicate,
   onDelete,
+  onAiEdit,
 }) => {
   const [x, setX] = useState(0);
   const [y, setY] = useState(0);
@@ -113,13 +117,22 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
           </div>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { id: 'x', label: 'X', value: x, set: setX },
-              { id: 'y', label: 'Y', value: y, set: setY },
-              { id: 'w', label: 'Larg.', value: w, set: setW },
-              { id: 'h', label: 'Haut.', value: h, set: setH },
+              { id: 'x', label: 'X', value: x, set: setX, aiLabel: 'la position X' },
+              { id: 'y', label: 'Y', value: y, set: setY, aiLabel: 'la position Y' },
+              { id: 'w', label: 'Larg.', value: w, set: setW, aiLabel: 'la largeur' },
+              { id: 'h', label: 'Haut.', value: h, set: setH, aiLabel: 'la hauteur' },
             ].map(field => (
               <div key={field.id}>
-                <label htmlFor={`transform-${field.id}`} className="text-[10px] text-[#94a3b8] block mb-0.5">{field.label} :</label>
+                <div className="flex items-center justify-between mb-0.5">
+                  <label htmlFor={`transform-${field.id}`} className="text-[10px] text-[#94a3b8]">
+                    {field.label} :
+                  </label>
+                  <AiSparkle
+                    label={field.aiLabel}
+                    testId={`ai-sparkle-${field.id}`}
+                    onClick={() => onAiEdit(field.id)}
+                  />
+                </div>
                 <input
                   id={`transform-${field.id}`}
                   type="number"
@@ -148,7 +161,14 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
           <div className="space-y-1.5 text-[11px] text-[#cbd5e1]">
             <div className="flex items-center justify-between">
               <span className="text-[#94a3b8]">Nom</span>
-              <span className="font-semibold text-[#f8fafc] truncate max-w-[55%]">{selectedEntity.name}</span>
+              <span className="flex items-center gap-1 min-w-0">
+                <span className="font-semibold text-[#f8fafc] truncate max-w-[45%]">{selectedEntity.name}</span>
+                <AiSparkle
+                  label="le nom"
+                  testId="ai-sparkle-name"
+                  onClick={() => onAiEdit('name')}
+                />
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[#94a3b8]">Type</span>
@@ -189,9 +209,16 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
             {selectedEntity.has_movement && (
               <div className="flex items-center justify-between">
                 <span className="text-[#94a3b8]">Déplacement</span>
-                <span className="badge-tag bg-[#150d27] text-[#94a3b8]">
-                  {selectedEntity.movement_mode ?? 'Actif'}
-                  {selectedEntity.speed !== undefined && ` · ${Math.round(selectedEntity.speed)} u/s`}
+                <span className="flex items-center gap-1">
+                  <span className="badge-tag bg-[#150d27] text-[#94a3b8]">
+                    {selectedEntity.movement_mode ?? 'Actif'}
+                    {selectedEntity.speed !== undefined && ` · ${Math.round(selectedEntity.speed)} u/s`}
+                  </span>
+                  <AiSparkle
+                    label="la vitesse"
+                    testId="ai-sparkle-speed"
+                    onClick={() => onAiEdit('speed')}
+                  />
                 </span>
               </div>
             )}

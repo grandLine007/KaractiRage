@@ -9,6 +9,7 @@ import { SpawnPalette } from './components/SpawnPalette';
 import { SuggestionPanel } from './components/SuggestionPanel';
 import { ToastCenter, type Toast } from './components/ToastCenter';
 import { AiAssistantModal } from './components/AiAssistantModal';
+import { InlineAiBar } from './components/InlineAiBar';
 import { ProjectHubModal } from './components/ProjectHubModal';
 import { ArchetypesModal } from './components/ArchetypesModal';
 import { RecipeWizardModal } from './components/RecipeWizardModal';
@@ -42,6 +43,7 @@ import {
 } from './services/engineBridge';
 import { Check, X, HelpCircle } from 'lucide-react';
 import type { ProjectEntry } from './services/projectBridge';
+import { getAiEditContext, undoAiEdit, type AiApplyReport } from './services/aiEditBridge';
 import { prewarm3D } from './render3d/prewarm';
 
 export function App() {
@@ -59,6 +61,11 @@ export function App() {
   const [pendingAiPatch, setPendingAiPatch] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  // Édition IA inline : barre ancrée (pas de modale) + dernière transaction annulable.
+  const [isAiBarOpen, setIsAiBarOpen] = useState(false);
+  const [aiFieldHint, setAiFieldHint] = useState<string | null>(null);
+  const [aiSceneId, setAiSceneId] = useState('scène courante');
+  const [lastAiTransaction, setLastAiTransaction] = useState<string | null>(null);
 
   const [metrics, setMetrics] = useState({
     fps: 60,
@@ -90,6 +97,31 @@ export function App() {
   const dismissToast = useCallback((id: number) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
+
+  // --- Édition IA inline (barre ancrée) -------------------------------------
+  const openAiEdit = useCallback((field: string | null = null) => {
+    setAiFieldHint(field);
+    setIsAiBarOpen(true);
+    // Le nom de scène vient du contexte moteur, jamais d'une supposition côté UI.
+    void getAiEditContext().then(context => {
+      if (context?.scene_id) setAiSceneId(context.scene_id);
+    });
+  }, []);
+
+  const closeAiEdit = useCallback(() => {
+    setIsAiBarOpen(false);
+    setAiFieldHint(null);
+  }, []);
+
+  const handleAiApplied = useCallback((report: AiApplyReport) => {
+    setLastAiTransaction(report.transaction_id);
+    setIsAiBarOpen(false);
+    refresh();
+    pushToast(
+      `${report.changes.length} modification(s) appliquée(s) · Ctrl+Z pour annuler`,
+      'success'
+    );
+  }, [refresh, pushToast]);
 
   // Préchauffe la 3D (chunk three.js + sonde GPU) en tâche de fond : n'affecte pas
   // l'ouverture, mais rend la première bascule 3D quasi immédiate.
@@ -178,6 +210,29 @@ export function App() {
         return;
       }
 
+      // 0. Édition IA inline : Ctrl/⌘ K ouvre la barre ancrée (jamais une modale).
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        if (isAiBarOpen) closeAiEdit();
+        else openAiEdit(null);
+        return;
+      }
+
+      // 0bis. Annulation de la dernière édition IA (une intention = une transaction).
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey && lastAiTransaction) {
+        e.preventDefault();
+        const transaction = lastAiTransaction;
+        setLastAiTransaction(null);
+        void undoAiEdit(transaction).then(ok => {
+          refresh();
+          pushToast(
+            ok ? 'Édition IA annulée.' : 'Annulation IA indisponible (session expirée).',
+            ok ? 'info' : 'error'
+          );
+        });
+        return;
+      }
+
       // 1. Raccourcis de mode : F6 (cycle). Tab est laissé au navigateur (UX-401).
       if (e.key === 'F6') {
         e.preventDefault();
@@ -210,7 +265,9 @@ export function App() {
       } else if (e.key === 'w' || e.key === 'W') {
         setIsWizardOpen(prev => !prev);
       } else if (e.key === 'Escape') {
-        if (pendingAiPatch) {
+        if (isAiBarOpen) {
+          closeAiEdit();
+        } else if (pendingAiPatch) {
           handleRejectAi();
         } else {
           setIsHubOpen(false);
@@ -243,7 +300,7 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentMode, pendingAiPatch, handleAcceptAi, handleRejectAi, refresh, applyMode]);
+  }, [currentMode, pendingAiPatch, handleAcceptAi, handleRejectAi, refresh, applyMode, isAiBarOpen, openAiEdit, closeAiEdit, lastAiTransaction, pushToast]);
 
   // --- Handlers d'édition connectés au moteur natif -------------------------
 
@@ -252,6 +309,8 @@ export function App() {
   }, [refresh]);
 
   const handleUpdateTransform = useCallback((id: number, x: number, y: number, w: number, h: number) => {
+    // Une édition manuelle désarme l'annulation IA : Ctrl+Z ne doit plus viser l'IA.
+    setLastAiTransaction(null);
     void updateEntityTransform(id, x, y, w, h, true).then(() => {
       refresh();
       pushToast('Position enregistrée (Ctrl+Z pour annuler).', 'success');
@@ -259,12 +318,14 @@ export function App() {
   }, [refresh, pushToast]);
 
   const handleDuplicate = useCallback((id: number) => {
+    setLastAiTransaction(null);
     void selectEntity(id)
       .then(() => duplicateSelectedEntity())
       .then(() => refresh());
   }, [refresh]);
 
   const handleDelete = useCallback((id: number) => {
+    setLastAiTransaction(null);
     void selectEntity(id)
       .then(() => deleteSelectedEntity())
       .then(ok => {
@@ -284,7 +345,10 @@ export function App() {
     void setBrushTile(tileId).then(() => refresh());
   }, [refresh]);
 
-  const handleUndo = useCallback(() => { void undo().then(() => refresh()); }, [refresh]);
+  const handleUndo = useCallback(() => {
+    setLastAiTransaction(null);
+    void undo().then(() => refresh());
+  }, [refresh]);
   const handleRedo = useCallback(() => { void redo().then(() => refresh()); }, [refresh]);
 
   const handleSave = useCallback(() => {
@@ -486,6 +550,23 @@ export function App() {
             </>
           )}
           </ErrorBoundary>
+
+          {/* Barre d'édition IA ancrée : le viewport reste visible et interactif. */}
+          {currentMode === 'edit' && (
+            <InlineAiBar
+              key={`${isAiBarOpen ? 'open' : 'closed'}-${aiFieldHint ?? 'none'}`}
+              open={isAiBarOpen}
+              fieldHint={aiFieldHint}
+              entity={selectedEntity}
+              sceneId={aiSceneId}
+              onClose={closeAiEdit}
+              onApplied={handleAiApplied}
+              onOpenAssistant={() => {
+                closeAiEdit();
+                setIsAiModalOpen(true);
+              }}
+            />
+          )}
         </main>
 
         {/* Panneau Droit : Inspecteur (Visible en mode Studio) */}
@@ -495,6 +576,7 @@ export function App() {
             onUpdateTransform={handleUpdateTransform}
             onDuplicate={handleDuplicate}
             onDelete={handleDelete}
+            onAiEdit={openAiEdit}
           />
         )}
       </div>
@@ -537,6 +619,7 @@ export function App() {
             </div>
             <div className="p-4 text-xs text-[#94a3b8] font-mono space-y-1.5">
               <div className="flex justify-between"><span>Changer de mode</span><kbd>Ctrl+1…5</kbd></div>
+              <div className="flex justify-between"><span>Éditer avec l'IA (sélection)</span><kbd>Ctrl+K</kbd></div>
               <div className="flex justify-between"><span>Mode suivant</span><kbd>F6</kbd></div>
               <div className="flex justify-between"><span>Hub / IA / Recette</span><kbd>H / I / W</kbd></div>
               <div className="flex justify-between"><span>Outils sélection / pinceau / gomme</span><kbd>V / B / X</kbd></div>

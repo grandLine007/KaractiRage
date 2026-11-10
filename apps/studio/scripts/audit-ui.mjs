@@ -48,6 +48,9 @@ const STEPS = [
   { id: 'hub', label: 'Hub' },
   { id: 'play', label: 'Play', run: (p) => p.getByTestId('hub').getByLabel('Fermer').click() },
   { id: 'edition', label: 'Édition', run: (p) => p.getByTestId('header-modes').getByText('Créer', { exact: false }).click() },
+  // Surface IA inline (plan IA inline, sprint 2) : la barre ancrée est auditée comme un écran.
+  // Ctrl+K l'ouvre ; l'IPC factice ne connaît pas `ai_context`, le repli doit rester propre.
+  { id: 'edition-ia', label: 'Édition IA', run: (p) => p.keyboard.press('Control+k') },
   { id: 'kvl-recettes', label: 'KVL Recettes', run: (p) => p.getByTestId('header-modes').getByText('Logique', { exact: false }).click() },
   { id: 'kvl-noeuds', label: 'KVL Nœuds', run: (p) => p.getByTestId('kv-palette').getByText('Nœuds', { exact: false }).click() },
   { id: 'pixel', label: 'Pixel Art', run: (p) => p.getByTestId('header-modes').getByText('Pixel', { exact: false }).click() },
