@@ -186,7 +186,9 @@
     </header>
 
     <div class="viewport-container" id="viewport-box">
-      <canvas id="game-canvas" width="1200" height="800"></canvas>
+      <!-- tabindex="0" : le canvas peut recevoir le focus clavier après le clic
+           sur « LANCER LE JEU » ; les raccourcis restent écoutés sur window. -->
+      <canvas id="game-canvas" width="1200" height="800" tabindex="0"></canvas>
 
       <div class="overlay-start" id="overlay-start">
         <div class="start-card">
@@ -256,6 +258,131 @@
 
     overlayStart.addEventListener('click', launchGame);
     startBtn.addEventListener('click', launchGame);
+
+    // -----------------------------------------------------------------------
+    // Entrées clavier et souris.
+    //
+    // KEY_MAP est recopiée à l'identique de
+    // `apps/studio/src/components/GameViewport.tsx` : mêmes `event.code`,
+    // mêmes codes WebKey. Une divergence rendrait l'export moins jouable que
+    // l'aperçu du Studio.
+    // -----------------------------------------------------------------------
+    const KEY_MAP = {
+      'ArrowLeft': 0,
+      'ArrowRight': 1,
+      'ArrowUp': 2,
+      'ArrowDown': 3,
+      'KeyW': 4,
+      'KeyA': 5,
+      'KeyS': 6,
+      'KeyD': 7,
+      'KeyZ': 8,
+      'KeyQ': 9,
+      'KeyE': 10,
+      'Space': 11,
+      'Tab': 12,
+      'KeyN': 13,
+      'KeyG': 14,
+      'KeyM': 15,
+      'F1': 16,
+      'F2': 17,
+      'F3': 18,
+      'KeyR': 19,
+      'Escape': 20,
+      'ControlLeft': 21,
+      'ControlRight': 21,
+      'MetaLeft': 21,
+      'MetaRight': 21,
+      'KeyV': 22,
+      'KeyB': 23,
+      'KeyX': 24,
+      'KeyT': 25,
+      'KeyP': 26,
+      'KeyH': 27,
+      'KeyU': 28,
+      'Digit1': 30,
+      'Digit2': 31,
+      'Digit3': 32,
+      'Digit4': 33,
+      'Digit5': 34,
+      'KeyI': 35,
+      'Enter': 36,
+      'NumpadEnter': 36,
+      'Delete': 37,
+      'Backspace': 38,
+      'KeyC': 39,
+      'KeyY': 40
+    };
+
+    // Module wasm chargé par initRuntime (null avant) : les écouteurs restent
+    // inertes tant que le moteur n'est pas prêt.
+    let wasmRuntime = null;
+
+    // Touches dont le comportement navigateur par défaut gênerait le jeu :
+    // défilement de la page (Espace, flèches) et retour arrière (Backspace).
+    const TOUCHES_SCROLL = new Set([
+      'Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Backspace'
+    ]);
+
+    function estChampDeSaisie(cible) {
+      return Boolean(
+        cible && cible.tagName &&
+        (cible.tagName === 'INPUT' || cible.tagName === 'TEXTAREA')
+      );
+    }
+
+    function envoyerTouche(nomFonction, code) {
+      if (!wasmRuntime || typeof wasmRuntime[nomFonction] !== 'function') return;
+      wasmRuntime[nomFonction](code);
+    }
+
+    // Écoute sur window (et non sur le canvas seul) : le jeu répond même sans
+    // clic préalable, comme un jeu de bureau.
+    window.addEventListener('keydown', (event) => {
+      // Runtime absent (export de données) : aucune touche n'est interceptée,
+      // le comportement historique de la page reste intact.
+      if (!wasmRuntime || estChampDeSaisie(event.target)) return;
+      const code = KEY_MAP[event.code];
+      if (code === undefined) return;
+      if (TOUCHES_SCROLL.has(event.code)) event.preventDefault();
+      envoyerTouche('wasm_on_key_down', code);
+    });
+
+    window.addEventListener('keyup', (event) => {
+      if (!wasmRuntime || estChampDeSaisie(event.target)) return;
+      const code = KEY_MAP[event.code];
+      if (code === undefined) return;
+      envoyerTouche('wasm_on_key_up', code);
+    });
+
+    // Alt-tab ou changement d'onglet pendant qu'une touche est maintenue : sans ce
+    // relâchement, le moteur croirait la touche encore enfoncée au retour.
+    function relacherToutesLesTouches() {
+      if (!wasmRuntime || typeof wasmRuntime.wasm_on_key_up !== 'function') return;
+      for (const code of Object.values(KEY_MAP)) {
+        wasmRuntime.wasm_on_key_up(code);
+      }
+    }
+    window.addEventListener('blur', relacherToutesLesTouches);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) relacherToutesLesTouches();
+    });
+
+    // Souris : le canvas est rendu en 1200×800 mais peut être mis à l'échelle
+    // par le CSS ; on repasse toujours en coordonnées internes du moteur.
+    canvas.addEventListener('mousemove', (event) => {
+      if (!wasmRuntime || typeof wasmRuntime.wasm_on_mouse_move !== 'function') return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      const x = ((event.clientX - rect.left) * canvas.width) / rect.width;
+      const y = ((event.clientY - rect.top) * canvas.height) / rect.height;
+      wasmRuntime.wasm_on_mouse_move(x, y);
+    });
+
+    // Certains navigateurs ne donnent le focus clavier au canvas qu'après un
+    // clic. Les raccourcis fonctionnent déjà via window, mais on reprend le
+    // focus pour que le canvas reste la cible naturelle des futures entrées.
+    canvas.addEventListener('click', () => canvas.focus());
 
     // -----------------------------------------------------------------------
     // État du runtime, lisible par les outils (export-smoke.mjs) :
@@ -371,6 +498,10 @@
             : '';
           throw new Error(detail || 'wasm_init_engine a renvoyé false');
         }
+
+        // Moteur prêt : les écouteurs d'entrée peuvent désormais transmettre
+        // les touches et la souris aux exports wasm_on_key_down/up/mouse_move.
+        wasmRuntime = wasmModule;
 
         const width = wasmModule.wasm_get_canvas_width();
         const height = wasmModule.wasm_get_canvas_height();

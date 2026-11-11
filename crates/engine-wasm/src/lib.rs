@@ -3,7 +3,8 @@
 //! Expose l'API consommée par `standalone_template.html` :
 //! `wasm_init_engine` (bool : vrai si le moteur est prêt), `wasm_last_error`
 //! (message de diagnostic), `wasm_import_game_package`, `wasm_render_frame`,
-//! `wasm_get_framebuffer_ptr`, `wasm_get_canvas_width/height`.
+//! `wasm_get_framebuffer_ptr`, `wasm_get_canvas_width/height`, ainsi que les
+//! entrées `wasm_on_key_down`, `wasm_on_key_up` et `wasm_on_mouse_move`.
 //!
 //! Build : `wasm-pack build crates/engine-wasm --out-dir ../../dist/pkg`
 //! (ou `cargo build --target wasm32-unknown-unknown` + `wasm-bindgen`).
@@ -75,6 +76,40 @@ mod wasm_api {
         if let Some(e) = engine.as_mut() {
             let bytes = e.render_frame(dt);
             *FRAMEBUFFER.lock().unwrap() = bytes;
+        }
+    }
+
+    /// Transmet un appui clavier au moteur.
+    ///
+    /// `key` est un code WebKey de la table partagée avec le Studio (0 =
+    /// flèche gauche, 1 = flèche droite, …, 40 = Y). Le moteur ignore
+    /// silencieusement les codes inconnus : aucune touche ne peut donc
+    /// interrompre la boucle de rendu.
+    #[wasm_bindgen]
+    pub fn wasm_on_key_down(key: u32) {
+        let mut engine = ENGINE.lock().unwrap();
+        if let Some(e) = engine.as_mut() {
+            e.on_key_down(key);
+        }
+    }
+
+    /// Transmet un relâchement clavier au moteur (même table que
+    /// [`wasm_on_key_down`]).
+    #[wasm_bindgen]
+    pub fn wasm_on_key_up(key: u32) {
+        let mut engine = ENGINE.lock().unwrap();
+        if let Some(e) = engine.as_mut() {
+            e.on_key_up(key);
+        }
+    }
+
+    /// Transmet la position de la souris au moteur, en coordonnées internes
+    /// du canvas (1200 × 800). Sans moteur, l'appel est sans effet.
+    #[wasm_bindgen]
+    pub fn wasm_on_mouse_move(x: f32, y: f32) {
+        let mut engine = ENGINE.lock().unwrap();
+        if let Some(e) = engine.as_mut() {
+            e.on_mouse_move(x, y);
         }
     }
 

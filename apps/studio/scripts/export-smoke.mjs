@@ -26,20 +26,32 @@
  *   - le canvas contient des pixels : plus de 1000 pixels non noirs, ou plus
  *     de 20 couleurs distinctes (échantillonnage `ctx.getImageData`).
  *
+ * Avec `--expect-input`, le test prouve que le jeu est réellement JOUABLE :
+ *
+ *   - après `runtime=running`, capture l'image complète du canvas ;
+ *   - envoie `ArrowRight` (`keydown` sur `window`, maintenu ~800 ms) ;
+ *   - attend ~1 s après le `keyup`, recapture, et exige une variation
+ *     significative (> 2000 pixels modifiés) : le joueur a bougé.
+ *   L'option implique `--expect-runtime` ; sans runtime, l'échec est propre.
+ *
  * Usage :
  *   node scripts/export-smoke.mjs <chemin-vers-html> [--json] [--timeout <ms>]
- *                                 [--expect-runtime]
+ *                                 [--expect-runtime] [--expect-input]
  *   node scripts/export-smoke.mjs --help
  *
  * Options :
  *   --json           sort un objet JSON machine (rien d'autre sur stdout) :
  *                    { ok, entities, consoleErrors, pageErrors,
  *                      networkRequests, runtime, expectedRuntime,
- *                      nonBlackPixels, canvasColors, problems }
+ *                      nonBlackPixels, canvasColors, expectedInput,
+ *                      inputDelta, inputPixelsBefore, inputPixelsAfter,
+ *                      problems }
  *   --timeout <ms>   délai global (défaut : 30 000 ms), pour ne jamais
  *                    suspendre un CI.
  *   --expect-runtime exige que le runtime WASM embarqué démarre et rende des
  *                    pixels (sinon échec propre, sans crash).
+ *   --expect-input   exige que le clavier pilote le moteur : variation de
+ *                    pixels > 2000 après un appui simulé sur `ArrowRight`.
  *   -h, --help       affiche cette aide.
  *
  * Codes de sortie :
@@ -68,6 +80,15 @@ const PIXELS_MIN_NON_BLACK = 1000;
 /** …ou plus de 20 couleurs distinctes. */
 const COLORS_MIN_DISTINCT = 20;
 
+/** Variation minimale de pixels pour prouver qu'une entrée agit (--expect-input). */
+const INPUT_DIFF_MIN_PIXELS = 2000;
+
+/** Durée d'appui simulée sur `ArrowRight` (ms). */
+const INPUT_KEY_HOLD_MS = 800;
+
+/** Délai après le relâchement avant la recapture (ms). */
+const INPUT_SETTLE_MS = 1000;
+
 /** Schémas d'URL qui ne constituent PAS une requête réseau. */
 const LOCAL_PROTOCOLS = ['file:', 'data:', 'blob:', 'about:', 'chrome:', 'devtools:'];
 
@@ -80,10 +101,13 @@ erreur console, avec un paquet embarqué valide et un canvas.
 Options :
   --json           sortie JSON machine { ok, entities, consoleErrors, pageErrors,
                    networkRequests, runtime, expectedRuntime, nonBlackPixels,
-                   canvasColors, problems }
+                   canvasColors, expectedInput, inputDelta, inputPixelsBefore,
+                   inputPixelsAfter, problems }
   --timeout <ms>   délai global en millisecondes (défaut : ${DEFAULT_TIMEOUT_MS})
   --expect-runtime exige que le runtime WASM embarqué démarre (runtime=running)
                    et rende des pixels dans le canvas
+  --expect-input   exige que le clavier pilote le moteur : appuie sur ArrowRight
+                   et vérifie que plus de ${INPUT_DIFF_MIN_PIXELS} pixels changent
   -h, --help       affiche cette aide
 
 Codes de sortie :
@@ -94,6 +118,7 @@ Codes de sortie :
 Exemples :
   npm run export:smoke -- ./jeu-standalone.html
   node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime
+  node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime --expect-input
   node scripts/export-smoke.mjs ./jeu-standalone.html --json
 `;
 
@@ -107,6 +132,7 @@ function parseArgs(args) {
     help: false,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     expectRuntime: false,
+    expectInput: false,
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -114,6 +140,8 @@ function parseArgs(args) {
       opts.json = true;
     } else if (arg === '--expect-runtime') {
       opts.expectRuntime = true;
+    } else if (arg === '--expect-input') {
+      opts.expectInput = true;
     } else if (arg === '-h' || arg === '--help') {
       opts.help = true;
     } else if (arg === '--timeout') {
@@ -148,9 +176,14 @@ function isLocalUrl(url) {
 }
 
 /** Sortie d'erreur d'usage / d'environnement : message clair + exit 2. */
-function usageError(message, json, expectRuntime = false) {
+function usageError(message, json, expectRuntime = false, expectInput = false) {
   if (json) {
-    const payload = { ...emptyResult(), expectedRuntime: expectRuntime, problems: [message] };
+    const payload = {
+      ...emptyResult(),
+      expectedRuntime: expectRuntime,
+      expectedInput: expectInput,
+      problems: [message],
+    };
     process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
   } else {
     console.error(`[export-smoke] ${message}`);
@@ -178,6 +211,10 @@ function emptyResult() {
     expectedRuntime: false,
     nonBlackPixels: null,
     canvasColors: null,
+    expectedInput: false,
+    inputDelta: null,
+    inputPixelsBefore: null,
+    inputPixelsAfter: null,
     problems: [],
   };
 }
@@ -292,10 +329,179 @@ async function waitForCanvasContent(page, timeoutMs) {
   }
 }
 
+/**
+ * Capture l'image complète du canvas et la conserve DANS la page
+ * (`window.__karacti_input_before`) : inutile de transférer 3,84 Mo de pixels
+ * par le protocole Playwright avant/après l'entrée.
+ */
+async function captureInputSnapshot(page) {
+  return await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return { ok: false, reason: 'aucun canvas dans le document' };
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { ok: false, reason: 'contexte 2D indisponible' };
+    if (!canvas.width || !canvas.height) {
+      return { ok: false, reason: `canvas de taille nulle (${canvas.width}x${canvas.height})` };
+    }
+    try {
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      window.__karacti_input_before = data;
+      let nonBlack = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] !== 0 || data[i + 1] !== 0 || data[i + 2] !== 0) nonBlack++;
+      }
+      return { ok: true, width: canvas.width, height: canvas.height, nonBlack };
+    } catch (err) {
+      return { ok: false, reason: `getImageData impossible : ${String(err?.message ?? err)}` };
+    }
+  });
+}
+
+/**
+ * Focus le canvas puis envoie un `keydown` `ArrowRight` sur `window`, comme le
+ * ferait un vrai clavier. `defaultPrevented` permet de constater que le
+ * template bloque bien le défilement de la page.
+ */
+async function pressArrowRight(page) {
+  return await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    if (canvas && typeof canvas.focus === 'function') canvas.focus();
+    const event = new KeyboardEvent('keydown', {
+      code: 'ArrowRight',
+      key: 'ArrowRight',
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return { defaultPrevented: event.defaultPrevented };
+  });
+}
+
+/** Envoie le `keyup` correspondant, pour arrêter le déplacement du joueur. */
+async function releaseArrowRight(page) {
+  return await page.evaluate(() => {
+    const event = new KeyboardEvent('keyup', {
+      code: 'ArrowRight',
+      key: 'ArrowRight',
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return true;
+  });
+}
+
+/**
+ * Recapture le canvas et compare à l'instantané mémorisé dans la page :
+ * nombre de pixels modifiés (canal RVBA) et pixels non noirs après coup.
+ */
+async function diffInputSnapshot(page) {
+  return await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    const before = window.__karacti_input_before;
+    if (!canvas) return { ok: false, reason: 'aucun canvas dans le document' };
+    if (!before) return { ok: false, reason: 'instantané initial absent' };
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { ok: false, reason: 'contexte 2D indisponible' };
+    try {
+      const after = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      if (after.length !== before.length) {
+        return { ok: false, reason: `taille du canvas changée (${before.length} → ${after.length} octets)` };
+      }
+      let delta = 0;
+      let afterNonBlack = 0;
+      for (let i = 0; i < after.length; i += 4) {
+        if (
+          after[i] !== before[i] ||
+          after[i + 1] !== before[i + 1] ||
+          after[i + 2] !== before[i + 2] ||
+          after[i + 3] !== before[i + 3]
+        ) {
+          delta++;
+        }
+        if (after[i] !== 0 || after[i + 1] !== 0 || after[i + 2] !== 0) afterNonBlack++;
+      }
+      delete window.__karacti_input_before;
+      return { ok: true, delta, afterNonBlack };
+    } catch (err) {
+      return { ok: false, reason: `getImageData impossible : ${String(err?.message ?? err)}` };
+    }
+  });
+}
+
+/**
+ * Sonde d'entrée : capture, appuie sur ArrowRight ~800 ms, relâche, attend 1 s,
+ * recapture et renvoie la variation mesurée. Toute erreur devient un problème
+ * explicite (jamais un crash du harnais).
+ */
+async function runInputProbe(page, startedAt, timeoutMs) {
+  const problems = [];
+  const remaining = timeoutMs - (Date.now() - startedAt);
+  if (remaining < INPUT_KEY_HOLD_MS + INPUT_SETTLE_MS + 1_500) {
+    problems.push(
+      `budget insuffisant pour --expect-input : ${remaining} ms restants, ` +
+        `il en faut au moins ${INPUT_KEY_HOLD_MS + INPUT_SETTLE_MS + 1_500} (augmenter --timeout)`,
+    );
+    return { problems, delta: null, beforeNonBlack: null, afterNonBlack: null, defaultPrevented: null };
+  }
+
+  const before = await captureInputSnapshot(page);
+  if (!before.ok) {
+    problems.push(`--expect-input : capture initiale impossible — ${before.reason}`);
+    return { problems, delta: null, beforeNonBlack: null, afterNonBlack: null, defaultPrevented: null };
+  }
+
+  let defaultPrevented = null;
+  try {
+    const pressed = await pressArrowRight(page);
+    defaultPrevented = pressed.defaultPrevented;
+  } catch (err) {
+    problems.push(`--expect-input : envoi de keydown impossible — ${String(err?.message ?? err).split('\n')[0]}`);
+  }
+
+  await page.waitForTimeout(INPUT_KEY_HOLD_MS);
+
+  try {
+    await releaseArrowRight(page);
+  } catch (err) {
+    problems.push(`--expect-input : envoi de keyup impossible — ${String(err?.message ?? err).split('\n')[0]}`);
+  }
+
+  await page.waitForTimeout(INPUT_SETTLE_MS);
+
+  const after = await diffInputSnapshot(page);
+  if (!after.ok) {
+    problems.push(`--expect-input : comparaison impossible — ${after.reason}`);
+    return {
+      problems,
+      delta: null,
+      beforeNonBlack: before.nonBlack,
+      afterNonBlack: null,
+      defaultPrevented,
+    };
+  }
+
+  if (after.delta <= INPUT_DIFF_MIN_PIXELS) {
+    problems.push(
+      `--expect-input : le clavier ne pilote pas le moteur — seulement ${after.delta} pixel(s) ` +
+        `modifié(s) après ArrowRight (seuil : > ${INPUT_DIFF_MIN_PIXELS})`,
+    );
+  }
+
+  return {
+    problems,
+    delta: after.delta,
+    beforeNonBlack: before.nonBlack,
+    afterNonBlack: after.afterNonBlack,
+    defaultPrevented,
+  };
+}
+
 /** Exécute le test de fumée. Renvoie l'objet résultat + un code de sortie. */
-async function runSmoke(filePath, timeoutMs, expectRuntime = false) {
+async function runSmoke(filePath, timeoutMs, expectRuntime = false, expectInput = false) {
   const result = emptyResult();
   result.expectedRuntime = expectRuntime;
+  result.expectedInput = expectInput;
   const url = pathToFileURL(filePath).href;
   const startedAt = Date.now();
   let browser = null;
@@ -450,6 +656,29 @@ async function runSmoke(filePath, timeoutMs, expectRuntime = false) {
               );
             }
           }
+
+          // --- Preuve de jouabilité (uniquement avec --expect-input) --------
+          // Le runtime tourne : on vérifie que le clavier le pilote vraiment.
+          if (expectInput) {
+            const probe = await runInputProbe(page, startedAt, timeoutMs);
+            result.inputDelta = probe.delta;
+            result.inputPixelsBefore = probe.beforeNonBlack;
+            result.inputPixelsAfter = probe.afterNonBlack;
+            for (const problem of probe.problems) result.problems.push(problem);
+            if (probe.defaultPrevented === false) {
+              result.problems.push(
+                '--expect-input : ArrowRight n\'a pas été preventDefault() — la page risque de défiler pendant le jeu',
+              );
+            }
+            // Le moteur doit toujours tourner après l'entrée : une touche ne
+            // doit jamais casser la boucle de rendu.
+            const etatApres = await readRuntimeState(page).catch(() => null);
+            if (etatApres !== 'running') {
+              result.problems.push(
+                `--expect-input : le runtime n'est plus "running" après l'entrée (${etatApres ?? 'indéfini'})`,
+              );
+            }
+          }
         }
       } else {
         // Constat sans attente : renseigne le JSON, jamais bloquant.
@@ -489,11 +718,18 @@ function printReport(filePath, result) {
     result.expectedRuntime && result.nonBlackPixels !== null
       ? `, ${result.nonBlackPixels} pixels non noirs (${result.canvasColors} couleurs)`
       : '';
+  // Le détail d'entrée n'apparaît qu'avec --expect-input.
+  const inputSuffix = result.expectedInput
+    ? `, entrée=${result.inputDelta ?? 'non mesurée'} pixels modifiés` +
+      (result.inputPixelsBefore !== null && result.inputPixelsAfter !== null
+        ? ` (${result.inputPixelsBefore} → ${result.inputPixelsAfter} pixels non noirs)`
+        : '')
+    : '';
   if (result.ok) {
     const plural = result.entities === 1 ? '' : 's';
     console.log(
       `[export-smoke] OK — ${result.entities} entité${plural}, 0 erreur, 0 requête réseau` +
-        `${runtimeSuffix}${pixelsSuffix}`,
+        `${runtimeSuffix}${pixelsSuffix}${inputSuffix}`,
     );
     return;
   }
@@ -502,7 +738,7 @@ function printReport(filePath, result) {
   console.error(
     `[export-smoke] résumé : ${result.entities ?? 0} entité(s), ` +
       `${errors} erreur(s) console/page, ${result.networkRequests.length} requête(s) réseau non-file://` +
-      runtimeSuffix,
+      runtimeSuffix + inputSuffix,
   );
 }
 
@@ -511,27 +747,35 @@ const parsed = parseArgs(argv);
 const JSON_OUTPUT = Boolean(parsed.json);
 
 async function main() {
-  const expectRuntime = Boolean(parsed.expectRuntime);
-  if (parsed.error) usageError(parsed.error, JSON_OUTPUT, expectRuntime);
+  const expectInput = Boolean(parsed.expectInput);
+  // Prouver l'entrée suppose un moteur qui tourne : --expect-input implique
+  // --expect-runtime (un fichier sans runtime échoue proprement, sans crash).
+  const expectRuntime = Boolean(parsed.expectRuntime || expectInput);
+  if (parsed.error) usageError(parsed.error, JSON_OUTPUT, expectRuntime, expectInput);
   if (parsed.help) {
     // L'aide documente l'usage ; code 2 (aucun test exécuté).
     process.stdout.write(USAGE);
     process.exit(2);
   }
-  if (!parsed.file) usageError('chemin du fichier HTML manquant', JSON_OUTPUT, expectRuntime);
+  if (!parsed.file) usageError('chemin du fichier HTML manquant', JSON_OUTPUT, expectRuntime, expectInput);
 
   const filePath = path.resolve(process.cwd(), parsed.file);
-  if (!existsSync(filePath)) usageError(`fichier introuvable : ${filePath}`, JSON_OUTPUT, expectRuntime);
-  if (!statSync(filePath).isFile()) usageError(`ce n'est pas un fichier : ${filePath}`, JSON_OUTPUT, expectRuntime);
+  if (!existsSync(filePath)) usageError(`fichier introuvable : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput);
+  if (!statSync(filePath).isFile()) usageError(`ce n'est pas un fichier : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput);
 
   let result;
   try {
-    result = await runSmoke(filePath, parsed.timeoutMs, expectRuntime);
+    result = await runSmoke(filePath, parsed.timeoutMs, expectRuntime, expectInput);
   } catch (err) {
     // Erreur d'environnement (navigateur indisponible, sandbox…) : exit 2.
     const message = String(err?.message ?? err).split('\n')[0];
     if (JSON_OUTPUT) {
-      const failed = { ...emptyResult(), expectedRuntime: expectRuntime, problems: [message] };
+      const failed = {
+        ...emptyResult(),
+        expectedRuntime: expectRuntime,
+        expectedInput: expectInput,
+        problems: [message],
+      };
       process.stdout.write(JSON.stringify(failed, null, 2) + '\n');
     } else {
       console.error(`[export-smoke] impossible d'exécuter le test : ${message}`);
