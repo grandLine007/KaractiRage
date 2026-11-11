@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::SystemTime;
 
 use crate::project::KaractiProject;
 use crate::recipe::{GameDimension, GameGenre};
@@ -264,29 +266,57 @@ struct RegistryFile {
     recent: Vec<String>,
 }
 
+/// Nom du répertoire de données relatif à l'utilisateur (`.karactirage`).
+///
+/// Constante partagée par les deux replis : le chemin relatif sous wasm et le
+/// chemin absolu sous les cibles natives.
+const FALLBACK_HOME_NAME: &str = ".karactirage";
+
+/// Repli de [`ProjectRegistry::home_dir`] quand `$KARACTI_HOME` est absent.
+///
+/// Sous `wasm32-unknown-unknown` il n'existe **ni** variable d'environnement
+/// exploitable **ni** répertoire temporaire : `std::env::temp_dir()` y panique
+/// (`RuntimeError: unreachable`, fonction non implémentée). Comme aucun accès
+/// disque n'est possible de toute façon, on renvoie un chemin **relatif inerte** :
+/// les lectures (`fs::read_to_string`, `Path::exists`, …) échouent proprement
+/// (`io::ErrorKind::Unsupported`) et les appelants retombent sur leurs défauts
+/// embarqués (`AudioSettings::default`, scène `include_str!`, etc.).
+#[cfg(target_arch = "wasm32")]
+fn fallback_home_dir() -> PathBuf {
+    PathBuf::from(FALLBACK_HOME_NAME)
+}
+
+/// Repli natif : `$HOME` (ou `$APPDATA`/`$USERPROFILE` sous Windows), puis le
+/// répertoire temporaire du système — comportement historique conservé.
+#[cfg(not(target_arch = "wasm32"))]
+fn fallback_home_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    let base = std::env::var("APPDATA")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from);
+    #[cfg(not(target_os = "windows"))]
+    let base = std::env::var("HOME").map(PathBuf::from);
+
+    match base {
+        Ok(b) if !b.as_os_str().is_empty() => b.join(FALLBACK_HOME_NAME),
+        _ => std::env::temp_dir().join(FALLBACK_HOME_NAME),
+    }
+}
+
 impl ProjectRegistry {
     /// Résout le répertoire de données KaractiRage.
     ///
     /// Priorité : `$KARACTI_HOME` → `$HOME/.karactirage` (ou `$APPDATA`/`$USERPROFILE`
-    /// sous Windows) → répertoire temporaire (repli sans écriture système).
+    /// sous Windows) → répertoire temporaire. Sous **wasm32**, il n'y a ni `$HOME`
+    /// ni `temp_dir()` : le repli est le chemin relatif `.karactirage` (voir
+    /// [`fallback_home_dir`]), ce qui rend l'initialisation du moteur sûre.
     pub fn home_dir() -> PathBuf {
         if let Ok(dir) = std::env::var("KARACTI_HOME") {
             if !dir.trim().is_empty() {
                 return PathBuf::from(dir);
             }
         }
-
-        #[cfg(target_os = "windows")]
-        let base = std::env::var("APPDATA")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .map(PathBuf::from);
-        #[cfg(not(target_os = "windows"))]
-        let base = std::env::var("HOME").map(PathBuf::from);
-
-        match base {
-            Ok(b) if !b.as_os_str().is_empty() => b.join(".karactirage"),
-            _ => std::env::temp_dir().join(".karactirage"),
-        }
+        fallback_home_dir()
     }
 
     /// Ouvre (ou initialise) le registre dans le répertoire par défaut.
@@ -615,11 +645,23 @@ pub fn slugify(input: &str) -> String {
     }
 }
 
+/// Horodatage UNIX courant (secondes).
+///
+/// Sous `wasm32-unknown-unknown`, `SystemTime::now()` **panique** (aucune horloge
+/// système dans la std) : un horodatage nul est préférable à un crash. Ce chemin
+/// n'est pas atteint au démarrage (il ne sert qu'à la création de projet).
 fn now_epoch_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
 }
 
 /// Formate une taille en octets de manière lisible (« 36 Ko », « 1.2 Mo »).
@@ -671,6 +713,40 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// Sérialise l'unique test qui manipule une variable d'environnement globale.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `home_dir()` doit rester utilisable quand le disque (et `temp_dir`) est
+    /// indisponible : `KARACTI_HOME` est prioritaire, et le repli wasm est un
+    /// chemin relatif constant — jamais `std::env::temp_dir()`, qui panique sur
+    /// `wasm32-unknown-unknown`.
+    #[test]
+    fn home_dir_ne_depend_pas_du_repertoire_temporaire() {
+        let _garde = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let ancien = std::env::var("KARACTI_HOME").ok();
+
+        std::env::set_var("KARACTI_HOME", "/tmp/karacti_home_override");
+        assert_eq!(
+            ProjectRegistry::home_dir(),
+            PathBuf::from("/tmp/karacti_home_override"),
+            "KARACTI_HOME doit court-circuiter le repli"
+        );
+
+        // Branche wasm : chemin relatif inerte, aucun appel à `temp_dir()`.
+        // Sous wasm le repli est sélectionné dès que `KARACTI_HOME` est absent.
+        assert_eq!(FALLBACK_HOME_NAME, ".karactirage");
+        #[cfg(target_arch = "wasm32")]
+        {
+            std::env::remove_var("KARACTI_HOME");
+            assert_eq!(ProjectRegistry::home_dir(), PathBuf::from(".karactirage"));
+        }
+
+        match ancien {
+            Some(valeur) => std::env::set_var("KARACTI_HOME", valeur),
+            None => std::env::remove_var("KARACTI_HOME"),
+        }
     }
 
     #[test]

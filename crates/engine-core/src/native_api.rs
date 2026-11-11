@@ -135,6 +135,48 @@ fn swizzle_xrgb_to_rgba(px: u32) -> u32 {
     0xFF00_0000 | ((px & 0x0000_00FF) << 16) | (px & 0x0000_FF00) | ((px & 0x00FF_0000) >> 16)
 }
 
+// --- Horloge de télémétrie (indisponible sous wasm) ---------------------------
+//
+// `std::time::Instant::now()` **panique** sous `wasm32-unknown-unknown` : la std
+// n'a aucune horloge sans hôte JS (`time not implemented on this platform`). Une
+// frame ne doit jamais échouer pour de la télémétrie : sous wasm on mesure donc
+// des durées nulles. `Telemetry::record_frame(0)` conserve alors ses valeurs par
+// défaut (FPS initial), sans division par zéro ni comportement aberrant.
+
+/// Repère d'horloge natif (aucune allocation, copie triviale).
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+struct ClockMark(std::time::Instant);
+
+/// Repère neutre sous wasm (pas d'horloge disponible).
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy)]
+struct ClockMark;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn clock_mark() -> ClockMark {
+    ClockMark(std::time::Instant::now())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+fn clock_mark() -> ClockMark {
+    ClockMark
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn clock_elapsed_us(since: ClockMark, until: ClockMark) -> u64 {
+    (until.0 - since.0).as_micros() as u64
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+fn clock_elapsed_us(_since: ClockMark, _until: ClockMark) -> u64 {
+    0
+}
+
 // --- Helpers d'extraction des paramètres de recettes KVL guidées -------------
 
 fn j_str(v: &serde_json::Value, key: &str, default: &str) -> String {
@@ -275,7 +317,7 @@ impl NativeEngine {
         // avalanche de sous-pas (spirale de la mort).
         self.accumulator += dt.clamp(0.0, 0.25);
 
-        let t0 = std::time::Instant::now();
+        let t0 = clock_mark();
         let mut steps = 0u32;
         while self.accumulator >= SIM_DT && steps < MAX_SUBSTEPS {
             self.game.update(SIM_DT, &self.input);
@@ -287,17 +329,17 @@ impl NativeEngine {
                 self.input.clear_transient();
             }
         }
-        let t1 = std::time::Instant::now();
+        let t1 = clock_mark();
         self.game.render(&mut self.canvas);
-        let t2 = std::time::Instant::now();
+        let t2 = clock_mark();
         // Sécurité : garantit que les transitoires sont purgées même sans sous-pas.
         self.input.clear_transient();
         let bytes = self.frame_bytes();
-        let t3 = std::time::Instant::now();
+        let t3 = clock_mark();
 
-        let update_us = (t1 - t0).as_micros() as u64;
-        let render_us = (t2 - t1).as_micros() as u64;
-        let encode_us = (t3 - t2).as_micros() as u64;
+        let update_us = clock_elapsed_us(t0, t1);
+        let render_us = clock_elapsed_us(t1, t2);
+        let encode_us = clock_elapsed_us(t2, t3);
         let total_us = update_us + render_us + encode_us;
         self.frame_stats = FrameStats {
             update_us,
