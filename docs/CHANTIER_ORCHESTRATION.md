@@ -49,6 +49,21 @@ cette machine et le crate `tiled` n'est pas en cache local. **Aucune nouvelle d�
 ne peut être ajoutée** dans cette session. L'import Tiled (P2.2) et l'audio Kira (P2.3)
 sont donc reportés à une session avec accès réseau, ou devront être fournis en vendor.
 
+## 3ter. Vague 4 — en cours (débloquer AC3)
+
+| Agent | Tâche | Périmètre | Critère de sortie |
+|---|---|---|---|
+| η « wasm-init » | Rendre le moteur démarrable en wasm32 sans système de fichiers | `project_registry.rs`, `native_api.rs`, `game.rs`, `plugin/**`, `engine-wasm/src/lib.rs` | build wasm OK + boot Chrome sans panic + framebuffer non vide |
+| θ « CSS 2 » | Reste de la cascade + écran d'audit du panneau de sauvegarde | `index.css`, `App.css`, `scripts/audit-ui.mjs` | build/lint inchangés, dérive justifiée, capture du panneau |
+
+**Diagnostic qui a lancé la vague** : `ProjectRegistry::home_dir()` retombe sur
+`std::env::temp_dir()`, qui **panique** sur wasm32 (`RuntimeError: unreachable`).
+C'était la cause exacte de l'export non jouable (AC3).
+
+**Vague 5 (après η)** : inliner le runtime (glue + wasm) dans le HTML exporté, puis
+remettre le test de fumée au vert avec un vrai jeu animé — c'est la promesse
+« partager un jeu » qui se ferme.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
