@@ -1,0 +1,387 @@
+{
+  "$defs": {
+    "UiElement": {
+      "description": "Élément d'un écran UI (texte, barre, bouton, icône).",
+      "properties": {
+        "bind": {
+          "default": null,
+          "description": "Variable liée (\"player_hp\", \"score\", \"objective\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "\"text\", \"bar\", \"button\", \"icon\".",
+          "type": "string"
+        },
+        "label": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Opération atomique appliquée sur un clone du projet.",
+  "oneOf": [
+    {
+      "properties": {
+        "genre": {
+          "type": "string"
+        },
+        "op": {
+          "const": "create_project",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "title",
+        "genre"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "create_scene",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "name"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "add_entity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "entity": {
+          "type": "string"
+        },
+        "op": {
+          "const": "set_entity_component",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "entity",
+        "component"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "node_type": {
+          "type": "string"
+        },
+        "op": {
+          "const": "add_kvl_node",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "node_id",
+        "node_type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "from_pin": {
+          "type": "string"
+        },
+        "op": {
+          "const": "connect_pins",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "to_pin": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "from",
+        "from_pin",
+        "to",
+        "to_pin"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "set_variable",
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "op": {
+          "const": "set_objective",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "text"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "op": {
+          "const": "add_level",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "name"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "asset": {
+          "type": "string"
+        },
+        "op": {
+          "const": "add_mesh",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "asset"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "entity": {
+          "type": "string"
+        },
+        "material": {
+          "type": "string"
+        },
+        "op": {
+          "const": "set_material",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "entity",
+        "material"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "op": {
+          "const": "set_camera",
+          "type": "string"
+        },
+        "position": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "op",
+        "position"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "op": {
+          "const": "add_light",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "archetype": {
+          "type": "string"
+        },
+        "op": {
+          "const": "generate_sprite",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "archetype"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "op": {
+          "const": "set_audio",
+          "type": "string"
+        },
+        "sound": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "sound"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "elements": {
+          "default": [],
+          "description": "Éléments déclaratifs (texte, jauge, bouton, icône), optionnels.",
+          "items": {
+            "$ref": "#/$defs/UiElement"
+          },
+          "type": "array"
+        },
+        "op": {
+          "const": "set_ui_screen",
+          "type": "string"
+        },
+        "screen": {
+          "description": "Type d'écran : \"hud\", \"menu\", \"pause\", \"game_over\", \"victory\".",
+          "type": "string"
+        },
+        "title": {
+          "description": "Titre affiché (écrans plein écran), optionnel.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "screen"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "op": {
+          "const": "set_save_config",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "format": {
+          "type": "string"
+        },
+        "op": {
+          "const": "export_target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "format"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "AiOp"
+}

@@ -344,7 +344,7 @@ export const PixelEditor: React.FC<Props> = ({ sourceName, onSaved }) => {
   });
   if (!selected) {
     return (
-      <div className="flex-1 flex items-center justify-center text-[#64748b] text-sm">
+      <div className="flex-1 flex items-center justify-center text-[#94a3b8] text-sm">
         {busy ? 'Chargement…' : 'Aucun sprite éditable dans cette source.'}
       </div>
     );
@@ -355,7 +355,7 @@ export const PixelEditor: React.FC<Props> = ({ sourceName, onSaved }) => {
       {/* Liste des sprites */}
       <aside className="w-44 shrink-0 flex flex-col border-r border-[#2d1b4e] bg-[#0a0614]">
         <div className="flex items-center justify-between px-2 py-1.5 border-b border-[#2d1b4e]">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">Sprites</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[#94a3b8]">Sprites</span>
           <div className="flex gap-1">
             <button onClick={addSprite} title="Nouveau sprite" className="text-[#94a3b8] hover:text-[#f8fafc]"><Plus size={13} /></button>
             <button onClick={duplicateSprite} title="Dupliquer" className="text-[#94a3b8] hover:text-[#f8fafc]"><Copy size={13} /></button>
@@ -373,7 +373,7 @@ export const PixelEditor: React.FC<Props> = ({ sourceName, onSaved }) => {
               }`}
             >
               <span className="truncate">{s.id}</span>
-              <span className={`text-[8px] uppercase ${s.kind === 'grid' ? 'text-[#a855f7]' : 'text-[#64748b]'}`}>
+              <span className={`text-[8px] uppercase ${s.kind === 'grid' ? 'text-[#a855f7]' : 'text-[#94a3b8]'}`}>
                 {s.kind === 'grid' ? `${s.grid[0]?.length ?? 0}×${s.grid.length}` : 'proc'}
               </span>
             </button>
@@ -402,7 +402,7 @@ export const PixelEditor: React.FC<Props> = ({ sourceName, onSaved }) => {
           <button onClick={redo} disabled={!redoStack.length} title="Rétablir (Ctrl+Shift+Z)" className="p-1.5 text-[#94a3b8] disabled:opacity-30 hover:text-[#f8fafc]"><Redo2 size={14} /></button>
           <span className="mx-1 h-4 w-px bg-[#2d1b4e]" />
           <button onClick={() => setZoom(z => Math.max(8, z / 2))} title="Zoom -" className="p-1.5 text-[#94a3b8] hover:text-[#f8fafc]"><ZoomOut size={14} /></button>
-          <span className="text-[10px] font-mono text-[#64748b] w-10 text-center">{zoom}×</span>
+          <span className="text-[10px] font-mono text-[#94a3b8] w-10 text-center">{zoom}×</span>
           <button onClick={() => setZoom(z => Math.min(64, z * 2))} title="Zoom +" className="p-1.5 text-[#94a3b8] hover:text-[#f8fafc]"><ZoomIn size={14} /></button>
           <div className="flex-1" />
           {dirty && <span className="text-[10px] text-[#f59e0b]">non enregistré</span>}
@@ -433,7 +433,7 @@ export const PixelEditor: React.FC<Props> = ({ sourceName, onSaved }) => {
       {/* Palette */}
       <aside className="w-36 shrink-0 flex flex-col border-l border-[#2d1b4e] bg-[#0a0614]">
         <div className="flex items-center justify-between px-2 py-1.5 border-b border-[#2d1b4e]">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">Palette</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[#94a3b8]">Palette</span>
           <button onClick={addColor} title="Ajouter une couleur" className="text-[#94a3b8] hover:text-[#f8fafc]"><Plus size={13} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-1.5 grid grid-cols-2 gap-1 content-start">

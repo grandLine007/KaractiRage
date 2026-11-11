@@ -7,6 +7,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { safeInvokeJson } from './ipc';
 
 export type EntryKind = 'scene' | 'project';
 export type EntryStatus = 'available' | 'missing';
@@ -59,12 +60,7 @@ export async function listProjects(extraDirs: string[] = []): Promise<ProjectEnt
   if (!isTauri()) {
     return DEMO_PROJECTS;
   }
-  const raw: string = await invoke('engine_list_projects', { extraDirs });
-  try {
-    return JSON.parse(raw) as ProjectEntry[];
-  } catch {
-    return [];
-  }
+  return safeInvokeJson<ProjectEntry[]>('engine_list_projects', { extraDirs } as Record<string, unknown>, []);
 }
 
 /** Crée un projet sur disque et le charge immédiatement dans le moteur. */
@@ -84,12 +80,7 @@ export async function openProject(path: string): Promise<number> {
 
 export async function recentProjects(): Promise<string[]> {
   if (!isTauri()) return [];
-  const raw: string = await invoke('engine_recent_projects');
-  try {
-    return JSON.parse(raw) as string[];
-  } catch {
-    return [];
-  }
+  return safeInvokeJson<string[]>('engine_recent_projects', undefined, []);
 }
 
 export async function removeRecent(path: string): Promise<boolean> {

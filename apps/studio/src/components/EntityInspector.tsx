@@ -51,7 +51,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
 
   if (!selectedEntity) {
     return (
-      <aside className="w-72 flex flex-col items-center justify-center h-full bg-[#0d0819] border-l border-[#2d1b4e] p-6 text-center text-xs text-[#64748b] select-none">
+      <aside data-testid="inspector" className="w-72 flex flex-col items-center justify-center h-full bg-[#0d0819] border-l border-[#2d1b4e] p-6 text-center text-xs text-[#94a3b8] select-none">
         <Sliders size={28} className="text-[#2d1b4e] mb-2" />
         <span className="font-semibold text-[#94a3b8] mb-1">Aucune Entité Sélectionnée</span>
         <p className="text-[11px] leading-relaxed">
@@ -68,7 +68,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
   const tagColor = TAG_COLORS[selectedEntity.tag] ?? '#94a3b8';
 
   return (
-    <aside className="w-72 flex flex-col h-full bg-[#0d0819] border-l border-[#2d1b4e] overflow-y-auto select-none">
+    <aside data-testid="inspector" className="w-72 flex flex-col h-full bg-[#0d0819] border-l border-[#2d1b4e] overflow-y-auto select-none">
       <div className="flex items-center justify-between px-3 py-2.5 bg-[#150d27] border-b border-[#2d1b4e]">
         <div className="flex items-center gap-2 truncate">
           <Sliders size={14} className="text-[#a855f7]" />
@@ -79,14 +79,14 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
         <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={() => onDuplicate(selectedEntity.id)}
-            className="p-1 hover:bg-[#1e1338] text-[#c084fc] rounded transition"
+            className="flex items-center justify-center w-8 h-8 hover:bg-[#1e1338] text-[#c084fc] rounded transition"
             title="Dupliquer l'entité [Ctrl+D]"
           >
             <Copy size={13} />
           </button>
           <button
             onClick={() => onDelete(selectedEntity.id)}
-            className="p-1 hover:bg-[#881337] text-[#f43f5e] rounded transition"
+            className="flex items-center justify-center w-8 h-8 hover:bg-[#881337] text-[#f43f5e] rounded transition"
             title="Supprimer l'entité [Suppr]"
           >
             <Trash2 size={13} />
@@ -99,7 +99,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
           <span className="badge-tag" style={{ backgroundColor: `${tagColor}1a`, color: tagColor }}>
             {selectedEntity.tag}
           </span>
-          <span className="text-[11px] text-[#64748b] font-mono">ID #{selectedEntity.id}</span>
+          <span className="text-[11px] text-[#94a3b8] font-mono">ID #{selectedEntity.id}</span>
         </div>
 
         {/* Transform (éditable, commit au blur / Entrée) */}
@@ -109,18 +109,19 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
               <Move size={12} />
               Transform
             </span>
-            <span className="text-[9px] text-[#64748b] font-normal normal-case">Entrée pour valider</span>
+            <span className="text-[9px] text-[#94a3b8] font-normal normal-case">Entrée pour valider</span>
           </div>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { label: 'X', value: x, set: setX },
-              { label: 'Y', value: y, set: setY },
-              { label: 'Larg.', value: w, set: setW },
-              { label: 'Haut.', value: h, set: setH },
+              { id: 'x', label: 'X', value: x, set: setX },
+              { id: 'y', label: 'Y', value: y, set: setY },
+              { id: 'w', label: 'Larg.', value: w, set: setW },
+              { id: 'h', label: 'Haut.', value: h, set: setH },
             ].map(field => (
-              <div key={field.label}>
-                <label className="text-[10px] text-[#94a3b8] block mb-0.5">{field.label} :</label>
+              <div key={field.id}>
+                <label htmlFor={`transform-${field.id}`} className="text-[10px] text-[#94a3b8] block mb-0.5">{field.label} :</label>
                 <input
+                  id={`transform-${field.id}`}
                   type="number"
                   value={Math.round(field.value)}
                   onChange={e => field.set(parseFloat(e.target.value) || 0)}
@@ -157,13 +158,13 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
             {selectedEntity.is_player_controlled && (
               <div className="flex items-center justify-between">
                 <span className="text-[#94a3b8]">Rôle</span>
-                <span className="badge-tag bg-[#0c4a6e] text-[#38bdf8]">Joueur contrôlé</span>
+                <span className="badge-tag bg-[#0c4a6e] text-[#7dd3fc]">Joueur contrôlé</span>
               </div>
             )}
 
             <div className="flex items-center justify-between">
               <span className="text-[#94a3b8]">Collision</span>
-              <span className={`badge-tag ${selectedEntity.is_solid ? 'bg-[#064e3b] text-[#34d399]' : selectedEntity.is_trigger ? 'bg-[#2e1065] text-[#c084fc]' : 'bg-[#150d27] text-[#64748b]'}`}>
+              <span className={`badge-tag ${selectedEntity.is_solid ? 'bg-[#064e3b] text-[#34d399]' : selectedEntity.is_trigger ? 'bg-[#2e1065] text-[#c084fc]' : 'bg-[#150d27] text-[#94a3b8]'}`}>
                 {selectedEntity.is_solid ? 'Solide' : selectedEntity.is_trigger ? 'Déclencheur' : 'Aucune'}
               </span>
             </div>

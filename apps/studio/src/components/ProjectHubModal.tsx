@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, Archive, ArrowRight, Bot, Clock, Copy, Cpu, FolderOpen, FolderSearch,
-  Gamepad2, HardDrive, Loader2, Pencil, Play, Plus, RefreshCw, Search, Sparkles,
-  Wrench, X,
+  AlertTriangle, Archive, ArrowRight, Bot, Clock, Compass, Copy, Cpu,
+  FolderOpen, FolderSearch, Gamepad2, HardDrive, Home, Layers, Loader2,
+  Pencil, Play, Plus, RefreshCw, Search, Sparkles, Wrench, X, Zap,
 } from 'lucide-react';
 import {
   archiveProject, createProject, duplicateProject, isTauri, listProjects, openProject,
@@ -108,6 +108,9 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   });
   const [creating, setCreating] = useState(false);
   const [diag, setDiag] = useState<SystemDiagnostics | null>(null);
+  // UX-501 : écran d'accueil « 3 choix » + visite guidée.
+  const [landing, setLanding] = useState(true);
+  const [guide, setGuide] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -256,7 +259,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md select-none">
+    <div data-testid="hub" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md select-none">
       <div className="relative flex flex-col w-full max-w-5xl max-h-[92vh] bg-[#0d0819] border border-[#a855f7] rounded-xl shadow-2xl shadow-purple-950/90 overflow-hidden">
         {/* En-tête */}
         <div className="flex items-center justify-between px-6 py-4 bg-[#150d27] border-b border-[#2d1b4e]">
@@ -282,16 +285,95 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
           </button>
         </div>
 
+        {landing ? (
+          <>
+            {/* Écran d'accueil — 3 choix (UX-501) */}
+            <div className="flex-1 overflow-y-auto p-6 md:p-8 flex flex-col items-center justify-center text-center">
+              <h2 className="text-lg md:text-xl font-bold text-[#f8fafc] tracking-wide">
+                Que voulez-vous faire ?
+              </h2>
+              <p className="text-xs text-[#94a3b8] mt-2 max-w-xl leading-relaxed">
+                KaractiRage Studio — atelier 2D multi-genres, logique visuelle KVL, déterministe 60 FPS.
+              </p>
+
+              <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl">
+                <button
+                  onClick={onOpenArchetypes}
+                  className="flex flex-col items-center text-center gap-2 p-5 bg-[#150d27] border border-[#2d1b4e] hover:border-[#a855f7] rounded-xl transition"
+                >
+                  <div className="flex items-center justify-center w-12 h-12 rounded-full bg-[#2e1065] border border-[#a855f7]">
+                    <Gamepad2 size={22} className="text-[#c084fc]" />
+                  </div>
+                  <span className="font-bold text-sm text-[#f8fafc] mt-1">Jouer une démo</span>
+                  <span className="text-[11px] text-[#94a3b8] leading-relaxed">5 archétypes prêts à lancer en 1 clic</span>
+                  <span className="mt-1 text-[11px] font-semibold text-[#c084fc] flex items-center gap-1">Lancer <ArrowRight size={12} /></span>
+                </button>
+
+                <button
+                  onClick={() => { setLanding(false); setActiveTab(0); }}
+                  className="flex flex-col items-center text-center gap-2 p-5 bg-[#150d27] border border-[#2d1b4e] hover:border-[#a855f7] rounded-xl transition"
+                >
+                  <div className="flex items-center justify-center w-12 h-12 rounded-full bg-[#2e1065] border border-[#a855f7]">
+                    <Sparkles size={22} className="text-[#c084fc]" />
+                  </div>
+                  <span className="font-bold text-sm text-[#f8fafc] mt-1">Créer mon premier jeu</span>
+                  <span className="text-[11px] text-[#94a3b8] leading-relaxed">Nom → genre → modèle, avec aperçu</span>
+                  <span className="mt-1 text-[11px] font-semibold text-[#c084fc] flex items-center gap-1">Commencer <ArrowRight size={12} /></span>
+                </button>
+
+                <button
+                  onClick={() => setGuide(true)}
+                  className="flex flex-col items-center text-center gap-2 p-5 bg-[#150d27] border border-[#2d1b4e] hover:border-[#a855f7] rounded-xl transition"
+                >
+                  <div className="flex items-center justify-center w-12 h-12 rounded-full bg-[#2e1065] border border-[#a855f7]">
+                    <Compass size={22} className="text-[#c084fc]" />
+                  </div>
+                  <span className="font-bold text-sm text-[#f8fafc] mt-1">Comprendre le Studio</span>
+                  <span className="text-[11px] text-[#94a3b8] leading-relaxed">Visite des 3 écrans + raccourcis clavier</span>
+                  <span className="mt-1 text-[11px] font-semibold text-[#c084fc] flex items-center gap-1">Découvrir <ArrowRight size={12} /></span>
+                </button>
+              </div>
+
+              <button
+                onClick={() => { setLanding(false); setActiveTab(1); }}
+                className="mt-8 py-2 px-3 text-xs text-[#94a3b8] hover:text-[#f8fafc] flex items-center gap-1.5 transition"
+              >
+                <FolderOpen size={14} />
+                Ouvrir un projet existant
+              </button>
+            </div>
+
+            {/* Pied de l'accueil */}
+            <div className="flex items-center justify-between px-6 py-3.5 bg-[#150d27] border-t border-[#2d1b4e]">
+              <span className="text-xs text-[#94a3b8]">Échap pour fermer</span>
+              <button
+                onClick={onClose}
+                className="px-4 py-2 bg-[#1e1338] hover:bg-[#2d1b4e] text-[#f8fafc] rounded-lg text-xs font-medium transition"
+              >
+                Fermer [Échap]
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
         {/* Barre d'onglets */}
         <div className="flex items-center px-6 pt-3 bg-[#0d0819] border-b border-[#2d1b4e] gap-2">
+          <button
+            onClick={() => setLanding(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[#94a3b8] hover:text-[#f8fafc] transition"
+            aria-label="Retour à l'accueil"
+          >
+            <Home size={14} />
+            Accueil
+          </button>
           <TabButton active={activeTab === 0} onClick={() => setActiveTab(0)} icon={<Sparkles size={14} />}>
-            1.1 NOUVEAU PROJET
+            Nouveau projet
           </TabButton>
           <TabButton active={activeTab === 1} onClick={() => setActiveTab(1)} icon={<FolderOpen size={14} />}>
-            1.2 PROJETS SUR DISQUE
+            Projets sur disque
           </TabButton>
           <TabButton active={activeTab === 2} onClick={() => setActiveTab(2)} icon={<Bot size={14} />}>
-            1.3 OUTILS & IA
+            Outils & IA
           </TabButton>
         </div>
 
@@ -317,7 +399,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                   <h3 className="font-bold text-sm text-[#f8fafc] flex items-center gap-2">
                     <Clock size={15} className="text-[#c084fc]" />
                     Derniers projets
-                    <span className="text-[10px] font-medium text-[#64748b]">({recents.length})</span>
+                    <span className="text-[10px] font-medium text-[#94a3b8]">({recents.length})</span>
                   </h3>
                   <button
                     onClick={() => { setFilter('recent'); setActiveTab(1); }}
@@ -352,7 +434,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                             <SceneThumbnail entry={entry} />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="font-semibold text-sm text-[#f8fafc] truncate">{entry.title}</div>
+                            <div className="font-semibold text-sm text-[#f8fafc] truncate" title={entry.title}>{entry.title}</div>
                             <div className="text-[11px] text-[#94a3b8]">
                               {entry.genre} • {entry.dimension} • {formatDate(entry.modified_at)}
                             </div>
@@ -489,7 +571,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
             <>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="relative flex-1 min-w-[200px]">
-                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#64748b]" />
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94a3b8]" />
                   <input
                     value={query}
                     onChange={e => setQuery(e.target.value)}
@@ -580,7 +662,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm text-[#f8fafc] truncate">{entry.title}</span>
+                          <span className="font-semibold text-sm text-[#f8fafc] truncate" title={entry.title}>{entry.title}</span>
                           {entry.is_recent && (
                             <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-[#2e1065] text-[#c084fc]">Récent</span>
                           )}
@@ -591,7 +673,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                         <div className="text-[11px] text-[#94a3b8]">
                           {entry.genre} • {entry.dimension} • {entry.entity_count} entités • {formatBytes(entry.size_bytes)} • {formatDate(entry.modified_at)}
                         </div>
-                        <div className="text-[10px] text-[#64748b] truncate" title={entry.path}>{entry.path}</div>
+                        <div className="text-[10px] text-[#94a3b8] truncate" title={entry.path}>{entry.path}</div>
                       </div>
                       <div className="shrink-0">
                         {entry.status === 'missing'
@@ -708,7 +790,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
 
         {/* Barre d'action inférieure */}
         <div className="flex items-center justify-between px-6 py-3.5 bg-[#150d27] border-t border-[#2d1b4e]">
-          <span className="text-xs text-[#64748b]">
+          <span className="text-xs text-[#94a3b8]">
             {isTauri()
               ? 'Projets persistés dans ~/.karactirage — Échap pour fermer'
               : 'Mode web (lecture seule) — Échap pour fermer'}
@@ -720,7 +802,10 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
             Fermer [Échap]
           </button>
         </div>
+          </>
+        )}
       </div>
+      {guide && <StudioGuideModal onClose={() => setGuide(false)} />}
     </div>
   );
 };
@@ -777,8 +862,102 @@ function Diag({ label, value, wide }: { label: string; value: string; wide?: boo
     <div
       className={`${wide ? 'col-span-2 md:col-span-4' : ''} px-3 py-2 bg-[#0f172a] border border-[#1e293b] rounded`}
     >
-      <div className="text-[10px] uppercase text-[#64748b]">{label}</div>
+      <div className="text-[10px] uppercase text-[#94a3b8]">{label}</div>
       <div className="text-[#f8fafc] font-medium truncate">{value}</div>
+    </div>
+  );
+}
+
+/** Visite guidée « Comprendre le Studio » (UX-501) : 3 écrans + raccourcis. */
+function StudioGuideModal({ onClose }: { onClose: () => void }) {
+  const [step, setStep] = useState(0);
+  const STEPS = [
+    {
+      icon: <Sparkles size={20} />,
+      title: 'Créer',
+      text: 'Posez des objets (tiles, entités) dans le viewport 2D/3D, puis réglez leur transform et leurs propriétés dans l\u2019inspecteur.',
+    },
+    {
+      icon: <Layers size={20} />,
+      title: 'Logique',
+      text: 'Dans l\u2019onglet Logique, générez une recette guidée qui produit un graphe KVL valide, ou câblez des nœuds à la main.',
+    },
+    {
+      icon: <Zap size={20} />,
+      title: 'Tester',
+      text: 'Lancez le jeu (mode Play) pour valider la boucle déterministe 60 FPS. F6 change de mode, Ctrl+1…5 accède directement à un mode.',
+    },
+  ];
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm select-none"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-md bg-[#0d0819] border border-[#a855f7] rounded-xl shadow-2xl shadow-purple-950/90 overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3.5 bg-[#150d27] border-b border-[#2d1b4e]">
+          <h3 className="text-sm font-bold text-[#f8fafc]">Comprendre le Studio</h3>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338] rounded-lg transition"
+            aria-label="Fermer le guide"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="flex gap-1.5">
+            {STEPS.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => setStep(i)}
+                aria-label={`Étape ${i + 1} : ${s.title}`}
+                className={`h-1.5 flex-1 rounded-full transition ${i === step ? 'bg-[#a855f7]' : 'bg-[#2d1b4e] hover:bg-[#3b0764]'}`}
+              />
+            ))}
+          </div>
+          <div className="flex items-start gap-3">
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[#2e1065] border border-[#a855f7] shrink-0 text-[#c084fc]">
+              {STEPS[step].icon}
+            </div>
+            <div>
+              <div className="font-bold text-sm text-[#f8fafc]">{STEPS[step].title}</div>
+              <p className="text-xs text-[#94a3b8] leading-relaxed mt-1">{STEPS[step].text}</p>
+            </div>
+          </div>
+          <div className="rounded-lg bg-[#150d27] border border-[#2d1b4e] p-3 space-y-1.5 text-[11px] text-[#94a3b8]">
+            <div className="flex justify-between"><span>Mode suivant</span><kbd className="text-[#cbd5e1] font-mono">F6</kbd></div>
+            <div className="flex justify-between"><span>Changer de mode</span><kbd className="text-[#cbd5e1] font-mono">Ctrl+1…5</kbd></div>
+            <div className="flex justify-between"><span>Enregistrer / annuler / rétablir</span><kbd className="text-[#cbd5e1] font-mono">Ctrl+S / Z / Y</kbd></div>
+          </div>
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => setStep(s => Math.max(0, s - 1))}
+              disabled={step === 0}
+              className="px-3 py-2 text-xs font-semibold text-[#94a3b8] hover:text-[#f8fafc] disabled:opacity-40 transition"
+            >
+              ← Précédent
+            </button>
+            {step < STEPS.length - 1 ? (
+              <button
+                onClick={() => setStep(s => Math.min(STEPS.length - 1, s + 1))}
+                className="px-3 py-2 text-xs font-semibold text-[#c084fc] hover:text-[#f3e8ff] transition"
+              >
+                Suivant →
+              </button>
+            ) : (
+              <button
+                onClick={onClose}
+                className="px-4 py-2 bg-gradient-to-r from-[#9333ea] to-[#7e22ce] text-white rounded-md text-xs font-bold transition"
+              >
+                Compris
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

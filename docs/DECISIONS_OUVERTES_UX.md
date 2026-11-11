@@ -19,6 +19,10 @@ woff2 auto-hébergées) ou assumer la police système ?
 > **Recommandation : A** (Outfit corps + Space Grotesk titres + JetBrains Mono IDs), en
 > woff2 subset, `font-display: swap`, 2 graisses max. L'identité est un non-négociable (§2.1).
 
+> ✅ **Décision prise : A — implémenté.** UX-101 fait : woff2 auto-hébergées via
+> `@fontsource/*` (subset latin), Outfit (corps) / Space Grotesk (titres) / JetBrains Mono
+> (code), `font-display: swap`, échelle 12→32 px, aucune requête réseau externe (K4 = 0).
+
 ---
 
 ## D13.2 — Portée du Hub (§13.2)
@@ -33,6 +37,11 @@ woff2 auto-hébergées) ou assumer la police système ?
 > **Recommandation : B** — livrer d'abord les 3 choix visuels (Jouer une démo / Créer /
 > Comprendre) sans refondre le reste du hub, puis itérer.
 
+> ✅ **Décision prise : B — implémenté.** `ProjectHubModal` ouvre désormais sur un
+> écran d'accueil « 3 choix » (Jouer une démo → `ArchetypesModal`, Créer → formulaire,
+> Comprendre → visite guidée `StudioGuideModal`) + accès discret « Ouvrir un projet
+> existant » et bouton « Accueil » pour y revenir. K11 : démo lancée en 2 clics.
+
 ---
 
 ## D13.3 — Portée de l'éditeur KVL (§13.4)
@@ -46,6 +55,13 @@ woff2 auto-hébergées) ou assumer la police système ?
 
 > **Recommandation : A** — c'est le cœur de la promesse « éditeur visuel » ; à séquencer
 > (câblage d'abord, puis undo, puis params).
+
+> ✅ **Décision prise : A.** WS6 séquencé en 3 vagues, **toutes livrées** :
+> ① UX-601+602 (palette filtrable + cartes lisibles), ② UX-604 (câblage des pins,
+> suppression arête/nœud, undo/redo Ctrl+Z/Y), ③ UX-603+606 (inspecteur de nœud au clic,
+> gestion des graphes nouveau/renommer/dupliquer/supprimer, badge « ✓ Enregistré »,
+> état vide « Créer ma première règle »). UX-605 : insertion + câblage manuels couverts
+> par ①+② ; l'assistant « insérer & câbler » dédié reste un raffinement optionnel.
 
 ---
 

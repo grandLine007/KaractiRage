@@ -123,6 +123,7 @@ pub fn core_event_schemas() -> Vec<NodeSchema> {
         event("OnDialogueStart", Category::UserInterface, "Ouverture d'une boîte de dialogue."),
         event("OnDialogueChoice", Category::UserInterface, "Choix dans un dialogue."),
         event("OnDialogueClose", Category::UserInterface, "Fermeture d'un dialogue."),
+        event("OnDamage", Category::Combat, "Le joueur ou une entité subit des dégâts."),
         event("OnBossAttack", Category::Combat, "Attaque télégraphiée d'un boss."),
         event("OnBossDefeated", Category::Combat, "Le boss est vaincu."),
         event("OnCheck", Category::MathLogic, "Point de contrôle logique (tests unitaires)."),

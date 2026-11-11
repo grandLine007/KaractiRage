@@ -1,0 +1,171 @@
+{
+  "$defs": {
+    "GameDimension": {
+      "description": "Dimension du projet",
+      "enum": [
+        "two_d",
+        "two_and_half_d",
+        "three_d"
+      ],
+      "type": "string"
+    },
+    "GameGenre": {
+      "description": "Genres de jeu supportés par l'assistant de création",
+      "enum": [
+        "adventure",
+        "action",
+        "shoot_em_up",
+        "platformer",
+        "rpg",
+        "simulation",
+        "strategy",
+        "racing",
+        "puzzle",
+        "horror",
+        "combat",
+        "educational",
+        "custom"
+      ],
+      "type": "string"
+    },
+    "IntentBudget": {
+      "description": "Budget d'exécution d'une intention.",
+      "properties": {
+        "max_steps": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_tokens": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_steps",
+        "max_tokens"
+      ],
+      "type": "object"
+    },
+    "IntentConstraints": {
+      "description": "Contraintes bornées de l'intention.",
+      "properties": {
+        "art_direction": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "difficulty": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "levels": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_entities": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "must_include": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "must_include"
+      ],
+      "type": "object"
+    },
+    "IntentTarget": {
+      "description": "Cible de génération demandée.",
+      "enum": [
+        "project",
+        "scene",
+        "level",
+        "mechanic",
+        "asset",
+        "full_game",
+        "tweak"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Enveloppe d'intention normalisée.",
+  "properties": {
+    "acceptance": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "budget": {
+      "$ref": "#/$defs/IntentBudget"
+    },
+    "constraints": {
+      "$ref": "#/$defs/IntentConstraints"
+    },
+    "dimension": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GameDimension"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "genre": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GameGenre"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "intent_id": {
+      "type": "string"
+    },
+    "locale": {
+      "type": "string"
+    },
+    "needs_clarification": {
+      "type": "boolean"
+    },
+    "raw_text": {
+      "type": "string"
+    },
+    "target": {
+      "$ref": "#/$defs/IntentTarget"
+    }
+  },
+  "required": [
+    "intent_id",
+    "raw_text",
+    "locale",
+    "target",
+    "constraints",
+    "acceptance",
+    "budget",
+    "needs_clarification"
+  ],
+  "title": "IntentEnvelope",
+  "type": "object"
+}

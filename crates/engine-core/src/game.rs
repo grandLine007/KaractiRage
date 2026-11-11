@@ -225,6 +225,14 @@ pub struct GameState {
     pub dialogue: DialogueBox,
     pub dialogue_cooldown: f32,
     pub quest: Option<QuestTracker>,
+    /// Écrans UI déclaratifs (HUD, menu, pause, victoire, game over) issus du projet.
+    pub ui_screens: Vec<crate::subsystems::UiScreen>,
+    /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
+    pub camera3d: Option<crate::subsystems::Camera3DData>,
+    /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
+    pub lights: Vec<crate::subsystems::Light3DData>,
+    /// Configuration de sauvegarde (`project.save_config`), consommée par `crate::save`.
+    pub save_config: crate::subsystems::SaveConfig,
     pub inventory: Inventory,
     pub replay: ReplayManager,
     pub sim_tick: u64,
@@ -1103,6 +1111,10 @@ impl GameState {
             dialogue: DialogueBox::new(),
             dialogue_cooldown: 0.0,
             quest,
+            ui_screens: Vec::new(),
+            camera3d: None,
+            lights: Vec::new(),
+            save_config: crate::subsystems::SaveConfig::default(),
             inventory,
             replay: ReplayManager::new(),
             sim_tick: 0,
@@ -1262,6 +1274,10 @@ impl GameState {
         self.entities = project.scene.entities;
         self.kvl_graphs = project.kvl_graphs;
         self.kvl_context = ExecutionContext::new();
+        self.ui_screens = project.ui_screens;
+        self.camera3d = project.camera3d;
+        self.lights = project.lights;
+        self.save_config = project.save_config;
 
         for (k, v) in project.kvl_variables {
             self.kvl_context.set_var(k, v);
@@ -1350,6 +1366,12 @@ impl GameState {
             scene,
             kvl_graphs: self.kvl_graphs.clone(),
             kvl_variables: kvl_vars,
+            ui_screens: self.ui_screens.clone(),
+            save_config: self.save_config.clone(),
+            export_target: None,
+            camera3d: self.camera3d.clone(),
+            lights: self.lights.clone(),
+            levels: Vec::new(),
         }
     }
 
@@ -5863,6 +5885,34 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         }
     }
 
+    /// Texte d'objectif du HUD : KVL prioritaire, sinon scène, sinon repli par mode.
+    fn objective_hud_text(&self, player_mode: MovementMode, has_pushables: bool) -> String {
+        if let Some(Value::String(text)) = self.kvl_context.get_var("objective") {
+            return text.clone();
+        }
+        if let Some(ref scene_objective) = self.scene_objective {
+            return scene_objective.clone();
+        }
+
+        let score = match self.kvl_context.get_var("score") {
+            Some(Value::Int(value)) => *value,
+            _ => 0,
+        };
+        match player_mode {
+            MovementMode::Platformer { .. } => "ATTEIGNEZ LE PORTAIL QUANTIQUE".to_string(),
+            MovementMode::SpaceInertia { .. } => "PILOTEZ LE VAISSEAU SPATIAL".to_string(),
+            MovementMode::Grid { .. } => "DÉPLACEZ LES BLOCS SUR LA DALLE".to_string(),
+            MovementMode::TopDown if has_pushables => "POUSSEZ LES BLOCS SUR LES DALLES".to_string(),
+            MovementMode::TopDown => {
+                if score < 50 {
+                    "COLLECTEZ 50 OR POUR LA PORTE".to_string()
+                } else {
+                    "PORTE DÉVERROUILLÉE ! SORTEZ DU DONJON".to_string()
+                }
+            }
+        }
+    }
+
     pub fn render(&mut self, canvas: &mut Canvas) {
         canvas.clear(0x00080B14);
 
@@ -6337,83 +6387,82 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             canvas.draw_text(vx + 16, vy + 12, viewport_tag, 0x0064748B, 1);
         }
 
-        // Glass HUD Pill en haut du viewport (en mode jeu)
+        // HUD en haut du viewport (en mode jeu) : data-driven si un écran `Hud`
+        // déclaratif existe, sinon repli sur la pilule procédurale historique.
         if !is_edit_mode {
-            let score = match self.kvl_context.get_var("score") {
-                Some(Value::Int(s)) => *s,
-                _ => 0,
-            };
+            let hud_screen = self
+                .ui_screens
+                .iter()
+                .find(|s| s.kind == crate::subsystems::UiScreenKind::Hud);
 
-            let obj_txt = if let Some(Value::String(s)) = self.kvl_context.get_var("objective") {
-                s.as_str()
-            } else if let Some(ref s_obj) = self.scene_objective {
-                s_obj.as_str()
+            if let Some(screen) = hud_screen.filter(|s| !s.elements.is_empty()) {
+                crate::ui_render::render_hud_panel(canvas, screen, &self.kvl_context, 18, vy + 12);
             } else {
-                match player_mode {
-                    MovementMode::Platformer { .. } => "ATTEIGNEZ LE PORTAIL QUANTIQUE",
-                    MovementMode::SpaceInertia { .. } => "PILOTEZ LE VAISSEAU SPATIAL",
-                    MovementMode::Grid { .. } => "DÉPLACEZ LES BLOCS SUR LA DALLE",
-                    MovementMode::TopDown if has_pushables => "POUSSEZ LES BLOCS SUR LES DALLES",
-                    MovementMode::TopDown => {
-                        if score < 50 {
-                            "COLLECTEZ 50 OR POUR LA PORTE"
-                        } else {
-                            "PORTE DÉVERROUILLÉE ! SORTEZ DU DONJON"
-                        }
-                    }
-                }
-            };
+                let score = match self.kvl_context.get_var("score") {
+                    Some(Value::Int(s)) => *s,
+                    _ => 0,
+                };
 
-            let (cur_hp, max_hp) = if let Some(p_idx) = self.player_index() {
-                if let Some(ref h) = self.entities[p_idx].health {
-                    (h.current.ceil() as i32, h.max.ceil() as i32)
+                let (cur_hp, max_hp) = if let Some(p_idx) = self.player_index() {
+                    if let Some(ref h) = self.entities[p_idx].health {
+                        (h.current.ceil() as i32, h.max.ceil() as i32)
+                    } else {
+                        (3, 3)
+                    }
                 } else {
                     (3, 3)
+                };
+                let hearts_count = max_hp.clamp(1, 10);
+
+                let hearts_w = hearts_count * 16 + 8;
+                // Pas d'emoji : la police bitmap ne fournit pas le glyphe pièce.
+                let score_str = format!("{} OR", score);
+                let obj_txt = self.objective_hud_text(player_mode, has_pushables);
+                let score_w = canvas.measure_text(&score_str, 1).0 as i32 + 16;
+
+                // Sans quête, la pilule porte l'objectif de repli ; avec une quête, le
+                // widget de quête s'en charge et la pilule reste compacte.
+                let fallback_objective = if self.quest.is_none() {
+                    Some(obj_txt.as_str())
+                } else {
+                    None
+                };
+                let obj_w = fallback_objective
+                    .map(|text| canvas.measure_text(text, 1).0 + 20)
+                    .unwrap_or(0);
+                let hud_pill_w = if fallback_objective.is_some() {
+                    (hearts_w + score_w + obj_w + 32) as u32
+                } else {
+                    (hearts_w + score_w + 22) as u32
+                };
+                let hud_x = 18;
+                let hud_y = vy + 12;
+                let hud_h = 34u32;
+
+                canvas.draw_rect(hud_x, hud_y, hud_pill_w, hud_h, 0x000F172A);
+                canvas.draw_rect_outline(hud_x, hud_y, hud_pill_w, hud_h, 0x00334155, 1);
+                canvas.draw_corner_brackets(hud_x, hud_y, hud_pill_w, hud_h, 8, 0x0038BDF8);
+
+                let mut hx = hud_x + 10;
+                for i in 0..hearts_count {
+                    let heart_icon = if i < cur_hp { "♥" } else { "♡" };
+                    let heart_col = if i < cur_hp { 0x00EF4444 } else { 0x00475569 };
+                    canvas.draw_text(hx, hud_y + 9, heart_icon, heart_col, 2);
+                    hx += 16;
                 }
-            } else {
-                (3, 3)
-            };
-            let hearts_count = max_hp.clamp(1, 10);
 
-            let hearts_w = hearts_count * 16 + 8;
-            let score_str = format!("🪙 {} OR", score);
-            let score_w = canvas.measure_text(&score_str, 1).0 as i32 + 16;
-            let obj_prefix = "🎯 ";
-            let full_obj_str = format!("{}{}", obj_prefix, obj_txt);
-            let obj_w = canvas.measure_text(&full_obj_str, 1).0 as i32 + 20;
-
-            let has_boss = self.entities.iter().any(|e| e.is_active && e.boss.is_some());
-            let hud_pill_w = if has_boss {
-                (hearts_w + score_w + 22) as u32
-            } else {
-                (hearts_w + score_w + obj_w + 32) as u32
-            };
-            let hud_x = 18;
-            let hud_y = vy + 12;
-            let hud_h = 34u32;
-
-            canvas.draw_rect(hud_x, hud_y, hud_pill_w, hud_h, 0x000F172A);
-            canvas.draw_rect_outline(hud_x, hud_y, hud_pill_w, hud_h, 0x00334155, 1);
-            canvas.draw_corner_brackets(hud_x, hud_y, hud_pill_w, hud_h, 8, 0x0038BDF8);
-
-            let mut hx = hud_x + 10;
-            for i in 0..hearts_count {
-                let heart_icon = if i < cur_hp { "♥" } else { "♡" };
-                let heart_col = if i < cur_hp { 0x00EF4444 } else { 0x00475569 };
-                canvas.draw_text(hx, hud_y + 9, heart_icon, heart_col, 2);
-                hx += 16;
-            }
-
-            hx += 6;
-            canvas.draw_line(hx, hud_y + 6, hx, hud_y + (hud_h as i32) - 6, 0x00334155);
-            hx += 10;
-
-            canvas.draw_text(hx, hud_y + 10, &score_str, 0x00FBBF24, 1);
-            if !has_boss {
-                hx += score_w + 2;
+                hx += 6;
                 canvas.draw_line(hx, hud_y + 6, hx, hud_y + (hud_h as i32) - 6, 0x00334155);
                 hx += 10;
-                canvas.draw_text(hx, hud_y + 10, &full_obj_str, 0x006EE7B7, 1);
+
+                canvas.draw_text(hx, hud_y + 10, &score_str, 0x00FBBF24, 1);
+
+                if let Some(text) = fallback_objective {
+                    hx += score_w + 2;
+                    canvas.draw_line(hx, hud_y + 6, hx, hud_y + (hud_h as i32) - 6, 0x00334155);
+                    hx += 10;
+                    canvas.draw_text(hx, hud_y + 10, text, 0x006EE7B7, 1);
+                }
             }
         }
 
@@ -7727,13 +7776,37 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
 
         // 5. Hotbar & Suivi de quête HUD en Mode Jeu
         if !is_edit_mode {
-            let hotbar_y = if is_embedded { h - 16 } else { bottom_y - 12 };
-            self.inventory.render_hotbar_at(canvas, vx + (vw / 2), hotbar_y);
+            // Un dialogue modal occupe le bas de l'écran : la hotbar est masquée
+            // et ses hitboxes neutralisées pour éviter un clic fantôme.
+            if self.dialogue.is_active {
+                self.inventory.hide_hotbar();
+            } else {
+                let hotbar_y = if is_embedded { h - 16 } else { bottom_y - 12 };
+                self.inventory.render_hotbar_at(canvas, vx + (vw / 2), hotbar_y);
+            }
 
             if let Some(ref q) = self.quest {
                 let q_x = 18;
-                let q_y = if is_embedded { vy + 16 } else { vy + 56 };
-                q.render(canvas, q_x, q_y);
+                // Sous la pilule cœurs/score (hauteur 34, y+12) : jamais de recouvrement.
+                let q_y = vy + 56;
+                let objective_text = self.objective_hud_text(player_mode, has_pushables);
+                q.render(canvas, q_x, q_y, Some(&objective_text));
+            }
+        }
+
+        // Écrans UI data-driven plein écran (menu / pause / victoire / game over) :
+        // superposés au HUD en mode jeu selon l'état runtime (joueur mort, `game_won`,
+        // `paused` ou `menu_active`).
+        if !is_edit_mode {
+            let player_dead = self
+                .player_index()
+                .and_then(|i| self.entities[i].health.as_ref())
+                .map_or(false, |h| h.is_dead);
+            let trigger = crate::ui_render::resolve_screen_trigger(&self.kvl_context, player_dead);
+            if trigger != crate::ui_render::ScreenTrigger::Hud {
+                if let Some(screen) = crate::ui_render::active_screen(&self.ui_screens, trigger) {
+                    crate::ui_render::render_overlay(canvas, screen, &self.kvl_context, vx, vy, vw, vh);
+                }
             }
         }
 
@@ -11376,6 +11449,127 @@ mod tests {
     }
 
     #[test]
+    fn test_data_driven_ui_screens_roundtrip_and_render() {
+        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène chargée");
+
+        // 1. Un écran HUD déclaratif lié aux variables KVL du moteur.
+        state.ui_screens = vec![crate::subsystems::UiScreen {
+            id: "hud_0".into(),
+            kind: crate::subsystems::UiScreenKind::Hud,
+            title: None,
+            elements: vec![
+                crate::subsystems::UiElement {
+                    id: "score".into(),
+                    kind: "text".into(),
+                    label: Some("OR".into()),
+                    bind: Some("score".into()),
+                },
+                crate::subsystems::UiElement {
+                    id: "hp".into(),
+                    kind: "bar".into(),
+                    label: Some("VITALITÉ".into()),
+                    bind: Some("player_hp".into()),
+                },
+            ],
+        }];
+
+        // 2. Le HUD data-driven se rend sans panique et écrit des pixels.
+        let mut canvas = Canvas::new(1200, 800);
+        state.render(&mut canvas);
+        assert!(canvas.buffer.iter().any(|&p| p != 0x000B0F19), "Le HUD data-driven doit être rendu");
+
+        // 3. Le roundtrip projet préserve les écrans UI.
+        let project = state.export_current_project();
+        assert_eq!(project.ui_screens.len(), 1);
+        assert_eq!(project.ui_screens[0].kind, crate::subsystems::UiScreenKind::Hud);
+
+        let mut reloaded = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène rechargée");
+        reloaded.load_project(project);
+        assert_eq!(reloaded.ui_screens.len(), 1);
+        assert_eq!(reloaded.ui_screens[0].elements.len(), 2);
+    }
+
+    #[test]
+    fn test_data_driven_screen_trigger_overlay() {
+        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène chargée");
+
+        // Écran de victoire déclaré + variable `game_won` active.
+        state.ui_screens = vec![crate::subsystems::UiScreen {
+            id: "win".into(),
+            kind: crate::subsystems::UiScreenKind::Victory,
+            title: Some("VICTOIRE".into()),
+            elements: vec![],
+        }];
+        state.kvl_context.set_var("game_won", Value::Bool(true));
+
+        let mut canvas = Canvas::new(1200, 800);
+        state.render(&mut canvas);
+        // Le voile de l'overlay (0x00060911) recouvre l'intégralité du viewport :
+        // bien plus de pixels que les ombres portées du monde.
+        let veil_pixels = canvas.buffer.iter().filter(|&&p| p == 0x00060911).count();
+        assert!(
+            veil_pixels > 100_000,
+            "L'écran de victoire doit recouvrir le viewport d'un voile (trouvé {veil_pixels} px)"
+        );
+    }
+
+    #[test]
+    fn test_data_driven_camera_and_lights_roundtrip() {
+        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène chargée");
+
+        state.camera3d = Some(crate::subsystems::Camera3DData {
+            position: [1.0, 2.0, 3.0],
+            target: [0.0, 0.0, 0.0],
+        });
+        state.lights = vec![crate::subsystems::Light3DData {
+            kind: "point".into(),
+            position: [4.0, 5.0, 6.0],
+            color: 0x00FF0000,
+            intensity: 1.5,
+        }];
+
+        // Roundtrip projet : les données 3D déclaratives sont préservées.
+        let project = state.export_current_project();
+        assert_eq!(project.camera3d.as_ref().unwrap().position, [1.0, 2.0, 3.0]);
+        assert_eq!(project.lights.len(), 1);
+        assert_eq!(project.lights[0].kind, "point");
+
+        let mut reloaded = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène rechargée");
+        reloaded.load_project(project);
+        assert_eq!(reloaded.camera3d.as_ref().unwrap().position, [1.0, 2.0, 3.0]);
+        assert_eq!(reloaded.lights.len(), 1);
+        assert_eq!(reloaded.lights[0].position, [4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_data_driven_save_config_roundtrip() {
+        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène chargée");
+
+        state.save_config = crate::subsystems::SaveConfig {
+            enabled: false,
+            slots: 5,
+            auto_save: false,
+        };
+
+        let project = state.export_current_project();
+        assert!(!project.save_config.enabled);
+        assert_eq!(project.save_config.slots, 5);
+        assert!(!project.save_config.auto_save);
+
+        let mut reloaded = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+            .expect("Scène rechargée");
+        reloaded.load_project(project);
+        assert_eq!(reloaded.save_config.slots, 5);
+        assert!(!reloaded.save_config.enabled);
+    }
+
+    #[test]
     fn test_studio_live_physics_tuning() {
         let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
             .expect("Scène chargée");
@@ -13240,6 +13434,7 @@ mod tests {
     #[test]
     fn test_ai_patch_trigger_and_review_lifecycle() {
         let mut state = GameState::load_from_scene(get_test_scene_path()).unwrap();
+        state.editor.ai_config.provider = crate::ai_client::AiProvider::OfflineLocal;
         state.editor.mode = EditorMode::Edit;
         let mut canvas = Canvas::new(1200, 800);
         let initial_entity_count = state.entities.len();
@@ -13347,7 +13542,7 @@ mod tests {
             kvl_actions: vec![
                 crate::ai_client::AiGeneratedKvlAction {
                     event: "OnDamage".into(),
-                    action: "SpawnParticles:burst".into(),
+                    action: "EmitBurst:12".into(),
                     target_entity: None,
                     condition: None,
                     on_true_action: None,
@@ -13368,6 +13563,7 @@ mod tests {
     #[test]
     fn test_ai_patch_rejection_and_instant_rollback() {
         let mut state = GameState::load_from_scene(get_test_scene_path()).unwrap();
+        state.editor.ai_config.provider = crate::ai_client::AiProvider::OfflineLocal;
         state.editor.mode = EditorMode::Edit;
         let mut canvas = Canvas::new(1200, 800);
         let initial_entity_count = state.entities.len();

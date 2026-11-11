@@ -403,6 +403,12 @@ impl Inventory {
         self.render_hotbar_at(canvas, (screen_w / 2) as i32, (screen_h - 14) as i32);
     }
 
+    /// Masque la hotbar et neutralise ses hitboxes (dialogue modal, cinématique).
+    pub fn hide_hotbar(&mut self) {
+        self.hotbar_hitboxes = [None; HOTBAR_SLOTS_COUNT];
+        self.use_btn_hitbox = None;
+    }
+
     /// Rendu de la barre d'action rapide (Hotbar) centrée à des coordonnées précises
     pub fn render_hotbar_at(&mut self, canvas: &mut Canvas, center_x: i32, bottom_y: i32) {
         let slot_size: u32 = 36;
@@ -496,13 +502,14 @@ impl Inventory {
         if let Some(ref slot) = self.selected_slot() {
             let label = format!("[{}] {}", self.selected_hotbar_index + 1, slot.item.name);
             let tip_x = start_x;
-            let tip_y = bg_y - 20;
+            // Sous la notification (bg_y - 42) : les deux libellés ne se touchent plus.
+            let tip_y = bg_y - 18;
             canvas.draw_text(tip_x, tip_y, &label, 0x0038BDF8, 1);
         }
 
         // 4. Notification flottante de ramassage / action (au-dessus du nom)
         if let Some((ref msg, _)) = self.notification {
-            let notif_y = bg_y - 36;
+            let notif_y = bg_y - 42;
             let notif_w = (msg.len() * 6 + 16) as u32;
             let notif_x = center_x - (notif_w as i32 / 2);
             canvas.draw_badge(
@@ -637,5 +644,19 @@ mod tests {
         for i in 0..HOTBAR_SLOTS_COUNT {
             assert!(inv.hotbar_hitboxes[i].is_some(), "Slot {} must have a valid hitbox", i);
         }
+    }
+
+    #[test]
+    fn test_hide_hotbar_clears_hitboxes() {
+        let mut inv = Inventory::new(16);
+        inv.add_item(Item::health_potion(1), 1);
+        let mut canvas = Canvas::new(800, 600);
+        inv.render_hotbar_at(&mut canvas, 400, 560);
+        assert!(inv.hotbar_hitboxes.iter().any(|hitbox| hitbox.is_some()));
+        assert!(inv.use_btn_hitbox.is_some());
+
+        inv.hide_hotbar();
+        assert!(inv.hotbar_hitboxes.iter().all(|hitbox| hitbox.is_none()));
+        assert!(inv.use_btn_hitbox.is_none());
     }
 }

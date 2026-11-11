@@ -368,20 +368,28 @@ impl QuestTracker {
         self.notification_timer = (self.notification_timer - dt).max(0.0);
     }
 
-    /// Rendu du widget de quête dans le coin supérieur droit sous le bandeau HUD
-    pub fn render(&self, canvas: &mut Canvas, x: i32, y: i32) {
-        let box_w = 280u32;
-        let box_h = 62u32;
+    /// Rendu du widget de quête dans le coin supérieur droit sous le bandeau HUD.
+    ///
+    /// L'objectif est découpé en lignes selon la largeur réelle mesurée par le
+    /// rasterizer : une phrase longue ne déborde plus sous le radar tactique.
+    pub fn render(&self, canvas: &mut Canvas, x: i32, y: i32, objective_override: Option<&str>) {
+        const BOX_W: u32 = 300;
+        const PAD: i32 = 10;
+        const LINE_H: i32 = 16;
+
+        let objective = objective_override.unwrap_or(&self.objective);
+        let lines = wrap_objective(canvas, objective, BOX_W as i32 - PAD * 2, 2);
+        let box_h = 60 + (lines.len().saturating_sub(1) as u32) * LINE_H as u32;
 
         let bg_col = if self.is_completed { 0x00064E3B } else { 0x000F172A };
         let bd_col = if self.is_completed { 0x0010B981 } else { 0x00F59E0B };
 
-        canvas.draw_rect(x, y, box_w, box_h, bg_col);
-        canvas.draw_rect_outline(x, y, box_w, box_h, bd_col, 1);
-        canvas.draw_corner_brackets(x, y, box_w, box_h, 8, bd_col);
+        canvas.draw_rect(x, y, BOX_W, box_h, bg_col);
+        canvas.draw_rect_outline(x, y, BOX_W, box_h, bd_col, 1);
+        canvas.draw_corner_brackets(x, y, BOX_W, box_h, 8, bd_col);
 
         let title_lbl = format!("QUÊTE : {}", self.title);
-        canvas.draw_text(x + 10, y + 8, &title_lbl, bd_col, 2);
+        canvas.draw_text(x + PAD, y + 8, &title_lbl, bd_col, 2);
 
         let step_lbl = if self.is_completed {
             "STATUT : TERMINÉE (100%)".to_string()
@@ -389,15 +397,72 @@ impl QuestTracker {
             format!("STATUT : ÉTAPE {} / {}", self.current_step, self.max_step)
         };
         let step_col = if self.is_completed { 0x0034D399 } else { 0x0094A3B8 };
-        canvas.draw_text(x + 10, y + 26, &step_lbl, step_col, 2);
+        canvas.draw_text(x + PAD, y + 26, &step_lbl, step_col, 2);
 
-        canvas.draw_text(x + 10, y + 42, &self.objective, 0x00CBD5E1, 2);
+        for (index, line) in lines.iter().enumerate() {
+            canvas.draw_text(
+                x + PAD,
+                y + 44 + index as i32 * LINE_H,
+                line,
+                0x00CBD5E1,
+                2,
+            );
+        }
     }
+}
+
+/// Découpe un texte en lignes qui tiennent dans `max_width` à l'échelle donnée.
+///
+/// La mesure passe par la police réelle du canvas ; les mots trop longs sont
+/// laissés sur leur propre ligne plutôt que coupés au milieu d'un caractère.
+fn wrap_objective(canvas: &Canvas, text: &str, max_width: i32, scale: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{} {}", current, word)
+        };
+
+        if current.is_empty() || canvas.measure_text(&candidate, scale).0 <= max_width {
+            current = candidate;
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_quest_objective_wraps_inside_box() {
+        let canvas = Canvas::new(400, 300);
+        let lines = wrap_objective(
+            &canvas,
+            "SAUTEZ SUR LES PLATEFORMES ET ATTEIGNEZ LE PORTAIL",
+            280,
+            2,
+        );
+        assert!(lines.len() >= 2, "l'objectif doit être découpé : {:?}", lines);
+        assert!(
+            lines.iter().all(|line| canvas.measure_text(line, 2).0 <= 280),
+            "une ligne dépasse la boîte : {:?}",
+            lines
+        );
+    }
 
     #[test]
     fn test_dialogue_box_typewriter_and_fast_forward() {

@@ -152,7 +152,7 @@ export const VectorWorkspace: React.FC = () => {
       <aside className="w-72 shrink-0 flex flex-col border-r border-[#2d1b4e] bg-[#0a0614]">
         <div className="flex items-center gap-2 px-3 py-2 border-b border-[#2d1b4e]">
           <span className="badge-tag bg-[#2e1065] text-[#c084fc] border border-[#a855f7]">VECTORISATION</span>
-          <button onClick={() => void refresh()} title="Recharger" className="text-[#64748b] hover:text-[#f8fafc] transition"><RefreshCw size={13} /></button>
+          <button onClick={() => void refresh()} title="Recharger" className="text-[#94a3b8] hover:text-[#f8fafc] transition"><RefreshCw size={13} /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
@@ -187,7 +187,7 @@ export const VectorWorkspace: React.FC = () => {
 
           {/* Réglages de trace */}
           <div className="flex flex-col gap-2 bg-[#0d0819] border border-[#2d1b4e] rounded-lg p-2.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">Réglages de trace</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#94a3b8]">Réglages de trace</span>
             {[
               { k: 'colors' as const, label: 'Couleurs', min: 2, max: 16, step: 1 },
               { k: 'alpha_threshold' as const, label: 'Seuil alpha', min: 0, max: 255, step: 1 },
@@ -212,9 +212,9 @@ export const VectorWorkspace: React.FC = () => {
 
           {/* Bibliothèque */}
           <div className="flex flex-col gap-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">Vecteurs ({vectors.length})</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#94a3b8]">Vecteurs ({vectors.length})</span>
             {vectors.length === 0 ? (
-              <span className="text-[10px] text-[#64748b]">Aucun vecteur — importez une image.</span>
+              <span className="text-[10px] text-[#94a3b8]">Aucun vecteur — importez une image.</span>
             ) : (
               vectors.map(v => (
                 <button
@@ -223,7 +223,7 @@ export const VectorWorkspace: React.FC = () => {
                   className={`flex items-center justify-between px-2 py-1.5 rounded text-left text-[11px] transition ${v.id === currentId ? 'bg-[#3b0764] text-[#f3e8ff]' : 'text-[#cbd5e1] hover:bg-[#1e1338]'}`}
                 >
                   <span className="truncate">{v.id}</span>
-                  <span className="text-[8px] text-[#64748b]">vec</span>
+                  <span className="text-[8px] text-[#94a3b8]">vec</span>
                 </button>
               ))
             )}
@@ -315,7 +315,7 @@ export const VectorWorkspace: React.FC = () => {
               )}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center gap-2 text-[#64748b] py-20">
+            <div className="flex flex-col items-center justify-center gap-2 text-[#94a3b8] py-20">
               <Wand2 size={28} className="opacity-50" />
               <p className="text-sm">Importez une image pour la vectoriser.</p>
               <p className="text-[11px]">Le tracé combine quantification, contours et simplification.</p>

@@ -202,7 +202,7 @@ export const RecipeWizardModal: React.FC<RecipeWizardModalProps> = ({
                   ? 'bg-[#3b0764] text-[#f3e8ff] border border-[#a855f7]'
                   : step > s.num
                   ? 'bg-[#150d27] text-[#34d399] border border-[#059669]/40'
-                  : 'bg-[#150d27] text-[#64748b] border border-[#2d1b4e]'
+                  : 'bg-[#150d27] text-[#94a3b8] border border-[#2d1b4e]'
               }`}
             >
               {step > s.num ? <Check size={12} /> : <span>{s.num}.</span>}
@@ -494,7 +494,7 @@ export const RecipeWizardModal: React.FC<RecipeWizardModalProps> = ({
                         className={`p-3 rounded-lg border cursor-pointer transition flex items-center justify-between ${
                           active
                             ? 'bg-[#2e1065] border-[#a855f7] text-[#f8fafc]'
-                            : 'bg-[#150d27] border-[#2d1b4e] text-[#64748b]'
+                            : 'bg-[#150d27] border-[#2d1b4e] text-[#94a3b8]'
                         }`}
                       >
                         <span className="text-xs font-medium">{elem.label}</span>
@@ -673,7 +673,7 @@ export const RecipeWizardModal: React.FC<RecipeWizardModalProps> = ({
           </button>
 
           <div className="flex items-center gap-3">
-            <span className="text-xs text-[#64748b]">Étape {step} sur 6</span>
+            <span className="text-xs text-[#94a3b8]">Étape {step} sur 6</span>
             {step < 6 ? (
               <button
                 type="button"

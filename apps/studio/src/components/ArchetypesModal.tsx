@@ -91,7 +91,7 @@ export const ArchetypesModal: React.FC<ArchetypesModalProps> = ({ isOpen, onClos
                   <div className="text-[11px] font-semibold text-[#38bdf8]">🎮 {a.defaultGame}</div>
 
                   <div>
-                    <div className="text-[10px] uppercase tracking-wider text-[#64748b] mb-1">Contenus</div>
+                    <div className="text-[10px] uppercase tracking-wider text-[#94a3b8] mb-1">Contenus</div>
                     <ul className="space-y-1 text-[11px] text-[#cbd5e1]">
                       {a.features.map((f, i) => (
                         <li key={i} className="flex items-center gap-1.5">
@@ -102,7 +102,7 @@ export const ArchetypesModal: React.FC<ArchetypesModalProps> = ({ isOpen, onClos
                   </div>
 
                   <div>
-                    <div className="text-[10px] uppercase tracking-wider text-[#64748b] mb-1">Contrôles</div>
+                    <div className="text-[10px] uppercase tracking-wider text-[#94a3b8] mb-1">Contrôles</div>
                     <ul className="space-y-1 text-[11px] text-[#94a3b8]">
                       {a.controls.map((c, i) => (
                         <li key={i} className="flex items-center gap-1.5">⌨️ {c}</li>
@@ -137,7 +137,7 @@ export const ArchetypesModal: React.FC<ArchetypesModalProps> = ({ isOpen, onClos
 
         {/* Barre inférieure */}
         <div className="flex items-center justify-between px-6 py-3.5 bg-[#150d27] border-t border-[#2d1b4e]">
-          <span className="text-xs text-[#64748b]">Échap pour fermer — le jeu se lance en mode Jeu (Play).</span>
+          <span className="text-xs text-[#94a3b8]">Échap pour fermer — le jeu se lance en mode Jeu (Play).</span>
           <button
             onClick={onClose}
             className="px-4 py-2 bg-[#1e1338] hover:bg-[#2d1b4e] text-[#f8fafc] rounded-lg text-xs font-medium transition"

@@ -1,0 +1,28 @@
+{
+  "engine_api": 1,
+  "dimensions": {
+    "2d": "production",
+    "2.5d": "prototype",
+    "3d": "declaratif-partiel"
+  },
+  "artifacts": {
+    "project": "exposable",
+    "scene": "exposable",
+    "level": "production",
+    "mechanic": "exposable",
+    "sprite": "exposable",
+    "mesh": "partiel",
+    "audio": "choix-ferme-26-sons",
+    "ui": "a-construire",
+    "save": "projet-seulement",
+    "export": "html-package"
+  },
+  "limits": {
+    "ui_hud_menus": "aucun modèle déclaratif — sous-système à construire avant génération",
+    "audio": "liste fermée SoundType (26) via PlaySound:<key>, pas de génération audio",
+    "save_runtime": "pas de modèle de progression distinct du projet (.karacti)",
+    "setvar": "entier uniquement — ne transporte pas de texte",
+    "conditions": "non cataloguées (HasItem:, HealthLessThan:, …) — repli interpréteur",
+    "catalog_gaps": "aucun — actions/événements des builders déterministes et du chemin LLM couverts par le catalogue"
+  }
+}

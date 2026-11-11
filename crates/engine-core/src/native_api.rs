@@ -10,7 +10,9 @@ use crate::entity::{Entity, MaterialRef, MeshRef, Renderable3D, Transform2D, Tra
 use crate::game::GameState;
 use crate::input::InputState;
 use crate::renderer::Canvas;
+use crate::save::SaveManager;
 use glam::Vec3;
+use std::path::{Component, Path, PathBuf};
 use winit::keyboard::KeyCode;
 
 pub const CANVAS_WIDTH: usize = 1200;
@@ -48,6 +50,10 @@ pub struct NativeEngine {
     packet_frame_id: u32,
     /// Caméra 3D de la vue (orbitale dans la démo).
     camera3d: Camera3D,
+    /// Gestionnaire de sauvegarde (slots) piloté par `game.save_config`.
+    save_manager: SaveManager,
+    /// Référence de prévisualisation pour `ai_review` (capturée avant un patch).
+    review_baseline: Option<crate::preview::PreviewCapture>,
 }
 
 /// Résout le chemin de la scène par défaut, quel que soit le répertoire courant
@@ -192,6 +198,11 @@ impl NativeEngine {
             packet_time: 0.0,
             packet_frame_id: 0,
             camera3d: Camera3D::perspective(Vec3::new(0.0, 7.0, 16.0), Vec3::ZERO, 60.0, 0.1, 200.0, 1.5),
+            save_manager: SaveManager::with_root(
+                crate::subsystems::SaveConfig::default(),
+                crate::project_registry::ProjectRegistry::home_dir().join("saves"),
+            ),
+            review_baseline: None,
         })
     }
 
@@ -593,16 +604,24 @@ impl NativeEngine {
             &refs,
             self.packet_frame_id,
         );
-        packet.ambient = [0.4, 0.4, 0.4];
-        packet.lights = vec![crate::render_packet::LightPacket {
-            kind: crate::render_packet::LightKind::Directional,
-            color: [1.0, 1.0, 1.0],
-            intensity: 2.2,
-            pos: [8.0, 14.0, 6.0],
-            dir: [-0.5, -0.8, -0.4],
-            range: 0.0,
-            spot_cos_cutoff: 0.0,
-        }];
+        if self.game.lights.is_empty() {
+            // Éclairage de démo : ambiant + soleil directionnel.
+            packet.ambient = [0.4, 0.4, 0.4];
+            packet.lights = vec![crate::render_packet::LightPacket {
+                kind: crate::render_packet::LightKind::Directional,
+                color: [1.0, 1.0, 1.0],
+                intensity: 2.2,
+                pos: [8.0, 14.0, 6.0],
+                dir: [-0.5, -0.8, -0.4],
+                range: 0.0,
+                spot_cos_cutoff: 0.0,
+            }];
+        } else {
+            // Lumières déclaratives du projet (`project.lights`).
+            let (ambient, lights) = crate::render_packet::lighting_from_project(&self.game.lights);
+            packet.ambient = ambient;
+            packet.lights = lights;
+        }
         packet
     }
 
@@ -613,13 +632,20 @@ impl NativeEngine {
         if self.count_3d_entities() == 0 {
             self.populate_default_3d_scene();
         }
-        // Orbite lente de la caméra pour une vue dynamique (démo).
-        let angle = self.packet_time * 0.15;
-        let radius = 16.0;
-        let height = 7.0;
-        self.camera3d.position = Vec3::new(radius * angle.sin(), height, radius * angle.cos());
-        self.camera3d.target = Vec3::ZERO;
-        self.camera3d.aspect = 1.5;
+
+        // Caméra : priorité au projet (`project.camera3d`), sinon orbite de démo.
+        if let Some(cam) = self.game.camera3d.clone() {
+            self.camera3d.position = Vec3::from_array(cam.position);
+            self.camera3d.target = Vec3::from_array(cam.target);
+            self.camera3d.aspect = 1.5;
+        } else {
+            let angle = self.packet_time * 0.15;
+            let radius = 16.0;
+            let height = 7.0;
+            self.camera3d.position = Vec3::new(radius * angle.sin(), height, radius * angle.cos());
+            self.camera3d.target = Vec3::ZERO;
+            self.camera3d.aspect = 1.5;
+        }
 
         let packet = self.build_3d_packet();
         self.packet_frame_id = self.packet_frame_id.wrapping_add(1);
@@ -645,6 +671,37 @@ impl NativeEngine {
         // Safety: les `n` éléments u32 (soit `n * 4` octets) ont tous été écrits.
         unsafe { out.set_len(n * 4) };
         out
+    }
+
+    /// Capture une signature de prévisualisation du framebuffer courant (fondation
+    /// de `ai_review`) : grille 8×8 en niveaux de gris, diffable via `preview_diff`.
+    pub fn capture_preview(&self) -> crate::preview::PreviewCapture {
+        crate::preview::capture_preview(&self.canvas.buffer, self.canvas.width, self.canvas.height)
+    }
+
+    /// Capture la prévisualisation courante et la stocke comme référence (`ai_review`).
+    pub fn capture_review_baseline(&mut self) -> crate::preview::PreviewCapture {
+        let cap = self.capture_preview();
+        self.review_baseline = Some(cap);
+        cap
+    }
+
+    /// Diff entre la prévisualisation courante et la référence (`ai_review`).
+    /// Sans référence, renvoie `NoChange` (diff 0).
+    pub fn review_ai_patch(&self) -> crate::preview::ReviewReport {
+        let current = self.capture_preview();
+        match self.review_baseline {
+            Some(baseline) => crate::preview::review_preview(&baseline, &current),
+            None => crate::preview::ReviewReport {
+                diff: 0.0,
+                verdict: crate::preview::ReviewVerdict::NoChange,
+            },
+        }
+    }
+
+    /// Indique si une référence de revue a été capturée.
+    pub fn has_review_baseline(&self) -> bool {
+        self.review_baseline.is_some()
     }
 
     // --- Entrées ---------------------------------------------------------------
@@ -932,6 +989,59 @@ impl NativeEngine {
             .unwrap_or_else(|_| "{}".to_string())
     }
 
+    // --- Sauvegarde runtime (slots) ---------------------------------------------
+
+    /// Synchronise la configuration du gestionnaire de sauvegarde avec l'état du jeu
+    /// (elle peut changer via l'op IA `SetSaveConfig`).
+    fn sync_save_config(&mut self) {
+        self.save_manager.config = self.game.save_config.clone();
+    }
+
+    /// Sauvegarde l'état courant du jeu dans un slot (`0..slots`). Renvoie le chemin.
+    pub fn save_game(&mut self, slot: u32) -> Result<String, String> {
+        self.sync_save_config();
+        let project = self.game.export_current_project();
+        let path = self.save_manager.save(&project, slot as usize)?;
+        Ok(path.display().to_string())
+    }
+
+    /// Charge un slot et remplace l'état courant du jeu. `false` si le slot est vide.
+    pub fn load_game(&mut self, slot: u32) -> bool {
+        self.sync_save_config();
+        let project_id = self.game.export_current_project().metadata.id;
+        match self.save_manager.load(&project_id, slot as usize) {
+            Ok(project) => {
+                self.game.load_project(project);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Reprise en session : charge le slot le plus récent pour le projet courant.
+    pub fn resume_game(&mut self) -> bool {
+        self.sync_save_config();
+        let project_id = self.game.export_current_project().metadata.id;
+        match self.save_manager.resume(&project_id) {
+            Some(project) => {
+                self.game.load_project(project);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Avance l'auto-save d'un pas de temps ; renvoie le chemin écrit le cas échéant.
+    pub fn auto_save(&mut self, dt: f32) -> Option<String> {
+        self.sync_save_config();
+        let project = self.game.export_current_project();
+        self.save_manager
+            .auto_save_tick(dt, &project)
+            .ok()
+            .flatten()
+            .map(|p| p.display().to_string())
+    }
+
     /// Ouvre un projet (`.karacti`) ou une scène de démo (`.scene.json`) depuis un
     /// chemin de fichier sur le disque, puis force le mode embarqué Studio.
     pub fn open_project_path(&mut self, path: &str) -> Result<i32, String> {
@@ -1074,6 +1184,7 @@ impl NativeEngine {
             .game
             .kvl_graphs
             .iter()
+            .filter(|(path, _)| validate_graph_relative_path(path).is_ok())
             .map(|(path, g)| {
                 serde_json::json!({
                     "path": path,
@@ -1132,8 +1243,11 @@ impl NativeEngine {
             Ok(g) => g,
             Err(_) => return false,
         };
-        self.game.kvl_graphs.insert(path.to_string(), graph.clone());
-        self.persist_kvl_graph_to_disk(path, &graph);
+        // Écrire d'abord : un chemin invalide ne doit jamais modifier la mémoire.
+        if self.persist_kvl_graph_to_disk(path, &graph).is_err() {
+            return false;
+        }
+        self.game.kvl_graphs.insert(path.to_string(), graph);
         true
     }
 
@@ -1147,6 +1261,7 @@ impl NativeEngine {
         x: f32,
         y: f32,
     ) -> Result<String, String> {
+        self.resolve_kvl_graph_path(path)?;
         let (schema, concrete) = self
             .game
             .plugins
@@ -1163,8 +1278,151 @@ impl NativeEngine {
             .map_err(|error| error.to_string())?;
         let snapshot = graph.clone();
         let json = snapshot.to_json().map_err(|error| error.to_string())?;
-        self.persist_kvl_graph_to_disk(path, &snapshot);
+        self.persist_kvl_graph_to_disk(path, &snapshot)
+            .map_err(|error| format!("Nœud inséré en mémoire mais non persisté : {}", error))?;
         Ok(json)
+    }
+
+    /// Connecte deux pins KVL (sortie → entrée) avec validation de type, persiste et
+    /// renvoie le graphe sérialisé. (WS6/UX-604)
+    pub fn add_kvl_connection(
+        &mut self,
+        path: &str,
+        from_node: &str,
+        from_pin: &str,
+        to_node: &str,
+        to_pin: &str,
+    ) -> Result<String, String> {
+        self.resolve_kvl_graph_path(path)?;
+        let graph = self
+            .game
+            .kvl_graphs
+            .get_mut(path)
+            .ok_or_else(|| format!("Graphe introuvable : {}", path))?;
+        graph
+            .connect_pins(from_node, from_pin, to_node, to_pin)
+            .map_err(|error| error.to_string())?;
+        let snapshot = graph.clone();
+        let json = snapshot.to_json().map_err(|error| error.to_string())?;
+        self.persist_kvl_graph_to_disk(path, &snapshot)
+            .map_err(|error| format!("Connexion ajoutée en mémoire mais non persistée : {}", error))?;
+        Ok(json)
+    }
+
+    /// Supprime une connexion KVL par identifiant, persiste et renvoie le graphe.
+    pub fn remove_kvl_connection(&mut self, path: &str, connection_id: &str) -> Result<String, String> {
+        self.resolve_kvl_graph_path(path)?;
+        let graph = self
+            .game
+            .kvl_graphs
+            .get_mut(path)
+            .ok_or_else(|| format!("Graphe introuvable : {}", path))?;
+        if !graph.remove_connection_by_id(connection_id) {
+            return Err(format!("Connexion introuvable : {}", connection_id));
+        }
+        let snapshot = graph.clone();
+        let json = snapshot.to_json().map_err(|error| error.to_string())?;
+        self.persist_kvl_graph_to_disk(path, &snapshot)
+            .map_err(|error| format!("Connexion supprimée en mémoire mais non persistée : {}", error))?;
+        Ok(json)
+    }
+
+    /// Supprime un nœud KVL et toutes ses connexions, persiste et renvoie le graphe.
+    pub fn remove_kvl_node(&mut self, path: &str, node_id: &str) -> Result<String, String> {
+        self.resolve_kvl_graph_path(path)?;
+        let graph = self
+            .game
+            .kvl_graphs
+            .get_mut(path)
+            .ok_or_else(|| format!("Graphe introuvable : {}", path))?;
+        if graph.nodes.remove(node_id).is_none() {
+            return Err(format!("Nœud introuvable : {}", node_id));
+        }
+        graph.connections.retain(|c| c.from_node != node_id && c.to_node != node_id);
+        let snapshot = graph.clone();
+        let json = snapshot.to_json().map_err(|error| error.to_string())?;
+        self.persist_kvl_graph_to_disk(path, &snapshot)
+            .map_err(|error| format!("Nœud supprimé en mémoire mais non persisté : {}", error))?;
+        Ok(json)
+    }
+
+    /// Crée un graphe KVL vide, l'insère en mémoire et le persiste. (WS6/UX-606)
+    ///
+    /// Refuse un nom vide, un identifiant vide et toute collision (mémoire ou
+    /// disque) : créer deux fois « Nouvelle règle » ne doit jamais écraser le
+    /// premier graphe.
+    pub fn new_kvl_graph(&mut self, name: &str, description: &str) -> Result<String, String> {
+        let id = graph_id_from_name(name)?;
+        let path = format!("assets/scripts/{}.kvl.json", id);
+        let abs = self.resolve_kvl_graph_path(&path)?;
+        ensure_graph_target_free(
+            &path,
+            self.game.kvl_graphs.contains_key(&path),
+            abs.exists(),
+        )?;
+
+        let graph = kvl_core::Graph::new(id, name.trim(), description);
+        self.persist_kvl_graph_to_disk(&path, &graph)?;
+        self.game.kvl_graphs.insert(path.clone(), graph);
+        Ok(path)
+    }
+
+    /// Duplique un graphe KVL sous un nouveau nom. (WS6/UX-606)
+    pub fn duplicate_kvl_graph(&mut self, path: &str, new_name: &str) -> Result<String, String> {
+        let mut copy = self
+            .game
+            .kvl_graphs
+            .get(path)
+            .ok_or_else(|| format!("Graphe introuvable : {}", path))?
+            .clone();
+
+        copy.id = graph_id_from_name(new_name)?;
+        copy.name = new_name.trim().to_string();
+        let new_path = format!("assets/scripts/{}.kvl.json", copy.id);
+        let abs = self.resolve_kvl_graph_path(&new_path)?;
+        ensure_graph_target_free(
+            &new_path,
+            self.game.kvl_graphs.contains_key(&new_path),
+            abs.exists(),
+        )?;
+
+        self.persist_kvl_graph_to_disk(&new_path, &copy)?;
+        self.game.kvl_graphs.insert(new_path.clone(), copy);
+        Ok(new_path)
+    }
+
+    /// Renomme un graphe KVL (nom affiché), persiste. (WS6/UX-606)
+    pub fn rename_kvl_graph(&mut self, path: &str, new_name: &str) -> bool {
+        let trimmed = new_name.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        let Some(mut snapshot) = self.game.kvl_graphs.get(path).cloned() else {
+            return false;
+        };
+        snapshot.name = trimmed.to_string();
+        // Persister avant de modifier la mémoire : un échec disque ne laisse pas
+        // un nom divergent entre l'UI et le fichier.
+        if self.persist_kvl_graph_to_disk(path, &snapshot).is_err() {
+            return false;
+        }
+        self.game.kvl_graphs.insert(path.to_string(), snapshot);
+        true
+    }
+
+    /// Supprime un graphe KVL de la mémoire et du disque. (WS6/UX-606)
+    ///
+    /// Un chemin hors `assets/scripts/` est refusé : la commande ne peut pas
+    /// supprimer un fichier arbitraire du workspace.
+    pub fn delete_kvl_graph(&mut self, path: &str) -> bool {
+        let Ok(abs) = self.resolve_kvl_graph_path(path) else {
+            return false;
+        };
+        if self.game.kvl_graphs.remove(path).is_none() {
+            return false;
+        }
+        let _ = std::fs::remove_file(abs);
+        true
     }
 
     /// Attache un script KVL existant à une entité (par id) avec un événement de recouvrement.
@@ -1189,14 +1447,23 @@ impl NativeEngine {
         }
     }
 
-    fn persist_kvl_graph_to_disk(&self, path: &str, graph: &kvl_core::Graph) {
-        if let Ok(json) = graph.to_json() {
-            let abs = format!("{}/../../{}", env!("CARGO_MANIFEST_DIR"), path);
-            if let Some(parent) = std::path::Path::new(&abs).parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(&abs, json);
+    fn resolve_kvl_graph_path(&self, path: &str) -> Result<PathBuf, String> {
+        Ok(self.repo_root().join(validate_graph_relative_path(path)?))
+    }
+
+    /// Persiste un graphe dans `assets/scripts/` uniquement. Toute erreur est
+    /// remontée : l'appelant décide de conserver ou non l'état mémoire.
+    fn persist_kvl_graph_to_disk(&self, path: &str, graph: &kvl_core::Graph) -> Result<(), String> {
+        let abs = self.resolve_kvl_graph_path(path)?;
+        let json = graph
+            .to_json()
+            .map_err(|error| format!("Sérialisation KVL impossible : {}", error))?;
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("Dossier KVL inaccessible : {}", error))?;
         }
+        std::fs::write(&abs, json)
+            .map_err(|error| format!("Écriture KVL impossible ({}) : {}", abs.display(), error))
     }
 
     /// Construit un graphe KVL guidé, l'attache à l'entité sélectionnée (ou en
@@ -1282,8 +1549,14 @@ impl NativeEngine {
             recipe,
             self.game.entities.len() + 1
         );
+        if let Err(error) = self.persist_kvl_graph_to_disk(&script_path, &graph) {
+            return serde_json::json!({
+                "ok": false,
+                "error": format!("Graphe généré mais non persisté : {}", error),
+            })
+            .to_string();
+        }
         self.game.kvl_graphs.insert(script_path.clone(), graph.clone());
-        self.persist_kvl_graph_to_disk(&script_path, &graph);
 
         let mut attached = false;
         let mut target_entity: Option<String> = None;
@@ -1788,6 +2061,110 @@ impl NativeEngine {
     }
 }
 
+/// Valide qu'un chemin de graphe reste **directement** sous `assets/scripts/`.
+///
+/// Refuse : chemin vide, absolu, antislash, `..`, sous-dossier, extension autre
+/// que `.kvl.json`. Retourne le chemin relatif d'origine.
+fn validate_graph_relative_path(path: &str) -> Result<&Path, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Chemin de graphe vide.".into());
+    }
+    if trimmed.contains('\\') || trimmed.contains('\0') {
+        return Err(format!("Chemin de graphe invalide : {}", path));
+    }
+
+    let candidate = Path::new(trimmed);
+    if candidate.is_absolute() {
+        return Err(format!("Chemin de graphe absolu refusé : {}", path));
+    }
+
+    let mut components = candidate.components();
+    let (Some(Component::Normal(assets)), Some(Component::Normal(scripts)), Some(Component::Normal(file)), None) = (
+        components.next(),
+        components.next(),
+        components.next(),
+        components.next(),
+    ) else {
+        return Err(format!(
+            "Le graphe doit être directement dans assets/scripts/ : {}",
+            path
+        ));
+    };
+
+    if assets.to_str() != Some("assets") || scripts.to_str() != Some("scripts") {
+        return Err(format!(
+            "Le graphe doit être directement dans assets/scripts/ : {}",
+            path
+        ));
+    }
+
+    let file = file
+        .to_str()
+        .ok_or_else(|| format!("Nom de fichier KVL non UTF-8 : {}", path))?;
+    if file == ".kvl.json" || !file.ends_with(".kvl.json") {
+        return Err(format!(
+            "Le fichier doit se terminer par .kvl.json : {}",
+            path
+        ));
+    }
+
+    Ok(candidate)
+}
+
+/// Identifiant de fichier stable à partir d'un nom lisible.
+///
+/// « Nouvelle règle » → `g_nouvelle_r_gle` ; un nom sans lettre ni chiffre est
+/// refusé plutôt que de produire `g_` ou un chemin vide.
+fn graph_id_from_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Le nom du graphe ne peut pas être vide.".into());
+    }
+    if trimmed.chars().count() > 120 {
+        return Err("Le nom du graphe est trop long (120 caractères max).".into());
+    }
+
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+    for character in trimmed.chars() {
+        if character.is_ascii_alphanumeric() {
+            for lower in character.to_lowercase() {
+                slug.push(lower);
+            }
+            last_was_separator = false;
+        } else if !last_was_separator && !slug.is_empty() {
+            slug.push('_');
+            last_was_separator = true;
+        }
+    }
+    while slug.ends_with('_') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        return Err("Le nom doit contenir au moins une lettre ou un chiffre.".into());
+    }
+
+    let slug: String = slug.chars().take(64).collect();
+    let slug = slug.trim_matches('_');
+    Ok(format!("g_{}", slug))
+}
+
+/// Refuse une cible déjà occupée, en mémoire ou sur disque.
+fn ensure_graph_target_free(
+    path: &str,
+    exists_in_memory: bool,
+    exists_on_disk: bool,
+) -> Result<(), String> {
+    if exists_in_memory || exists_on_disk {
+        return Err(format!(
+            "Un graphe existe déjà à cet emplacement : {}. Choisissez un autre nom.",
+            path
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2014,5 +2391,285 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    #[test]
+    fn test_3d_packet_consumes_project_camera_and_lights() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        engine.populate_default_3d_scene();
+
+        // Caméra et lumière déclaratives issues du projet (ex. via l'op IA `SetCamera`/`AddLight`).
+        engine.game.camera3d = Some(crate::subsystems::Camera3DData {
+            position: [5.0, 6.0, 7.0],
+            target: [1.0, 0.0, 0.0],
+        });
+        engine.game.lights = vec![crate::subsystems::Light3DData {
+            kind: "point".into(),
+            position: [2.0, 3.0, 4.0],
+            color: 0x00FF0000,
+            intensity: 2.0,
+        }];
+
+        let bytes = engine.render_packet_frame(1.0 / 60.0);
+        let packet = crate::render_packet::RenderPacket::decode(&bytes).expect("decode");
+
+        // La caméra du packet reflète la caméra déclarative (position/target).
+        assert_eq!(packet.camera.pos, [5.0, 6.0, 7.0]);
+        assert_eq!(packet.camera.target, [1.0, 0.0, 0.0]);
+
+        // La lumière déclarative est convertie en `LightPacket` (point, pas le soleil de démo).
+        assert_eq!(packet.lights.len(), 1);
+        assert_eq!(
+            packet.lights[0].kind,
+            crate::render_packet::LightKind::Point
+        );
+        assert_eq!(packet.lights[0].pos, [2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_save_game_slot_roundtrip_and_resume() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let root = std::env::temp_dir().join(format!(
+            "karacti_engine_save_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        engine.save_manager = SaveManager::with_root(engine.game.save_config.clone(), root.clone());
+
+        // Sauvegarde dans le slot 1.
+        let path = engine.save_game(1).expect("sauvegarde slot 1");
+        assert!(std::path::Path::new(&path).exists());
+
+        // Un slot vide ne se charge pas.
+        assert!(!engine.load_game(2));
+
+        // Modifie l'état (objectif) puis recharge le slot : l'état est restauré.
+        let original_objective = engine.game.scene_objective.clone();
+        engine.game.scene_objective = Some("OBJECTIF MODIFIÉ".into());
+        assert!(engine.load_game(1));
+        assert_eq!(engine.game.scene_objective, original_objective);
+
+        // Reprise en session : recharge le slot le plus récent (slot 1).
+        assert!(engine.resume_game());
+
+        // Slot hors limites → erreur explicite (slots = 3 par défaut).
+        assert!(engine.save_game(5).is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_ai_review_capture_and_diff() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        engine.render_frame(1.0 / 60.0);
+
+        // Sans référence → NoChange.
+        assert!(!engine.has_review_baseline());
+        assert_eq!(
+            engine.review_ai_patch().verdict,
+            crate::preview::ReviewVerdict::NoChange
+        );
+
+        // Capture de la référence.
+        engine.capture_review_baseline();
+        assert!(engine.has_review_baseline());
+
+        // Aucun changement depuis la capture → diff nul.
+        let report = engine.review_ai_patch();
+        assert_eq!(report.verdict, crate::preview::ReviewVerdict::NoChange);
+        assert_eq!(report.diff, 0.0);
+
+        // Framebuffer radicalement différent → diff majeur.
+        engine.canvas.clear(0x00FFFFFF);
+        let report = engine.review_ai_patch();
+        assert_eq!(report.verdict, crate::preview::ReviewVerdict::Major);
+        assert!(report.diff > 0.9);
+    }
+
+    #[test]
+    fn graph_paths_are_confined_to_assets_scripts() {
+        for good in [
+            "assets/scripts/coin_pickup.kvl.json",
+            "assets/scripts/guided_coin_1.kvl.json",
+        ] {
+            assert!(
+                validate_graph_relative_path(good).is_ok(),
+                "chemin refusé à tort : {}",
+                good
+            );
+        }
+
+        for bad in [
+            "",
+            "../evil.kvl.json",
+            "/tmp/evil.kvl.json",
+            "assets/scripts/../../evil.kvl.json",
+            "assets/sprites/evil.kvl.json",
+            "assets/scripts/evil.json",
+            "assets/scripts/sub/evil.kvl.json",
+            "assets/scripts/.kvl.json",
+            "assets/scripts\\evil.kvl.json",
+        ] {
+            assert!(
+                validate_graph_relative_path(bad).is_err(),
+                "chemin accepté à tort : {}",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn graph_ids_are_stable_and_never_empty() {
+        assert_eq!(graph_id_from_name("Nouvelle règle").unwrap(), "g_nouvelle_r_gle");
+        assert_eq!(graph_id_from_name("A/B").unwrap(), "g_a_b");
+        assert_eq!(graph_id_from_name("  Porte  ").unwrap(), "g_porte");
+        assert!(graph_id_from_name("   ").is_err());
+        assert!(graph_id_from_name("!!!").is_err());
+
+        let long = graph_id_from_name(&"x".repeat(100)).unwrap();
+        assert!(long.starts_with("g_"));
+        assert!(long.len() <= 66, "identifiant trop long : {}", long.len());
+    }
+
+    #[test]
+    fn graph_target_guard_rejects_memory_and_disk_collisions() {
+        assert!(ensure_graph_target_free("assets/scripts/a.kvl.json", false, false).is_ok());
+        assert!(ensure_graph_target_free("assets/scripts/a.kvl.json", true, false).is_err());
+        assert!(ensure_graph_target_free("assets/scripts/a.kvl.json", false, true).is_err());
+    }
+
+    struct FileGuard(std::path::PathBuf);
+    impl Drop for FileGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn graph_connections_validate_pins_and_cleanup_on_node_removal() {
+        use kvl_core::{DataType, Node, NodeKind, Pin, PinDirection};
+
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = format!("assets/scripts/__cm_conn_{}.kvl.json", unique);
+        let _guard = FileGuard(engine.repo_root().join(&path));
+
+        let mut graph = kvl_core::Graph::new("g_conn", "Connexions", "");
+        graph.add_node(
+            Node::new(
+                "e",
+                "Départ",
+                kvl_core::Category::Interactions,
+                "",
+                NodeKind::Event { event_type: "Start".into() },
+            )
+            .with_output(Pin::new_trigger("out_trigger", "Out", PinDirection::Output)),
+        );
+        graph.add_node(
+            Node::new(
+                "a",
+                "Score",
+                kvl_core::Category::Progression,
+                "",
+                NodeKind::Action { action_type: "AddScore".into() },
+            )
+            .with_input(Pin::new_trigger("in_trigger", "In", PinDirection::Input)),
+        );
+        graph.add_node(
+            Node::new(
+                "b",
+                "Valeur",
+                kvl_core::Category::MathLogic,
+                "",
+                NodeKind::Action { action_type: "SetVar:score:1".into() },
+            )
+            .with_input(Pin::new_data("in_value", "Valeur", PinDirection::Input, DataType::Int, None)),
+        );
+        engine.game.kvl_graphs.insert(path.clone(), graph);
+
+        // Type incompatible : Trigger → Int doit être refusé.
+        let incompatible = engine.add_kvl_connection(&path, "e", "out_trigger", "b", "in_value");
+        assert!(incompatible.is_err(), "connexion Trigger→Int acceptée à tort");
+
+        engine
+            .add_kvl_connection(&path, "e", "out_trigger", "a", "in_trigger")
+            .expect("connexion Trigger→Trigger");
+        let connection_id = engine.game.kvl_graphs[&path].connections[0].id.clone();
+        engine
+            .remove_kvl_connection(&path, &connection_id)
+            .expect("suppression de connexion");
+        assert!(engine.game.kvl_graphs[&path].connections.is_empty());
+
+        engine
+            .add_kvl_connection(&path, "e", "out_trigger", "a", "in_trigger")
+            .expect("reconnexion");
+        engine.remove_kvl_node(&path, "a").expect("suppression du nœud");
+        assert!(!engine.game.kvl_graphs[&path].nodes.contains_key("a"));
+        assert!(
+            engine.game.kvl_graphs[&path].connections.is_empty(),
+            "les arêtes du nœud supprimé doivent disparaître"
+        );
+    }
+
+    #[test]
+    fn graph_crud_renames_duplicates_and_deletes() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let base_name = format!("ux_crud_{}", unique);
+        let path = engine.new_kvl_graph(&base_name, "test").expect("création");
+        let first = engine.repo_root().join(&path);
+        let _first_guard = FileGuard(first.clone());
+
+        assert!(engine.rename_kvl_graph(&path, "Nom Renommé"));
+        let on_disk = std::fs::read_to_string(&first).expect("graphe renommé sur disque");
+        let graph = kvl_core::Graph::from_json(&on_disk).expect("JSON valide");
+        assert_eq!(graph.name, "Nom Renommé");
+
+        let copy_name = format!("{}_copie", base_name);
+        let copy_path = engine
+            .duplicate_kvl_graph(&path, &copy_name)
+            .expect("duplication");
+        let copy_abs = engine.repo_root().join(&copy_path);
+        let _copy_guard = FileGuard(copy_abs.clone());
+        assert!(copy_abs.exists(), "la copie doit être persistée");
+
+        assert!(engine.delete_kvl_graph(&copy_path));
+        assert!(!copy_abs.exists());
+        assert!(engine.delete_kvl_graph(&path));
+        assert!(!first.exists());
+    }
+
+    #[test]
+    fn graph_crud_refuses_collisions_and_path_escapes() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let name = format!("ux_collision_{}_{}", std::process::id(), unique);
+
+        let path = engine.new_kvl_graph(&name, "test").expect("création initiale");
+        let _guard = FileGuard(engine.repo_root().join(&path));
+
+        let duplicate = engine
+            .new_kvl_graph(&name, "test")
+            .expect_err("un nom identique doit être refusé");
+        assert!(duplicate.contains("existe déjà"), "message : {}", duplicate);
+
+        let copy_error = engine
+            .duplicate_kvl_graph(&path, &name)
+            .expect_err("une copie au même nom doit être refusée");
+        assert!(copy_error.contains("existe déjà"), "message : {}", copy_error);
+
+        assert!(!engine.save_kvl_graph("../../evil.kvl.json", "{}"));
+        assert!(!engine.delete_kvl_graph("../../evil.kvl.json"));
+        assert!(engine.delete_kvl_graph(&path));
+        assert!(!engine.game.kvl_graphs.contains_key(&path));
     }
 }

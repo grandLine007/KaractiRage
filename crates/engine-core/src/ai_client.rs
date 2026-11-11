@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Fournisseurs d'Intelligence Artificielle pris en charge par KaractiRage
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,12 +116,19 @@ pub struct AiClientConfig {
 }
 
 impl AiClientConfig {
-    /// Charge la configuration depuis karactirage.ai.json si présent, sinon utilise la configuration par défaut
+    /// Charge la configuration depuis `karactirage.ai.json` (recherche depuis le CWD vers la racine).
     pub fn load_or_default() -> Self {
-        if let Ok(content) = std::fs::read_to_string("karactirage.ai.json") {
-            if let Ok(cfg) = serde_json::from_str::<AiClientConfig>(&content) {
-                return cfg;
+        let mut current = std::env::current_dir().ok();
+        while let Some(dir) = current {
+            let candidate = dir.join("karactirage.ai.json");
+            if candidate.is_file() {
+                if let Ok(content) = std::fs::read_to_string(&candidate) {
+                    if let Ok(cfg) = serde_json::from_str::<AiClientConfig>(&content) {
+                        return cfg;
+                    }
+                }
             }
+            current = dir.parent().map(|p| p.to_path_buf());
         }
         Self::default()
     }
@@ -140,7 +147,7 @@ impl Default for AiClientConfig {
             custom_endpoint: None,
             custom_model: None,
             custom_api_key: None,
-            timeout_seconds: 25,
+            timeout_seconds: 120,
         }
     }
 }
@@ -258,7 +265,7 @@ pub struct AiGeneratedEntity {
     #[serde(default)]
     pub sprite_frame: Option<String>, // Frame nommée d'une spritesheet (avec sprite_asset)
     #[serde(default)]
-    pub movement: Option<String>, // "patrol", "chase", "jump", "none"
+    pub movement: Option<String>, // "patrol", "chase", "none"
     #[serde(default)]
     pub has_collider: bool,
     #[serde(default)]
@@ -333,7 +340,7 @@ CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdo
   "gameplay_loop": {
     "objective": "Mission objective text",
     "win_condition": "DefeatBoss",
-    "loss_condition": "PlayerDeath"
+    "loss_condition": "PlayerHealthZero"
   },
   "entities": [
     {
@@ -346,7 +353,7 @@ CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdo
       "health": 5.0,
       "color_hex": "#3B82F6",
       "sprite_archetype": "ninja",
-      "movement": "jump",
+      "movement": "none",
       "has_collider": true,
       "has_vision": true,
       "is_flocking": false
@@ -369,8 +376,8 @@ CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdo
   ],
   "kvl_actions": [
     {
-      "event": "OnEntityDefeated",
-      "action": "WinGame",
+      "event": "OnBossDefeated",
+      "action": "PlaySound:victory_bell",
       "target_entity": "Boss_Demon"
     }
   ]
@@ -378,9 +385,9 @@ CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdo
 
 Available sprite_archetype values: "ninja", "knight", "drone", "slime", "skull", "boss", "chest", "key", "potion", "portal", "coin", "spikes".
 Available sprite_asset values (pixel-art pxl prégénéré): "coin", "potion", "key", "chest", "door", "platform", "spikes", "crate", "plate", "boss", "wall". Use "sprite_frame" (ex: "coin") with "sprite_asset":"chars" to pick a frame from the atlas.
-Available movement values: "patrol", "chase", "jump", "none".
+Available movement values: "patrol", "chase", "none".
 Available win_condition values: "DefeatBoss", "CollectAllKeysThenExit", "SurviveTimer".
-Available loss_condition values: "PlayerDeath", "TimeOut".
+Available loss_condition values: "PlayerHealthZero", "TimeOut".
 Output raw JSON only."##.to_string()
 }
 
@@ -406,12 +413,161 @@ fn format_system_prompt_with_spec(spec: &str) -> String {
     )
 }
 
+/// Transport HTTP abstrait pour les appels LLM.
+///
+/// `curl` reste l'implémentation par défaut, mais le trait permet d'injecter un backend
+/// de test (mock) ou un futur client HTTP natif (streaming) sans toucher à la logique.
+pub trait LlmBackend {
+    /// POST JSON et renvoie le corps brut de la réponse.
+    fn post_json(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &str,
+        timeout_secs: u64,
+    ) -> Result<String, String>;
+
+    /// POST JSON en streaming : appelle `on_chunk` pour chaque fragment brut reçu et
+    /// renvoie le corps complet accumulé. L'implémentation par défaut retombe sur
+    /// `post_json` (un seul chunk) — un backend réellement streamant la surcharge.
+    fn post_json_stream(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &str,
+        timeout_secs: u64,
+        on_chunk: &mut dyn FnMut(&str),
+    ) -> Result<String, String> {
+        let full = self.post_json(url, headers, body, timeout_secs)?;
+        on_chunk(&full);
+        Ok(full)
+    }
+}
+
+/// Backend par défaut via `curl` natif (macOS, Linux, Windows 10/11).
+pub struct CurlBackend;
+
+impl LlmBackend for CurlBackend {
+    fn post_json(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &str,
+        timeout_secs: u64,
+    ) -> Result<String, String> {
+        let mut cmd = Command::new("curl");
+        cmd.arg("-s").arg("-X").arg("POST");
+        for (name, value) in headers {
+            cmd.arg("-H").arg(format!("{name}: {value}"));
+        }
+        cmd.arg("-d").arg(body)
+            .arg("--max-time").arg(timeout_secs.to_string())
+            .arg(url);
+
+        let output = cmd.output().map_err(|e| format!("Échec d'exécution de curl : {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Erreur curl ({}) : {}", output.status, stderr));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    fn post_json_stream(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: &str,
+        timeout_secs: u64,
+        on_chunk: &mut dyn FnMut(&str),
+    ) -> Result<String, String> {
+        let mut cmd = Command::new("curl");
+        // `-N` désactive le buffering : les chunks SSE arrivent au fil de l'eau.
+        cmd.arg("-s").arg("-N").arg("-X").arg("POST");
+        for (name, value) in headers {
+            cmd.arg("-H").arg(format!("{name}: {value}"));
+        }
+        cmd.arg("-d").arg(body)
+            .arg("--max-time").arg(timeout_secs.to_string())
+            .arg(url)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        let mut child = cmd.spawn().map_err(|e| format!("Échec d'exécution de curl : {e}"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Impossible de lire la sortie de curl.".to_string())?;
+
+        // Lecture incrémentale (l'annulation reste pilotée par l'appelant via `on_chunk`).
+        let result = drain_stream(stdout, on_chunk, &|| false);
+
+        let status = child.wait().map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err(format!("Erreur curl ({status})"));
+        }
+        result
+    }
+}
+
+/// Lit un flux incrémentalement (par blocs) en notifiant `on_chunk` à chaque lecture.
+/// Renvoie le corps complet accumulé. `cancelled` interrompt la lecture.
+fn drain_stream<R: std::io::Read>(
+    mut reader: R,
+    on_chunk: &mut dyn FnMut(&str),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<String, String> {
+    let mut acc = String::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        if cancelled() {
+            return Err("Génération annulée.".into());
+        }
+        let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        let chunk = String::from_utf8_lossy(&buf[..n]);
+        acc.push_str(&chunk);
+        on_chunk(&chunk);
+    }
+    Ok(acc)
+}
+
+/// Extrait l'origine (`scheme://host:port`) d'une URL, qu'elle soit une base ou un chemin complet.
+fn origin_of(endpoint: &str) -> &str {
+    let scheme_end = endpoint.find("://").map(|i| i + 3).unwrap_or(0);
+    match endpoint[scheme_end..].find('/') {
+        Some(i) => &endpoint[..scheme_end + i],
+        None => endpoint,
+    }
+}
+
 /// Pont d'exécution HTTP via curl natif (compatible macOS, Linux, Windows 10/11)
 pub struct AiClient;
 
 impl AiClient {
-    /// Effectue un appel réseau vers le fournisseur configuré
+    /// Effectue un appel réseau vers le fournisseur configuré (transport curl natif).
     pub fn send_prompt(config: &AiClientConfig, prompt: &str) -> Result<AiGeneratedGamePayload, String> {
+        Self::send_prompt_with_backend(config, prompt, &CurlBackend)
+    }
+
+    /// Même appel, mais avec un transport injectable (testable sans réseau).
+    pub fn send_prompt_with_backend(
+        config: &AiClientConfig,
+        prompt: &str,
+        backend: &dyn LlmBackend,
+    ) -> Result<AiGeneratedGamePayload, String> {
+        let system_prompt = get_system_prompt_for_provider(config.provider);
+        Self::send_prompt_with_system_prompt(config, &system_prompt, prompt, backend)
+    }
+
+    /// Appel avec un prompt système fourni (permet de brancher l'assembleur RAG).
+    pub fn send_prompt_with_system_prompt(
+        config: &AiClientConfig,
+        system_prompt: &str,
+        user_prompt: &str,
+        backend: &dyn LlmBackend,
+    ) -> Result<AiGeneratedGamePayload, String> {
         if config.provider == AiProvider::OfflineLocal {
             return Err("Fournisseur OfflineLocal : utilisez AiPatchBuilder localement.".into());
         }
@@ -420,12 +576,10 @@ impl AiClient {
         let model = config.custom_model.as_deref().unwrap_or_else(|| config.provider.default_model());
         let api_key = config.custom_api_key.clone().or_else(|| config.provider.get_api_key());
 
-        let system_prompt = get_system_prompt_for_provider(config.provider);
-
         let raw_output = if config.provider == AiProvider::Claude {
-            Self::call_claude(endpoint, model, api_key.as_deref(), &system_prompt, prompt, config.timeout_seconds)?
+            Self::call_claude(backend, endpoint, model, api_key.as_deref(), system_prompt, user_prompt, config.timeout_seconds)?
         } else {
-            Self::call_openai_compatible(endpoint, model, api_key.as_deref(), &system_prompt, prompt, config.timeout_seconds)?
+            Self::call_openai_compatible(backend, endpoint, model, api_key.as_deref(), system_prompt, user_prompt, config.timeout_seconds)?
         };
 
         Self::parse_llm_json_response(&raw_output)
@@ -433,6 +587,7 @@ impl AiClient {
 
     /// Appel HTTP standardisé pour API OpenAI-compatible (Ollama, LM Studio, Gemini, DeepSeek, OpenAI)
     fn call_openai_compatible(
+        backend: &dyn LlmBackend,
         endpoint: &str,
         model: &str,
         api_key: Option<&str>,
@@ -452,27 +607,11 @@ impl AiClient {
 
         let body_str = body.to_string();
 
-        let mut cmd = Command::new("curl");
-        cmd.arg("-s")
-           .arg("-X").arg("POST")
-           .arg("-H").arg("Content-Type: application/json");
-
+        let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
         if let Some(key) = api_key {
-            cmd.arg("-H").arg(format!("Authorization: Bearer {}", key));
+            headers.push(("Authorization".to_string(), format!("Bearer {}", key)));
         }
-
-        cmd.arg("-d").arg(&body_str)
-           .arg("--max-time").arg(timeout_secs.to_string())
-           .arg(endpoint);
-
-        let output = cmd.output().map_err(|e| format!("Échec d'exécution de curl : {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Erreur curl ({}) : {}", output.status, stderr));
-        }
-
-        let response_str = String::from_utf8_lossy(&output.stdout).to_string();
+        let response_str = backend.post_json(endpoint, &headers, &body_str, timeout_secs)?;
 
         if response_str.trim().is_empty() {
             return Err("Réponse vide reçue du modèle LLM.".into());
@@ -500,6 +639,7 @@ impl AiClient {
 
     /// Appel HTTP spécialisé pour l'API Anthropic Claude (/v1/messages)
     fn call_claude(
+        backend: &dyn LlmBackend,
         endpoint: &str,
         model: &str,
         api_key: Option<&str>,
@@ -521,24 +661,12 @@ impl AiClient {
 
         let body_str = body.to_string();
 
-        let mut cmd = Command::new("curl");
-        cmd.arg("-s")
-           .arg("-X").arg("POST")
-           .arg("-H").arg("Content-Type: application/json")
-           .arg("-H").arg(format!("x-api-key: {}", key))
-           .arg("-H").arg("anthropic-version: 2023-06-01")
-           .arg("-d").arg(&body_str)
-           .arg("--max-time").arg(timeout_secs.to_string())
-           .arg(endpoint);
-
-        let output = cmd.output().map_err(|e| format!("Échec d'exécution de curl : {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Erreur curl ({}) : {}", output.status, stderr));
-        }
-
-        let response_str = String::from_utf8_lossy(&output.stdout).to_string();
+        let headers = vec![
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("x-api-key".to_string(), key.to_string()),
+            ("anthropic-version".to_string(), "2023-06-01".to_string()),
+        ];
+        let response_str = backend.post_json(endpoint, &headers, &body_str, timeout_secs)?;
         let resp_json: serde_json::Value = serde_json::from_str(&response_str)
             .map_err(|e| format!("Réponse non-JSON de Claude : {} (Brut: {})", e, response_str))?;
 
@@ -577,9 +705,9 @@ impl AiClient {
                 Ok("Moteur Local Déterministe 100% autonome et hors-ligne (Opérationnel)".to_string())
             }
             AiProvider::Ollama => {
-                let endpoint = config.custom_endpoint.as_deref().unwrap_or("http://localhost:11434");
-                let base_url = endpoint.split("/api/").next().unwrap_or(endpoint);
-                let test_url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+                let endpoint = config.custom_endpoint.as_deref().unwrap_or_else(|| config.provider.default_endpoint());
+                let base_url = origin_of(endpoint);
+                let test_url = format!("{}/api/tags", base_url);
                 let mut cmd = Command::new("curl");
                 cmd.arg("-s")
                    .arg("-m").arg("2")
@@ -597,9 +725,9 @@ impl AiClient {
                 }
             }
             AiProvider::LmStudio => {
-                let endpoint = config.custom_endpoint.as_deref().unwrap_or("http://localhost:1234");
-                let base_url = endpoint.split("/v1/").next().unwrap_or(endpoint);
-                let test_url = format!("{}/v1/models", base_url.trim_end_matches('/'));
+                let endpoint = config.custom_endpoint.as_deref().unwrap_or_else(|| config.provider.default_endpoint());
+                let base_url = origin_of(endpoint);
+                let test_url = format!("{}/v1/models", base_url);
                 let mut cmd = Command::new("curl");
                 cmd.arg("-s")
                    .arg("-m").arg("2")
@@ -663,6 +791,34 @@ mod tests {
             assert!(!provider.default_endpoint().is_empty());
             assert!(!provider.default_model().is_empty());
         }
+    }
+
+    #[test]
+    fn drain_stream_reads_incrementally_and_cancels() {
+        let mut chunks = Vec::new();
+        let data = "chunk1|chunk2|chunk3";
+        let out = drain_stream(std::io::Cursor::new(data.as_bytes()), &mut |c| chunks.push(c.to_string()), &|| false)
+            .expect("lecture");
+        assert_eq!(out, data);
+        assert!(!chunks.is_empty(), "au moins un chunk notifié");
+
+        // Annulation : le premier contrôle de `cancelled` interrompt avant toute lecture.
+        let err = drain_stream(std::io::Cursor::new(data.as_bytes()), &mut |_| {}, &|| true)
+            .expect_err("doit être annulé");
+        assert!(err.contains("annulée"), "message : {err}");
+    }
+
+    #[test]
+    fn origin_of_extracts_host_from_base_or_full_url() {
+        assert_eq!(origin_of("http://127.0.0.1:1234"), "http://127.0.0.1:1234");
+        assert_eq!(
+            origin_of("http://127.0.0.1:1234/v1/chat/completions"),
+            "http://127.0.0.1:1234"
+        );
+        assert_eq!(
+            origin_of("https://api.openai.com/v1/chat/completions"),
+            "https://api.openai.com"
+        );
     }
 
     #[test]
@@ -802,7 +958,7 @@ Good luck!
   "kvl_actions": [
     {
       "event": "OnStart",
-      "action": "SetObjective:Collecter la Clé Solaire et ouvrir la Porte des Étoiles"
+      "action": "PlaySound:coin"
     }
   ]
 }"##;
@@ -836,6 +992,20 @@ Good luck!
     }
 
     #[test]
+    fn test_compact_prompt_has_no_ghost_values() {
+        let prompt = get_karactirage_compact_system_prompt();
+        for ghost in ["OnEntityDefeated", "WinGame", "\"jump\"", "SetObjective"] {
+            assert!(
+                !prompt.contains(ghost),
+                "valeur fantôme encore dans le prompt compact : {ghost}"
+            );
+        }
+        assert!(prompt.contains("PlayerHealthZero"));
+        assert!(prompt.contains("OnBossDefeated"));
+        assert!(prompt.contains("PlaySound:victory_bell"));
+    }
+
+    #[test]
     fn test_system_prompt_provider_selection() {
         let lm_prompt = get_system_prompt_for_provider(AiProvider::LmStudio);
         assert!(lm_prompt.contains("Keep internal thinking under 30 words"));
@@ -845,6 +1015,48 @@ Good luck!
 
         let claude_prompt = get_system_prompt_for_provider(AiProvider::Claude);
         assert!(claude_prompt.contains("OFFICIAL KARACTIRAGE ENGINE SPECIFICATION"));
+    }
+
+    struct MockBackend {
+        response: String,
+        captured_body: std::cell::RefCell<Option<String>>,
+    }
+
+    impl LlmBackend for MockBackend {
+        fn post_json(
+            &self,
+            _url: &str,
+            _headers: &[(String, String)],
+            body: &str,
+            _timeout_secs: u64,
+        ) -> Result<String, String> {
+            *self.captured_body.borrow_mut() = Some(body.to_string());
+            Ok(self.response.clone())
+        }
+    }
+
+    #[test]
+    fn send_prompt_with_mock_backend_parses_payload() {
+        let response = r#"{"choices":[{"message":{"content":"{\"title\":\"Mock Level\",\"description\":\"test\",\"entities\":[],\"kvl_actions\":[]}"}}]}"#;
+        let backend = MockBackend {
+            response: response.to_string(),
+            captured_body: std::cell::RefCell::new(None),
+        };
+        let config = AiClientConfig {
+            provider: AiProvider::LmStudio,
+            custom_endpoint: None,
+            custom_model: None,
+            custom_api_key: None,
+            timeout_seconds: 10,
+        };
+
+        let payload = AiClient::send_prompt_with_backend(&config, "Crée un niveau", &backend)
+            .expect("payload parsé");
+        assert_eq!(payload.title, "Mock Level");
+
+        let body = backend.captured_body.borrow().clone().expect("body capturé");
+        assert!(body.contains("\"system\""), "le prompt système doit être injecté");
+        assert!(body.contains("Crée un niveau"), "l'intention doit être dans le prompt utilisateur");
     }
 
     #[test]

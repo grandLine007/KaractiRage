@@ -1,23 +1,26 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ReactFlow, Controls, Background, BackgroundVariant, applyNodeChanges,
+  ReactFlow, Controls, Background, BackgroundVariant, applyNodeChanges, Handle, Position,
 } from '@xyflow/react';
-import type { Node, Edge, NodeChange } from '@xyflow/react';
+import type { Node, Edge, NodeChange, Connection, NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
   Coins, Flame, Zap, CircleDot, Package, DoorOpen, CheckCircle2, AlertTriangle,
-  Link2, GitFork, Wand2, Boxes, Search, Plus,
+  Link2, GitFork, Wand2, Boxes, Search, Plus, ChevronRight, X,
 } from 'lucide-react';
 import {
   getKvlGraphs, getKvlGraph, buildGuidedGraph, attachScript, getSelectedEntity,
   getEditorState, validateKvlGraph, getPluginCatalog, addKvlNode,
+  addKvlConnection, removeKvlConnection, removeKvlNode, saveKvlGraph,
+  newKvlGraph, duplicateKvlGraph, renameKvlGraph, deleteKvlGraph,
   type KvlGraphSummary, type GuidedGraphResult, type KvlDiagnostic,
   type PluginCatalog, type KvlNodeSchema,
 } from '../services/engineBridge';
 
+interface KvlPin { id: string; name: string; direction: 'Input' | 'Output'; data_type: unknown }
 interface KvlNodeData {
   id: string; name: string; category: unknown; description: string; kind: unknown;
-  inputs: unknown[]; outputs: unknown[];
+  inputs: KvlPin[]; outputs: KvlPin[];
   ui: { position_x: number; position_y: number; color_tag: string | null };
 }
 interface KvlConnection { id: string; from_node: string; from_pin: string; to_node: string; to_pin: string }
@@ -52,6 +55,24 @@ function categoryLabel(cat: unknown): string {
   }
   return 'Autre';
 }
+// UX-602 : icône de type + couleur + description (tooltip) + badge « requis ».
+function flavorStyle(flavor: KvlNodeSchema['flavor']) {
+  switch (flavor) {
+    case 'event': return KIND_STYLE.Event;
+    case 'condition': return KIND_STYLE.Condition;
+    case 'action': return KIND_STYLE.Action;
+    case 'composite': return KIND_STYLE.Composite;
+    default: return KIND_STYLE.Other;
+  }
+}
+function requiredParamCount(schema: KvlNodeSchema): number {
+  return schema.params.filter(p => p.default === undefined || p.default === null).length;
+}
+function dtLabel(dt: unknown): string {
+  if (typeof dt === 'string') return dt;
+  if (dt && typeof dt === 'object') return Object.keys(dt as object)[0] ?? '?';
+  return '?';
+}
 function layoutNodes(graph: KvlGraph): Node[] {
   const ids = Object.keys(graph.nodes);
   const level: Record<string, number> = {};
@@ -72,9 +93,9 @@ function layoutNodes(graph: KvlGraph): Node[] {
       const st = KIND_STYLE[kindOf(n.kind)];
       nodes.push({
         id,
+        type: 'kvl',
         position: { x: 40 + Number(l) * 280, y: 40 + i * 110 },
-        data: { label: `${st.emoji} ${n.name}` },
-        style: { background: st.bg, color: '#f8fafc', border: `1px solid ${st.border}`, borderRadius: 8, padding: 10, fontSize: 12, fontWeight: 600, width: 220 },
+        data: { label: `${st.emoji} ${n.name}`, inputs: n.inputs, outputs: n.outputs, accent: st.border },
       });
     });
   });
@@ -82,10 +103,44 @@ function layoutNodes(graph: KvlGraph): Node[] {
 }
 function layoutEdges(graph: KvlGraph): Edge[] {
   return graph.connections.map(c => ({
-    id: c.id, source: c.from_node, target: c.to_node, animated: true,
-    style: { stroke: '#a855f7', strokeWidth: 2 },
+    id: c.id, source: c.from_node, target: c.to_node,
+    sourceHandle: c.from_pin, targetHandle: c.to_pin,
+    animated: true, style: { stroke: '#a855f7', strokeWidth: 2 },
   }));
 }
+
+/** Nœud KVL personnalisé : pins d'entrée/sortie câblables (UX-604). */
+function KvlNode({ data }: NodeProps) {
+  const d = data as { label: string; inputs?: KvlPin[]; outputs?: KvlPin[]; accent?: string };
+  const handleStyle: React.CSSProperties = {
+    width: 24, height: 24, minWidth: 24, minHeight: 24,
+    background: '#0d0819', border: '2px solid #a855f7',
+  };
+  return (
+    <div className="rounded-lg overflow-hidden text-[#f8fafc] bg-[#1e1338]" style={{ border: `1px solid ${d.accent ?? '#a855f7'}`, minWidth: 180 }}>
+      <div className="px-3 py-2 font-semibold text-xs border-b border-[#2d1b4e]" style={{ background: 'rgba(0,0,0,0.25)' }}>{d.label}</div>
+      <div className="px-2 py-1.5 space-y-0.5">
+        {(d.inputs ?? []).map(p => (
+          <div key={p.id} className="relative flex items-center justify-between pl-4 text-[10px] text-[#94a3b8] py-0.5">
+            <Handle type="target" position={Position.Left} id={p.id} title={`${p.name} (entrée)`} style={handleStyle} />
+            <span className="truncate">{p.name}</span>
+          </div>
+        ))}
+        {(d.outputs ?? []).map(p => (
+          <div key={p.id} className="relative flex items-center justify-between pr-4 text-[10px] text-[#94a3b8] py-0.5">
+            <span className="truncate">{p.name}</span>
+            <Handle type="source" position={Position.Right} id={p.id} title={`${p.name} (sortie)`} style={handleStyle} />
+          </div>
+        ))}
+        {(!d.inputs?.length && !d.outputs?.length) && (
+          <div className="text-[10px] text-[#64748b] italic px-1 py-0.5">Aucun pin</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { kvl: KvlNode };
 
 type FieldDef =
   | { key: string; label: string; type: 'text' | 'number'; default: string | number; optional?: boolean }
@@ -162,6 +217,13 @@ export const KvlGraphEditor: React.FC = () => {
   const [diagnostics, setDiagnostics] = useState<KvlDiagnostic[]>([]);
   const [catalog, setCatalog] = useState<PluginCatalog | null>(null);
   const [nodeQuery, setNodeQuery] = useState('');
+  // UX-601 : filtre par famille + catégories repliables (mémorisées).
+  const [nodeFilter, setNodeFilter] = useState<'all' | 'event' | 'condition' | 'action'>('all');
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('karactirage.kvlCollapsed') ?? '{}'); } catch { return {}; }
+  });
+  // UX-603 : nœud sélectionné pour l'inspecteur.
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   const refreshGraphs = useCallback(async () => {
     try {
@@ -180,6 +242,7 @@ export const KvlGraphEditor: React.FC = () => {
         setNodes(layoutNodes(g));
         setEdges(layoutEdges(g));
         setScriptPath(path);
+        localStorage.setItem('karactirage.lastGraph', path);
         setResult(null);
         setFeedback(null);
         try {
@@ -192,6 +255,138 @@ export const KvlGraphEditor: React.FC = () => {
       setFeedback('Impossible de charger ce graphe.');
     }
   }, []);
+
+  // Applique un graphe sérialisé (après une mutation backend) à l'état local.
+  const applyGraph = useCallback(async (json: string) => {
+    const g = JSON.parse(json) as KvlGraph;
+    setGraph(g);
+    setNodes(layoutNodes(g));
+    setEdges(layoutEdges(g));
+    try { setDiagnostics(await validateKvlGraph(json)); } catch { setDiagnostics([]); }
+  }, []);
+
+  // Historique local (WS6/UX-604) : snapshots JSON avant chaque mutation.
+  const undoStackRef = useRef<string[]>([]);
+  const redoStackRef = useRef<string[]>([]);
+  const pushHistory = useCallback(() => {
+    if (graph) {
+      undoStackRef.current.push(JSON.stringify(graph));
+      if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+      redoStackRef.current = [];
+    }
+  }, [graph]);
+
+  const applyHistoryJson = useCallback(async (json: string) => {
+    if (!scriptPath) return;
+    await saveKvlGraph(scriptPath, json);
+    await applyGraph(json);
+  }, [scriptPath, applyGraph]);
+
+  const handleKvlUndo = useCallback(async () => {
+    const prev = undoStackRef.current.pop();
+    if (prev === undefined || !graph) return;
+    redoStackRef.current.push(JSON.stringify(graph));
+    await applyHistoryJson(prev);
+  }, [graph, applyHistoryJson]);
+
+  const handleKvlRedo = useCallback(async () => {
+    const next = redoStackRef.current.pop();
+    if (next === undefined || !graph) return;
+    undoStackRef.current.push(JSON.stringify(graph));
+    await applyHistoryJson(next);
+  }, [graph, applyHistoryJson]);
+
+  // Câblage : tirez un pin de sortie vers un pin d'entrée (UX-604).
+  const onConnect = useCallback(async (conn: Connection) => {
+    if (!scriptPath || !conn.source || !conn.target) return;
+    pushHistory();
+    try {
+      const json = await addKvlConnection(scriptPath, conn.source, conn.sourceHandle ?? '', conn.target, conn.targetHandle ?? '');
+      await applyGraph(json);
+      setFeedback('Connexion ajoutée.');
+    } catch (e) {
+      setFeedback(typeof e === 'string' ? e : 'Connexion refusée (types incompatibles ?).');
+    }
+  }, [scriptPath, pushHistory, applyGraph]);
+
+  const onEdgesDelete = useCallback(async (deleted: Edge[]) => {
+    if (!scriptPath || deleted.length === 0) return;
+    pushHistory();
+    for (const e of deleted) {
+      try { await removeKvlConnection(scriptPath, e.id); } catch { /* ignore */ }
+    }
+    await loadGraph(scriptPath);
+    setFeedback(`${deleted.length} connexion(s) supprimée(s).`);
+  }, [scriptPath, pushHistory, loadGraph]);
+
+  const onNodesDelete = useCallback(async (deleted: Node[]) => {
+    if (!scriptPath || deleted.length === 0) return;
+    pushHistory();
+    for (const n of deleted) {
+      try { await removeKvlNode(scriptPath, n.id); } catch { /* ignore */ }
+    }
+    await loadGraph(scriptPath);
+    setFeedback(`${deleted.length} nœud(s) supprimé(s).`);
+  }, [scriptPath, pushHistory, loadGraph]);
+
+  // UX-603 : sélection d'un nœud → inspecteur.
+  const onNodeClick = useCallback((_e: React.MouseEvent, node: Node) => {
+    setSelectedNodeId(node.id);
+  }, []);
+
+  // UX-606 : gestion des graphes (nouveau / renommer / dupliquer / supprimer).
+  const handleNewGraph = useCallback(async () => {
+    const name = window.prompt('Nom du nouveau graphe :', 'Nouvelle règle');
+    if (!name?.trim()) return;
+    try {
+      const path = await newKvlGraph(name.trim(), '');
+      await refreshGraphs();
+      await loadGraph(path);
+      setFeedback(`Graphe « ${name.trim()} » créé.`);
+    } catch (e) { setFeedback(typeof e === 'string' ? e : 'Création impossible.'); }
+  }, [refreshGraphs, loadGraph]);
+
+  const handleRenameGraph = useCallback(async (g: KvlGraphSummary) => {
+    const name = window.prompt('Nouveau nom :', g.name);
+    if (!name?.trim()) return;
+    await renameKvlGraph(g.path, name.trim());
+    await refreshGraphs();
+  }, [refreshGraphs]);
+
+  const handleDuplicateGraph = useCallback(async (g: KvlGraphSummary) => {
+    const name = window.prompt('Nom de la copie :', `${g.name} (copie)`);
+    if (!name?.trim()) return;
+    try {
+      await duplicateKvlGraph(g.path, name.trim());
+      await refreshGraphs();
+    } catch (e) { setFeedback(typeof e === 'string' ? e : 'Duplication impossible.'); }
+  }, [refreshGraphs]);
+
+  const handleDeleteGraph = useCallback(async (g: KvlGraphSummary) => {
+    if (!window.confirm(`Supprimer « ${g.name} » ?`)) return;
+    await deleteKvlGraph(g.path);
+    if (scriptPath === g.path) { setGraph(null); setNodes([]); setEdges([]); setScriptPath(null); setSelectedNodeId(null); }
+    await refreshGraphs();
+  }, [refreshGraphs, scriptPath]);
+
+  // Ctrl+Z / Ctrl+Y (hors champs de saisie) — undo/redo du graphe.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        void handleKvlUndo();
+      } else if (k === 'y' || (k === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        void handleKvlRedo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [handleKvlUndo, handleKvlRedo]);
 
   // Le catalogue peut arriver après le montage (boot moteur asynchrone) : on retente
   // à l'ouverture de l'onglet Nœuds s'il est encore absent.
@@ -229,7 +424,10 @@ export const KvlGraphEditor: React.FC = () => {
       }
       try {
         const list = await getKvlGraphs();
-        if (list.length > 0) await loadGraph(list[0].path);
+        if (list.length === 0) return;
+        const last = localStorage.getItem('karactirage.lastGraph');
+        const target = list.find((g) => g.path === last)?.path ?? list[0].path;
+        await loadGraph(target);
       } catch {
         /* aucun graphe */
       }
@@ -324,26 +522,48 @@ export const KvlGraphEditor: React.FC = () => {
 
   const errCount = diagnostics.filter(d => d.severity === 'error').length;
   const warnCount = diagnostics.filter(d => d.severity === 'warning').length;
+  const selectedNode = selectedNodeId && graph ? graph.nodes[selectedNodeId] : null;
 
   const catalogNodes = catalog?.nodes ?? [];
   const normalizedQuery = nodeQuery.trim().toLowerCase();
-  const filteredSchemas = normalizedQuery
-    ? catalogNodes.filter(schema =>
-        `${schema.id} ${schema.label} ${schema.description}`.toLowerCase().includes(normalizedQuery))
-    : catalogNodes;
-  const groupedSchemas = filteredSchemas.reduce<Record<string, KvlNodeSchema[]>>((acc, schema) => {
+  const inFlavor = (schema: KvlNodeSchema) =>
+    nodeFilter === 'all'
+      ? true
+      : nodeFilter === 'action'
+        ? schema.flavor === 'action' || schema.flavor === 'composite'
+        : schema.flavor === nodeFilter;
+  const filteredSchemas = catalogNodes.filter(schema =>
+    inFlavor(schema) &&
+    (!normalizedQuery || `${schema.id} ${schema.label} ${schema.description}`.toLowerCase().includes(normalizedQuery)));
+  // UX-601 : « suggérés d'abord » (nœuds cœur sans plugin), puis alphabétique.
+  const sortedSchemas = [...filteredSchemas].sort((a, b) =>
+    (a.plugin === null ? 0 : 1) - (b.plugin === null ? 0 : 1) || a.label.localeCompare(b.label, 'fr'));
+  const groupedSchemas = sortedSchemas.reduce<Record<string, KvlNodeSchema[]>>((acc, schema) => {
     const key = categoryLabel(schema.category);
     (acc[key] ??= []).push(schema);
     return acc;
   }, {});
   const orderedGroups = Object.entries(groupedSchemas).sort(([a], [b]) => a.localeCompare(b));
+  const countByFlavor = {
+    all: catalogNodes.length,
+    event: catalogNodes.filter(s => s.flavor === 'event').length,
+    condition: catalogNodes.filter(s => s.flavor === 'condition').length,
+    action: catalogNodes.filter(s => s.flavor === 'action' || s.flavor === 'composite').length,
+  };
+  const toggleGroup = (cat: string) => {
+    setCollapsed(prev => {
+      const next = { ...prev, [cat]: !prev[cat] };
+      localStorage.setItem('karactirage.kvlCollapsed', JSON.stringify(next));
+      return next;
+    });
+  };
 
   return (
     <div className="flex flex-col h-full bg-[#07040d] overflow-hidden select-none">
       <div className="flex items-center justify-between px-4 py-2 bg-[#0d0819] border-b border-[#2d1b4e]">
         <div className="flex items-center gap-2">
           <span className="badge-tag bg-[#2e1065] text-[#34d399] border border-[#059669]">KVL VISUAL LOGIC</span>
-          <span className="text-xs text-[#94a3b8]">Recettes guidées → graphe valide, sans connaître KVL</span>
+          <span className="text-xs text-[#94a3b8]">Recettes guidées → graphe valide · tirez les pins pour câbler · Suppr efface · Ctrl+Z/Y</span>
         </div>
         <div className="flex items-center gap-2">
           {graph && (
@@ -351,10 +571,13 @@ export const KvlGraphEditor: React.FC = () => {
               {errCount === 0 ? `✓ Valide (${warnCount} avert.)` : `✗ ${errCount} erreur(s)`}
             </span>
           )}
+          {graph && (
+            <span className="badge-tag bg-[#150d27] text-[#94a3b8] border border-[#2d1b4e]">✓ Enregistré</span>
+          )}
           <button
             onClick={attach}
             disabled={!scriptPath}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition ${scriptPath ? 'bg-[#1e1338] hover:bg-[#2d1b4e] border border-[#a855f7] text-[#c084fc]' : 'bg-[#150d27] text-[#64748b] cursor-not-allowed'}`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition ${scriptPath ? 'bg-[#1e1338] hover:bg-[#2d1b4e] border border-[#a855f7] text-[#c084fc]' : 'bg-[#150d27] text-[#94a3b8] cursor-not-allowed'}`}
             title="Attacher ce script à l'objet sélectionné"
           >
             <Link2 size={13} />
@@ -364,18 +587,18 @@ export const KvlGraphEditor: React.FC = () => {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-72 flex flex-col h-full bg-[#0d0819] border-r border-[#2d1b4e] shrink-0">
+        <aside data-testid="kv-palette" className="w-72 flex flex-col h-full bg-[#0d0819] border-r border-[#2d1b4e] shrink-0">
           <div className="flex border-b border-[#2d1b4e]">
             <button
               onClick={() => setTab('recipes')}
-              className={`flex-1 px-3 py-2 text-xs font-semibold transition ${tab === 'recipes' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#64748b] hover:text-[#cbd5e1]'}`}
+              className={`flex-1 px-3 py-2 text-xs font-semibold transition ${tab === 'recipes' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#cbd5e1]'}`}
             >
               <Wand2 size={12} className="inline mr-1" />
               Recettes
             </button>
             <button
               onClick={() => setTab('graphs')}
-              className={`flex-1 px-3 py-2 text-xs font-semibold transition ${tab === 'graphs' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#64748b] hover:text-[#cbd5e1]'}`}
+              className={`flex-1 px-3 py-2 text-xs font-semibold transition ${tab === 'graphs' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#cbd5e1]'}`}
             >
               <GitFork size={12} className="inline mr-1" />
               Graphes ({graphs.length})
@@ -383,7 +606,7 @@ export const KvlGraphEditor: React.FC = () => {
             <button
               onClick={() => setTab('nodes')}
               title="Palette générée depuis le catalogue de nœuds du moteur"
-              className={`flex-1 px-2 py-2 text-xs font-semibold transition ${tab === 'nodes' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#64748b] hover:text-[#cbd5e1]'}`}
+              className={`flex-1 px-2 py-2 text-xs font-semibold transition ${tab === 'nodes' ? 'bg-[#150d27] text-[#f8fafc] border-b-2 border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#cbd5e1]'}`}
             >
               <Boxes size={12} className="inline mr-1" />
               Nœuds ({catalog?.node_count ?? 0})
@@ -394,13 +617,29 @@ export const KvlGraphEditor: React.FC = () => {
             {tab === 'nodes' && (
               <div className="flex flex-col gap-2">
                 <div className="relative">
-                  <Search size={12} className="absolute left-2 top-2.5 text-[#64748b]" />
+                  <Search size={12} className="absolute left-2 top-2.5 text-[#94a3b8]" />
                   <input
                     value={nodeQuery}
                     onChange={e => setNodeQuery(e.target.value)}
                     placeholder="Rechercher un nœud…"
                     className="w-full text-[11px] py-1.5 pl-7 pr-2 bg-[#07040d] border border-[#2d1b4e] rounded focus:border-[#a855f7]"
                   />
+                </div>
+                <div className="flex gap-1">
+                  {([
+                    ['all', 'Tout'],
+                    ['event', 'Événements'],
+                    ['condition', 'Conditions'],
+                    ['action', 'Actions'],
+                  ] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setNodeFilter(key)}
+                      className={`flex-1 px-1.5 py-1.5 rounded text-[10px] font-semibold transition ${nodeFilter === key ? 'bg-[#2e1065] text-[#f0abfc] border border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#f8fafc] bg-[#150d27] border border-transparent'}`}
+                    >
+                      {label} <span className="opacity-70">({countByFlavor[key]})</span>
+                    </button>
+                  ))}
                 </div>
                 {!scriptPath && (
                   <p className="text-[10px] text-[#f59e0b] leading-relaxed">
@@ -409,29 +648,46 @@ export const KvlGraphEditor: React.FC = () => {
                 )}
                 {orderedGroups.map(([category, schemas]) => (
                   <div key={category} className="space-y-1">
-                    <div className="text-[10px] uppercase tracking-wide text-[#64748b] px-0.5">{category}</div>
-                    {schemas.map(schema => (
-                      <button
-                        key={schema.id}
-                        onClick={() => void addNode(schema)}
-                        disabled={busy || !scriptPath}
-                        title={schema.description}
-                        className="w-full text-left px-2 py-1.5 rounded bg-[#150d27] hover:bg-[#2d1b4e] border border-[#2d1b4e] hover:border-[#a855f7] disabled:opacity-40 disabled:cursor-not-allowed transition"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[9px] px-1 rounded bg-[#2e1065] text-[#c084fc] uppercase">{schema.flavor}</span>
-                          <span className="text-[11px] text-[#f8fafc] truncate">{schema.label}</span>
-                          <Plus size={10} className="ml-auto text-[#a855f7] shrink-0" />
-                        </div>
-                        <div className="text-[9px] text-[#64748b] truncate mt-0.5">
-                          {schema.id}{schema.default_argument ? `:${schema.default_argument}` : ''}
-                        </div>
-                      </button>
-                    ))}
+                    <button
+                      onClick={() => toggleGroup(category)}
+                      className="flex items-center gap-1.5 w-full text-[10px] uppercase tracking-wide text-[#94a3b8] px-0.5 py-1.5 hover:text-[#f8fafc] transition"
+                    >
+                      <ChevronRight size={11} className={`transition-transform shrink-0 ${collapsed[category] ? '' : 'rotate-90'}`} />
+                      {category}
+                      <span className="ml-auto normal-case text-[9px] text-[#64748b]">{schemas.length}</span>
+                    </button>
+                    {!collapsed[category] && schemas.map(schema => {
+                      const st = flavorStyle(schema.flavor);
+                      const required = requiredParamCount(schema);
+                      return (
+                        <button
+                          key={schema.id}
+                          onClick={() => void addNode(schema)}
+                          disabled={busy || !scriptPath}
+                          title={schema.description}
+                          style={{ borderLeft: `2px solid ${st.border}` }}
+                          className="w-full text-left px-2 py-1.5 rounded bg-[#150d27] hover:bg-[#2d1b4e] border border-[#2d1b4e] hover:border-[#a855f7] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span aria-hidden="true">{st.emoji}</span>
+                            <span className="text-[11px] text-[#f8fafc] truncate">{schema.label}</span>
+                            {required > 0 && (
+                              <span className="text-[8px] px-1 rounded bg-[#3b0764] text-[#f0abfc] uppercase shrink-0" title={`${required} paramètre(s) requis`}>
+                                requis
+                              </span>
+                            )}
+                            <Plus size={10} className="ml-auto text-[#a855f7] shrink-0" />
+                          </div>
+                          <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 font-mono">
+                            {schema.id}{schema.default_argument ? `:${schema.default_argument}` : ''}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 ))}
                 {filteredSchemas.length === 0 && (
-                  <p className="p-3 text-center text-[11px] text-[#64748b]">Aucun nœud ne correspond.</p>
+                  <p className="p-3 text-center text-[11px] text-[#94a3b8]">Aucun nœud ne correspond.</p>
                 )}
               </div>
             )}
@@ -441,7 +697,7 @@ export const KvlGraphEditor: React.FC = () => {
                 <div className="flex items-center gap-1.5 text-xs font-bold text-[#f8fafc]">
                   <span className="text-[#a855f7]">{r.icon}</span>
                   {r.title}
-                  <span className="text-[10px] text-[#64748b] font-normal ml-auto">{r.desc}</span>
+                  <span className="text-[10px] text-[#94a3b8] font-normal ml-auto">{r.desc}</span>
                 </div>
                 <div className="space-y-1.5">
                   {r.fields.map(f => {
@@ -449,8 +705,9 @@ export const KvlGraphEditor: React.FC = () => {
                     if (f.type === 'select') {
                       return (
                         <div key={f.key}>
-                          <label className="text-[10px] text-[#94a3b8] block mb-0.5">{f.label}</label>
+                          <label htmlFor={`${r.id}-${f.key}`} className="text-[10px] text-[#94a3b8] block mb-0.5">{f.label}</label>
                           <select
+                            id={`${r.id}-${f.key}`}
                             value={String(values[f.key])}
                             onChange={e => setField(r.id, f.key, e.target.value)}
                             className="w-full text-[11px] py-1 px-1.5 bg-[#07040d] border border-[#2d1b4e] rounded focus:border-[#a855f7]"
@@ -462,8 +719,9 @@ export const KvlGraphEditor: React.FC = () => {
                     }
                     return (
                       <div key={f.key}>
-                        <label className="text-[10px] text-[#94a3b8] block mb-0.5">{f.label}</label>
+                        <label htmlFor={`${r.id}-${f.key}`} className="text-[10px] text-[#94a3b8] block mb-0.5">{f.label}</label>
                         <input
+                          id={`${r.id}-${f.key}`}
                           type={f.type}
                           value={values[f.key]}
                           onChange={e => setField(r.id, f.key, f.type === 'number' ? Number(e.target.value) : e.target.value)}
@@ -484,31 +742,51 @@ export const KvlGraphEditor: React.FC = () => {
               </div>
             ))}
 
-            {tab === 'graphs' && graphs.map(g => (
+            {tab === 'graphs' && (
               <button
-                key={g.path}
-                onClick={() => loadGraph(g.path)}
-                className="w-full text-left p-2.5 bg-[#150d27] hover:bg-[#1e1338] border border-[#2d1b4e] hover:border-[#a855f7] rounded-lg transition"
+                onClick={handleNewGraph}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-gradient-to-r from-[#9333ea] to-[#7e22ce] hover:from-[#a855f7] hover:to-[#9333ea] text-white rounded text-xs font-bold transition"
               >
-                <div className="text-xs font-bold text-[#f8fafc] truncate">{g.name}</div>
-                <div className="text-[10px] text-[#64748b] truncate mt-0.5">{g.path}</div>
-                <div className="text-[10px] text-[#94a3b8] mt-1">{g.node_count} nœuds · {g.connection_count} liens</div>
+                <Plus size={13} /> Nouveau graphe
               </button>
+            )}
+
+            {tab === 'graphs' && graphs.map(g => (
+              <div
+                key={g.path}
+                className="p-2.5 bg-[#150d27] hover:bg-[#1e1338] border border-[#2d1b4e] hover:border-[#a855f7] rounded-lg transition"
+              >
+                <button onClick={() => loadGraph(g.path)} className="w-full text-left">
+                  <div className="text-xs font-bold text-[#f8fafc] truncate">{g.name}</div>
+                  <div className="text-[10px] text-[#94a3b8] truncate mt-0.5 font-mono">{g.path}</div>
+                  <div className="text-[10px] text-[#94a3b8] mt-1">{g.node_count} nœuds · {g.connection_count} liens</div>
+                </button>
+                <div className="flex items-center gap-1 mt-1.5">
+                  <button onClick={() => handleRenameGraph(g)} className="px-2 py-1 text-[10px] text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#2d1b4e] rounded transition">Renommer</button>
+                  <button onClick={() => handleDuplicateGraph(g)} className="px-2 py-1 text-[10px] text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#2d1b4e] rounded transition">Dupliquer</button>
+                  <button onClick={() => handleDeleteGraph(g)} className="px-2 py-1 text-[10px] text-[#f87171] hover:text-white hover:bg-[#3b0a0a] rounded transition ml-auto">Supprimer</button>
+                </div>
+              </div>
             ))}
 
             {tab === 'graphs' && graphs.length === 0 && (
-              <div className="p-4 text-center text-xs text-[#64748b] leading-relaxed">
-                Aucun graphe chargé. Générez une recette pour en créer un.
+              <div className="p-4 text-center text-xs text-[#94a3b8] leading-relaxed">
+                Aucun graphe. Créez-en un ci-dessus, ou générez une recette.
               </div>
             )}
           </div>
         </aside>
 
-        <main className="flex-1 h-full">
+        <main data-testid="kv-canvas" className="flex-1 h-full">
           <ReactFlow
             nodes={nodes}
             edges={edges}
+            nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
+            onConnect={onConnect}
+            onEdgesDelete={onEdgesDelete}
+            onNodesDelete={onNodesDelete}
+            onNodeClick={onNodeClick}
             fitView
             className="bg-[#07040d]"
           >
@@ -520,6 +798,23 @@ export const KvlGraphEditor: React.FC = () => {
         <aside className="w-80 flex flex-col h-full bg-[#0d0819] border-l border-[#2d1b4e] overflow-y-auto shrink-0">
           {graph ? (
             <div className="p-3 space-y-3 text-xs">
+              {selectedNode && (
+                <div className="p-2.5 bg-[#150d27] border border-[#a855f7] rounded-lg space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-[#c084fc]">Nœud sélectionné</div>
+                    <button onClick={() => setSelectedNodeId(null)} className="p-1 text-[#94a3b8] hover:text-[#f8fafc] rounded transition" aria-label="Fermer l'inspecteur"><X size={12} /></button>
+                  </div>
+                  <div className="text-xs font-bold text-[#f8fafc]">{KIND_STYLE[kindOf(selectedNode.kind)].emoji} {selectedNode.name}</div>
+                  <div className="text-[10px] text-[#94a3b8] font-mono">{selectedNode.id}</div>
+                  <p className="text-[10px] text-[#94a3b8] leading-relaxed">{selectedNode.description}</p>
+                  <div className="text-[10px] text-[#94a3b8]">
+                    Entrées ({selectedNode.inputs.length}) : {selectedNode.inputs.map(p => `${p.name} (${dtLabel(p.data_type)})`).join(', ') || 'aucune'}
+                  </div>
+                  <div className="text-[10px] text-[#94a3b8]">
+                    Sorties ({selectedNode.outputs.length}) : {selectedNode.outputs.map(p => `${p.name} (${dtLabel(p.data_type)})`).join(', ') || 'aucune'}
+                  </div>
+                </div>
+              )}
               <h3 className="font-bold text-sm text-[#f8fafc]">{graph.name}</h3>
               <p className="text-[#94a3b8] leading-relaxed">{graph.description}</p>
 
@@ -563,7 +858,7 @@ export const KvlGraphEditor: React.FC = () => {
                           <span>{st.emoji}</span>
                           {n.name}
                         </div>
-                        <div className="text-[10px] text-[#64748b] mt-0.5">
+                        <div className="text-[10px] text-[#94a3b8] mt-0.5">
                           {categoryLabel(n.category)} · {n.description}
                         </div>
                       </div>
@@ -573,12 +868,18 @@ export const KvlGraphEditor: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full p-6 text-center text-xs text-[#64748b] gap-2">
+            <div className="flex flex-col items-center justify-center h-full p-6 text-center text-xs text-[#94a3b8] gap-2">
               <GitFork size={28} className="text-[#2d1b4e]" />
               <span className="font-semibold text-[#94a3b8]">Aucun graphe affiché</span>
               <p className="leading-relaxed">
                 Choisissez une recette à gauche, remplissez 2-3 champs, puis générez une mécanique valide.
               </p>
+              <button
+                onClick={() => setTab('recipes')}
+                className="mt-1 px-3 py-2 bg-[#2e1065] border border-[#a855f7] text-[#c084fc] rounded-lg text-xs font-semibold transition hover:bg-[#3b0764]"
+              >
+                Créer ma première règle
+              </button>
             </div>
           )}
         </aside>

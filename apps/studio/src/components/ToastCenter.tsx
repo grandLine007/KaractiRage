@@ -37,7 +37,7 @@ export const ToastCenter: React.FC<ToastCenterProps> = ({ toasts, onDismiss }) =
             <span className="text-xs text-[#f8fafc] leading-relaxed">{t.message}</span>
             <button
               onClick={() => onDismiss(t.id)}
-              className="ml-1 p-0.5 text-[#64748b] hover:text-[#f8fafc] transition"
+              className="ml-1 p-0.5 text-[#94a3b8] hover:text-[#f8fafc] transition"
               title="Fermer"
             >
               <X size={13} />

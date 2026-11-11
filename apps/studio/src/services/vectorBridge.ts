@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { safeInvokeJson } from './ipc';
 
 export interface VectorPath {
   points: [number, number][];
@@ -48,12 +49,7 @@ export async function vectorizeRaster(id: string, pngBase64: string, opts: Trace
 }
 
 export async function listVectorAssets(): Promise<VectorAssetSummary[]> {
-  const raw = await invoke<string>('engine_list_vector_assets');
-  try {
-    return JSON.parse(raw) as VectorAssetSummary[];
-  } catch {
-    return [];
-  }
+  return safeInvokeJson<VectorAssetSummary[]>('engine_list_vector_assets', undefined, []);
 }
 
 export async function vectorLoad(id: string): Promise<VectorModel> {

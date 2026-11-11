@@ -1,9 +1,15 @@
 # KARACTIRAGE — SPÉCIFICATION UNIVERSELLE DE CRÉATION & GUIDE RAG IA
 # (KaractiRage AI System Reference & Creation Engine Guide)
 
+> ⚠️ **Document humain (vulgarisation / pédagogie)** — la **source machine** du prompt est
+> `dist/ai/current` (dictionnaire compilé : schémas `schemars`, catalogue de nœuds KVL,
+> capacités, playbooks, exemples). Ce fichier n'est **plus la vérité terrain** : en cas de
+> divergence, **le code et `dist/ai` font foi**.
+
 > **Version** : 1.0.0 (Édition Complète Déterministe)  
 > **Audience** : Modèles d'IA (Claude, Gemini, DeepSeek, Ollama, OpenAI), Agents Autonomes, Développeurs & Concepteurs de Niveaux.  
-> **Rôle Fondateur** : Ce document est la **vérité terrain (Ground Truth)** pour toute génération procédurale ou pilotée par LLM dans le moteur **KaractiRage**. Toute entité, tout terrain, toute mécanique et tout comportement décrit scripturalement dans ce document est projeté de manière déterministe en rendu graphique, physique, sonore et logique dans le moteur 2D.
+> **Rôle** : Référence humaine. Pour toute génération pilotée par LLM, le moteur s'appuie sur le dictionnaire compilé (`dist/ai/current`), pas sur ce document.
+> **Périmètre** : 2D (le 2.5D / 3D est décrit dans le dictionnaire, `playbooks/3d-scene.md`).
 
 ---
 
@@ -22,8 +28,8 @@
 ## 1. PHILOSOPHIE DU MOTEUR & SYSTÈME DE COORDONNÉES
 
 ### Principes Clés
-1. **Low-End First & Déterminisme 60 FPS** :
-   - Boucle de mise à jour fixe à 60 Hz ($\Delta t = 0.0166\text{s}$).
+1. **Low-End First & Déterminisme 120 Hz** :
+   - Boucle de mise à jour fixe à **120 Hz** ($\Delta t = 1/120 \approx 0.00833\text{s}$, constante `SIM_DT = 1/120.0`).
    - Aucun calcul GPU lourd requis : rasterizer logiciel pur (`Canvas`), tracé 2D optimisé sans allocation mémoire dynamique pendant la frame.
 2. **Architecture Scripturale Découplée** :
    - Rien n'est codé "en dur" dans le moteur : le joueur, les plateformes, les boss, les énigmes et les quêtes sont décrits par des structures de données déclaratives JSON et des graphes nodaux KVL.

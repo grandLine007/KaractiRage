@@ -40,7 +40,7 @@ const getEntityIcon = (tag: string) => {
     case 'crate': return <Box size={13} className="text-[#f4af6a]" />;
     case 'plate': return <CircleDot size={13} className="text-[#34d399]" />;
     case 'platform': return <Layers size={13} className="text-[#94a3b8]" />;
-    case 'wall': return <BrickWall size={13} className="text-[#64748b]" />;
+    case 'wall': return <BrickWall size={13} className="text-[#94a3b8]" />;
     case 'portal': return <Zap size={13} className="text-[#a855f7]" />;
     default: return <Layers size={13} className="text-[#94a3b8]" />;
   }
@@ -87,13 +87,13 @@ export const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
       {/* Barre de Recherche */}
       <div className="p-2 border-b border-[#2d1b4e]">
         <div className="flex items-center gap-1.5 px-2 py-1 bg-[#07040d] border border-[#2d1b4e] rounded">
-          <Search size={12} className="text-[#64748b]" />
+          <Search size={12} className="text-[#94a3b8]" />
           <input
             type="text"
             value={filterQuery}
             onChange={e => setFilterQuery(e.target.value)}
             placeholder="Filtrer les entités..."
-            className="w-full text-xs bg-transparent border-none p-0 focus:ring-0 text-[#f8fafc] placeholder-[#64748b]"
+            className="w-full text-xs bg-transparent border-none p-0 focus:ring-0 text-[#f8fafc] placeholder-[#94a3b8]"
           />
         </div>
       </div>
@@ -116,7 +116,7 @@ export const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
                 {getEntityIcon(entity.tag)}
                 <span className="truncate">{entity.name}</span>
               </div>
-              <span className="text-[10px] text-[#64748b] font-mono shrink-0 uppercase">
+              <span className="text-[10px] text-[#94a3b8] font-mono shrink-0 uppercase">
                 {TAG_LABELS[entity.tag] ?? entity.tag}
               </span>
             </div>
@@ -124,7 +124,7 @@ export const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
         })}
 
         {filtered.length === 0 && (
-          <div className="p-4 text-center text-xs text-[#64748b] leading-relaxed">
+          <div className="p-4 text-center text-xs text-[#94a3b8] leading-relaxed">
             {entities.length === 0
               ? 'Scène vide — ajoutez un objet avec la palette ci-dessus.'
               : 'Aucune entité ne correspond au filtre.'}
@@ -134,7 +134,7 @@ export const EntityHierarchy: React.FC<EntityHierarchyProps> = ({
 
       {/* Résumé par type */}
       {Object.keys(counts).length > 0 && (
-        <div className="px-3 py-2 border-t border-[#2d1b4e] text-[10px] text-[#64748b] flex flex-wrap gap-1.5">
+        <div className="px-3 py-2 border-t border-[#2d1b4e] text-[10px] text-[#94a3b8] flex flex-wrap gap-1.5">
           {Object.entries(counts).map(([tag, n]) => (
             <span key={tag} className="badge-tag bg-[#150d27] text-[#94a3b8]">
               {TAG_LABELS[tag] ?? tag} · {n}
