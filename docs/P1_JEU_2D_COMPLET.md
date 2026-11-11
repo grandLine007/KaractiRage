@@ -139,11 +139,36 @@ Un jeu qui possède **les six briques suivantes**, chacune vérifiable :
       (auparavant `kvl_graphs` restait vide : l'export perdait toute la logique).
 
 ### P1.6 — Preuves et documentation
-- [ ] Test de bout en bout : un replay déterministe traverse menu → 3 scènes → victoire.
-- [ ] Test d'export : le HTML produit démarre et affiche le menu (navigateur headless).
-- [ ] Audit UI `--strict` : 0 violation, 0 overflow, baseline à jour.
-- [ ] Guide « créer ce jeu en 10 minutes » avec captures.
-- [ ] `RAPPORT_v0.3.0.md` rempli avec les preuves.
+
+> **Avancement (11/11/2026)** : livré. Le parcours de bout en bout passe par une
+> **interaction réelle** (touche E sur la porte) ; le test de fumée navigateur valide
+> l'export (0 erreur, 0 requête) ; le guide et le rapport v0.3.0 existent.
+> Écart consigné : ce n'est pas un **replay** hashé (AC2 partiel), et l'export n'est
+> pas encore jouable (AC3 partiel).
+
+- [x] Test de bout en bout : menu → 3 niveaux → victoire **par interaction de porte**
+      (déterministe, mais pas via `ReplayManager` : AC2 partiel).
+- [x] Test d'export : le HTML produit **démarre** dans Chrome headless, sans erreur ni
+      requête réseau (il affiche la carte d'identification, pas le jeu animé).
+- [x] Audit UI `--strict` : 0 violation, 0 overflow, baseline à jour.
+- [x] Guide « créer ce jeu en 10 minutes » avec captures :
+      [`GUIDE_CREER_UN_JEU_10_MIN.md`](GUIDE_CREER_UN_JEU_10_MIN.md).
+- [x] [`RAPPORT_v0.3.0.md`](RAPPORTS/RAPPORT_v0.3.0.md) rempli avec les preuves.
+
+### Statut de P1
+
+| Lot | État |
+|---|---|
+| P1.1 Écrans + navigation | ✅ |
+| P1.2 Progression + sauvegarde | ✅ (UI de slots manquante) |
+| P1.3 Jeu de référence | ✅ 3 niveaux, boss gardien (sans combat) |
+| P1.4 Audio + réglages | ✅ |
+| P1.5 Export + pré-vol | ✅ pré-vol ; **export jouable ❌ (P6)** |
+| P1.6 Preuves + rapport | ✅ |
+
+**Décision de version** : v0.3.0 peut être taguée **en connaissance de cause** — AC3
+partiel et AC2 partiel sont inscrits au rapport. Le runtime embarqué est le premier
+chantier de P6.
 
 ## 4. Périmètre OUT (explicitement exclu de P1)
 

@@ -52,3 +52,7 @@ apps/studio/audit/*
 # Captures d'écran macOS parasites
 Capture d*.png
 Screenshot*.png
+
+# Artefacts générés par l'export (ne jamais commiter)
+/crates/engine-core/export/
+/export/
