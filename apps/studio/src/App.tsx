@@ -67,6 +67,10 @@ export function App() {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   // Panneau « Sauvegardes » (non modal, ancré au-dessus du pied de page).
   const [isSavePanelOpen, setIsSavePanelOpen] = useState(false);
+  // Pile des couches ancrées empilables (barre IA inline + panneau Sauvegardes).
+  // `null` = aucune couche ouverte ; sinon la **dernière ouverte** est au sommet.
+  // Échap ferme le sommet, puis la couche restante, et seulement ensuite les modales.
+  const [lastOpenedLayer, setLastOpenedLayer] = useState<'ai' | 'save' | null>(null);
   // Réglages audio (persistés hors partie) : lus au démarrage, écrits à chaque changement.
   const [audio, setAudioState] = useState({ volume: 0.5, muted: false });
   // Édition IA inline : barre ancrée (pas de modale) + dernière transaction annulable.
@@ -98,6 +102,9 @@ export function App() {
 
   const toastIdRef = useRef(0);
   const saveButtonRef = useRef<HTMLButtonElement>(null);
+  // Déclencheur ✦ de la barre IA, mémorisé à l'ouverture pour rendre le focus
+  // au bouton d'origine à la fermeture (Ctrl+K n'a pas de bouton propre).
+  const aiTriggerRef = useRef<HTMLElement | null>(null);
   const pushToast = useCallback((message: string, kind: Toast['kind'] = 'info') => {
     const id = ++toastIdRef.current;
     setToasts(prev => [...prev, { id, message, kind }]);
@@ -108,10 +115,23 @@ export function App() {
   }, []);
 
   // Panneau Sauvegardes : fermeture + retour du focus au bouton d'ouverture (Échap).
+  // On ne retire du sommet de pile que si c'est bien cette couche qui y était :
+  // fermer le panneau ne doit pas « oublier » que la barre IA est plus récente.
   const closeSavePanel = useCallback((restoreFocus = false) => {
     setIsSavePanelOpen(false);
+    setLastOpenedLayer(prev => (prev === 'save' ? null : prev));
     if (restoreFocus) saveButtonRef.current?.focus();
   }, []);
+
+  // Ouverture / fermeture du panneau : c'est ici que la pile est mise à jour.
+  const toggleSavePanel = useCallback(() => {
+    if (isSavePanelOpen) {
+      closeSavePanel(false);
+    } else {
+      setIsSavePanelOpen(true);
+      setLastOpenedLayer('save');
+    }
+  }, [isSavePanelOpen, closeSavePanel]);
 
   // Clic extérieur (hors bouton et hors panneau) : fermeture propre, sans voler le focus.
   useEffect(() => {
@@ -129,18 +149,48 @@ export function App() {
 
   // --- Édition IA inline (barre ancrée) -------------------------------------
   const openAiEdit = useCallback((field: string | null = null) => {
+    // Retient le déclencheur réel s'il s'agit d'une affordance ✦ (bouton de champ).
+    // Ctrl+K n'a pas de bouton propre : on ne mémorise pas le focus « incident »
+    // (ex. bouton de mode), le repli ci-dessous visera la première affordance ✦.
+    const active = document.activeElement;
+    aiTriggerRef.current =
+      active instanceof HTMLElement && active.matches('[data-testid^="ai-sparkle"]')
+        ? active
+        : null;
     setAiFieldHint(field);
     setIsAiBarOpen(true);
+    setLastOpenedLayer('ai');
     // Le nom de scène vient du contexte moteur, jamais d'une supposition côté UI.
     void getAiEditContext().then(context => {
       if (context?.scene_id) setAiSceneId(context.scene_id);
     });
   }, []);
 
-  const closeAiEdit = useCallback(() => {
+  // Rend le focus au déclencheur mémorisé ; à défaut, à la première affordance ✦
+  // visible (le raccourci Ctrl+K n'a pas de bouton propre), sinon au viewport.
+  const restoreAiFocus = useCallback(() => {
+    const trigger = aiTriggerRef.current;
+    aiTriggerRef.current = null;
+    window.setTimeout(() => {
+      if (trigger && trigger.isConnected) {
+        trigger.focus();
+        return;
+      }
+      const sparkle = document.querySelector<HTMLElement>('[data-testid^="ai-sparkle"]');
+      if (sparkle) {
+        sparkle.focus();
+        return;
+      }
+      document.querySelector<HTMLElement>('[data-testid="canvas-viewport"]')?.focus();
+    }, 0);
+  }, []);
+
+  const closeAiEdit = useCallback((restoreFocus = false) => {
     setIsAiBarOpen(false);
     setAiFieldHint(null);
-  }, []);
+    setLastOpenedLayer(prev => (prev === 'ai' ? null : prev));
+    if (restoreFocus) restoreAiFocus();
+  }, [restoreAiFocus]);
 
   useEffect(() => {
     void getAudioSettings().then(settings => {
@@ -157,13 +207,14 @@ export function App() {
 
   const handleAiApplied = useCallback((report: AiApplyReport) => {
     setLastAiTransaction(report.transaction_id);
-    setIsAiBarOpen(false);
+    // Fermeture applicative (pas via Échap) : pas de vol de focus, la barre disparaît.
+    closeAiEdit(false);
     refresh();
     pushToast(
       `${report.changes.length} modification(s) appliquée(s) · Ctrl+Z pour annuler`,
       'success'
     );
-  }, [refresh, pushToast]);
+  }, [closeAiEdit, refresh, pushToast]);
 
   // Préchauffe la 3D (chunk three.js + sonde GPU) en tâche de fond : n'affecte pas
   // l'ouverture, mais rend la première bascule 3D quasi immédiate.
@@ -240,21 +291,21 @@ export function App() {
       pushToast(`Slot ${slot + 1} vide ou illisible.`, 'error');
       return;
     }
-    setIsSavePanelOpen(false);
+    closeSavePanel(false);
     refresh();
     pushToast(`Slot ${slot + 1} chargé : niveau et variables restaurés.`, 'success');
-  }, [refresh, pushToast]);
+  }, [closeSavePanel, refresh, pushToast]);
 
   const handleGameResumed = useCallback((ok: boolean) => {
     if (!ok) {
       pushToast('Aucune sauvegarde récente à reprendre.', 'error');
       return;
     }
-    setIsSavePanelOpen(false);
+    closeSavePanel(false);
     applyMode('play');
     refresh();
     pushToast('Dernière sauvegarde reprise — retour en mode jeu.', 'success');
-  }, [applyMode, refresh, pushToast]);
+  }, [applyMode, closeSavePanel, refresh, pushToast]);
 
   // Validation ou Rollback du Patch IA
   const handleAcceptAi = useCallback(() => {
@@ -275,24 +326,50 @@ export function App() {
     }));
   }, []);
 
-  // Gestion des raccourcis clavier globaux conformes aux spécifications
+  // Gestion des raccourcis clavier globaux conformes aux spécifications.
+  // Écoute en phase **capture** : le handler passe avant le listener Échap local de
+  // la barre IA (InlineAiBar), sinon l'ordre de fermeture serait décidé par l'ordre
+  // d'enregistrement des listeners au lieu de la pile des couches.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (['input', 'textarea'].includes((e.target as HTMLElement)?.tagName?.toLowerCase())) {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      // Les champs de saisie gardent leurs raccourcis ; Échap, lui, doit toujours
+      // pouvoir fermer la couche ouverte, même quand le focus est dans un champ.
+      if (['input', 'textarea'].includes(tag ?? '') && e.key !== 'Escape') {
         return;
       }
 
-      // 0. Panneau Sauvegardes : Échap le referme en priorité et rend le focus au bouton.
-      if (e.key === 'Escape' && isSavePanelOpen) {
-        e.preventDefault();
-        closeSavePanel(true);
-        return;
+      // 0. Échap + pile des couches ancrées : la plus récemment ouverte d'abord.
+      // `lastOpenedLayer` mémorise le sommet ; l'état réel (`is*Open`) évite de
+      // consommer un Échap sur une couche déjà fermée (ex. fermée au clic).
+      if (e.key === 'Escape') {
+        if (lastOpenedLayer === 'save' && isSavePanelOpen) {
+          e.preventDefault();
+          closeSavePanel(true);
+          return;
+        }
+        if (lastOpenedLayer === 'ai' && isAiBarOpen) {
+          e.preventDefault();
+          closeAiEdit(true);
+          return;
+        }
+        // Repli : le sommet est retombé à null mais une couche reste ouverte.
+        if (isSavePanelOpen) {
+          e.preventDefault();
+          closeSavePanel(true);
+          return;
+        }
+        if (isAiBarOpen) {
+          e.preventDefault();
+          closeAiEdit(true);
+          return;
+        }
       }
 
       // 0bis. Édition IA inline : Ctrl/⌘ K ouvre la barre ancrée (jamais une modale).
       if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault();
-        if (isAiBarOpen) closeAiEdit();
+        if (isAiBarOpen) closeAiEdit(true);
         else openAiEdit(null);
         return;
       }
@@ -344,9 +421,9 @@ export function App() {
       } else if (e.key === 'w' || e.key === 'W') {
         setIsWizardOpen(prev => !prev);
       } else if (e.key === 'Escape') {
-        if (isAiBarOpen) {
-          closeAiEdit();
-        } else if (pendingAiPatch) {
+        // Les couches ancrées ont déjà été traitées en 0 : il ne reste que le
+        // bandeau de révision IA, puis les modales.
+        if (pendingAiPatch) {
           handleRejectAi();
         } else {
           setIsHubOpen(false);
@@ -377,9 +454,10 @@ export function App() {
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentMode, pendingAiPatch, handleAcceptAi, handleRejectAi, refresh, applyMode, isAiBarOpen, openAiEdit, closeAiEdit, lastAiTransaction, pushToast, isSavePanelOpen, closeSavePanel]);
+    // Capture : Échap doit passer avant les listeners locaux des couches ancrées.
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [currentMode, pendingAiPatch, handleAcceptAi, handleRejectAi, refresh, applyMode, isAiBarOpen, openAiEdit, closeAiEdit, lastAiTransaction, pushToast, isSavePanelOpen, closeSavePanel, lastOpenedLayer]);
 
   // --- Handlers d'édition connectés au moteur natif -------------------------
 
@@ -650,7 +728,7 @@ export function App() {
               fieldHint={aiFieldHint}
               entity={selectedEntity}
               sceneId={aiSceneId}
-              onClose={closeAiEdit}
+              onClose={() => closeAiEdit(true)}
               onApplied={handleAiApplied}
               onOpenAssistant={() => {
                 closeAiEdit();
@@ -681,7 +759,7 @@ export function App() {
         <div className="flex items-center gap-3 shrink-0">
           <button
             ref={saveButtonRef}
-            onClick={() => setIsSavePanelOpen(prev => !prev)}
+            onClick={toggleSavePanel}
             className={`flex items-center justify-center w-6 h-6 rounded-[var(--radius-4)] transition ${
               isSavePanelOpen
                 ? 'text-[#a855f7] bg-[#1e1338]'

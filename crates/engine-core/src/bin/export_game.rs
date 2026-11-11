@@ -10,7 +10,9 @@
 
 use std::process::ExitCode;
 
-use karactirage_engine::exporter::StandaloneExporter;
+use karactirage_engine::exporter::{
+    default_runtime_dir, load_runtime_manifest, StandaloneExporter,
+};
 use karactirage_engine::game::GameState;
 use karactirage_engine::project::KaractiProject;
 
@@ -75,14 +77,32 @@ fn main() -> ExitCode {
     }
 
     // Le runtime embarqué est ce qui rend le fichier jouable en file:// ; on
-    // l'annonce pour distinguer un export de données d'un export jouable.
+    // l'annonce avec sa version et l'empreinte de son wasm, lues dans
+    // `runtime_manifest.json`. Sans manifeste, la ligne le dit explicitement
+    // plutôt que de laisser croire à un runtime à jour.
     let runtime_embarque = html.contains("id=\"runtime-glue\"");
+    let manifeste = load_runtime_manifest(&default_runtime_dir());
+    let details_runtime = if runtime_embarque {
+        match &manifeste {
+            Some(manifeste) => {
+                let version = manifeste.engine_version.as_deref().unwrap_or("inconnue");
+                match manifeste.wasm_sha256.as_deref() {
+                    Some(sha) => format!("embarqué (moteur v{version}, wasm sha256 {sha})"),
+                    None => format!("embarqué (moteur v{version}, sha wasm inconnu)"),
+                }
+            }
+            None => "embarqué (version inconnue : manifeste absent, relancez scripts/build_wasm.sh)"
+                .to_string(),
+        }
+    } else {
+        "absent".to_string()
+    };
     println!(
         "export OK — {} entités, {} graphes KVL, {} Ko, runtime {}, empreinte {}",
         game.entities.len(),
         game.kvl_graphs.len(),
         html.len() / 1024,
-        if runtime_embarque { "embarqué" } else { "absent" },
+        details_runtime,
         StandaloneExporter::export_fingerprint(&html)
     );
     ExitCode::SUCCESS

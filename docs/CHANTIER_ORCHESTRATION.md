@@ -88,6 +88,23 @@ lesquelles le jeu s'affiche mais ne se joue pas.
 **AC3 fermé.** État final : export 4,86 Mo, `runtime=running`, 0 réseau, 0 erreur,
 déplacement au clavier prouvé, exports identiques au bit près.
 
+## 3sexies. Vague 6 — terminée (P1 soldé)
+
+| Agent | Tâche | Périmètre | Critère de sortie |
+|---|---|---|---|
+| ν « runtime-périmé » | Rendre visible un `dist/pkg` construit pour une autre version du moteur | `exporter.rs`, `bin/export_game.rs`, `scripts/build_wasm.sh`, template | avertissement `runtime-perime`, méta `karacti-runtime`, tests avec faux runtime |
+| ξ « AC1 + Échap » | **Mesurer** « jouable en < 2 min » et empiler les couches pour `Échap` | `App.tsx`, `scripts/first-game.mjs`, `package.json` | ✅ **3,3 s** (`npm run first:game`), pile LIFO testée dans les deux ordres |
+| meneur | Bug du hub (hauteurs SVG négatives, 9 erreurs console) + alignement 0.3.4 | `ProjectHubModal.tsx`, versions | ✅ 0 erreur console, `check:versions` vert |
+
+**Pourquoi ces deux-là** : AC1 est le dernier critère de P1 jamais mesuré, et le
+garde-fou runtime répond au risque « un export tourne avec un moteur périmé sans le
+dire », découvert en vague 5.
+
+**Note CI** : les runners GitHub ont subi une panne DNS (`Temporary failure resolving
+azure.archive.ubuntu.com`) sur les runs `116e120`/`aa660aa`/`d3aefcf`. Le job Studio est
+passé à chaque fois ; les jobs Rust échouent dans `apt-get`, avant toute compilation.
+Correctifs appliqués : timeouts d'étape, retries, et chemin rapide `dpkg`.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |

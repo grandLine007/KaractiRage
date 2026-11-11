@@ -195,7 +195,7 @@ KVL, aucun batch tant que v0.3.0 n'est pas publié.
 
 | # | Critère | Mesure |
 |---|---|---|
-| AC1 | Un nouveau venu obtient un jeu jouable | « Nouveau jeu » → jouable en **< 2 min**, chronométré, sans documentation |
+| AC1 | Un nouveau venu obtient un jeu jouable | « Nouveau jeu » → jouable en **< 2 min**, chronométré, sans documentation — **mesuré v0.3.4 : 3,3 s** (parcours automatisé, borne basse) |
 | AC2 | Le jeu de référence se termine | replay déterministe : menu → victoire, **même hash de replay à chaque exécution** |
 | AC3 | L'export est autonome | HTML unique, **0 requête réseau**, **0 erreur console** au démarrage |
 | AC4 | La progression survit | quitter → relancer → scène et score restaurés |
@@ -232,7 +232,7 @@ une boucle cassée).
 
 ## 8. Definition of Done de v0.3.0
 
-- [ ] AC1 à AC6 satisfaits et **prouvés** dans `RAPPORT_v0.3.0.md`
+- [x] AC1 à AC6 satisfaits et **prouvés** — synthèse dans `RAPPORTS/RAPPORT_v0.3.4.md` §2
 - [ ] Le jeu de référence est livré dans le Studio (accessible depuis le hub)
 - [ ] Toutes les gates vertes (tests, build, lint, audit strict)
 - [ ] Aucun fichier généré par les tests commité

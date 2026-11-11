@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{TITLE}} — Jeu Autonome KaractiRage</title>
   <meta name="description" content="{{TITLE}} par {{AUTHOR}} — Moteur KaractiRage 2D & Logique KVL 60 FPS">
+{{RUNTIME_META}}
   <!-- Aucune ressource externe : le jeu doit fonctionner hors ligne (K4 / AC3).
        Les polices sont des piles système, pas des requêtes réseau. -->
   <style>
@@ -393,6 +394,9 @@
     function setRuntimeState(state) {
       window.__karacti_runtime = state;
     }
+
+    // Version du runtime embarqué (balise meta), pour les diagnostics d'export.
+    window.__karacti_runtime_version = (document.querySelector('meta[name="karacti-runtime"]')?.content.match(/version=([^;]+)/) || [])[1] || null;
 
     // Carte d'identification ou d'erreur : ce que contient l'export, sans
     // prétendre le jouer. Le texte est découpé pour ne pas sortir du canvas.

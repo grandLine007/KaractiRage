@@ -1,7 +1,7 @@
 {
   "name": "studio",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.3.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "audit:ui": "node scripts/audit-ui.mjs",
     "audit:ui:update": "node scripts/audit-ui.mjs --update-baseline",
+    "first:game": "node scripts/first-game.mjs",
     "export:smoke": "node scripts/export-smoke.mjs"
   },
   "dependencies": {

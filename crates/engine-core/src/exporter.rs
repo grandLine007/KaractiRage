@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 const RUNTIME_GLUE_FILE: &str = "engine_wasm.js";
 /// Nom du binaire wasm produit par `wasm-bindgen`.
 const RUNTIME_WASM_FILE: &str = "engine_wasm_bg.wasm";
+/// Nom du manifeste de build écrit par `scripts/build_wasm.sh` à côté des
+/// artefacts : version du moteur et empreintes des fichiers.
+const RUNTIME_MANIFEST_FILE: &str = "runtime_manifest.json";
 
 /// Runtime WASM embarquable dans un export HTML autonome.
 ///
@@ -30,6 +33,13 @@ pub struct EmbeddedRuntime {
     /// C'est le surcoût du runtime dans le HTML : le base64 pèse environ 4/3
     /// du binaire wasm. Sert à l'avertissement de pré-vol `runtime-embarque`.
     pub bytes: usize,
+    /// Version du moteur ayant produit les artefacts, lue dans
+    /// `runtime_manifest.json`. `None` quand le manifeste est absent (build
+    /// antérieur) : l'export reste alors identique à l'historique.
+    pub engine_version: Option<String>,
+    /// Empreinte SHA-256 du binaire wasm, lue dans le manifeste. `None` quand
+    /// le manifeste est absent.
+    pub wasm_sha256: Option<String>,
 }
 
 impl EmbeddedRuntime {
@@ -99,6 +109,40 @@ fn serialiser_json_deterministe<T: Serialize>(valeur: &T) -> Result<String, serd
     serde_json::to_string(&trier_cles_json(value))
 }
 
+/// Manifeste de build du runtime WASM (`dist/pkg/runtime_manifest.json`).
+///
+/// Écrit par `scripts/build_wasm.sh` juste après `wasm-bindgen`. Il date les
+/// artefacts pour qu'un `dist/pkg` périmé devienne visible au lieu de produire
+/// un export silencieusement bâti sur un ancien moteur.
+///
+/// Tous les champs sont optionnels et le fichier peut être absent : un ancien
+/// `dist/pkg` (sans manifeste) continue de fonctionner sans avertissement.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Deserialize)]
+pub struct RuntimeManifest {
+    /// Version de `engine-core` au moment du build.
+    #[serde(default)]
+    pub engine_version: Option<String>,
+    /// Empreinte SHA-256 de `engine_wasm_bg.wasm`.
+    #[serde(default)]
+    pub wasm_sha256: Option<String>,
+    /// Empreinte SHA-256 de `engine_wasm.js` (glue wasm-bindgen).
+    #[serde(default)]
+    pub glue_sha256: Option<String>,
+    /// Cible de compilation, par exemple `wasm32-unknown-unknown`.
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+/// Lit `runtime_manifest.json` dans `dir`, sans toucher au wasm.
+///
+/// Renvoie `None` si le fichier est absent, illisible ou n'est pas du JSON :
+/// l'appelant retombe alors sur le comportement historique (aucune version
+/// connue, aucun avertissement).
+pub fn load_runtime_manifest(dir: &Path) -> Option<RuntimeManifest> {
+    let texte = std::fs::read_to_string(dir.join(RUNTIME_MANIFEST_FILE)).ok()?;
+    serde_json::from_str(&texte).ok()
+}
+
 /// Charge le runtime WASM embarquable depuis `dir`.
 ///
 /// Lit `engine_wasm.js` et `engine_wasm_bg.wasm`, puis encode le binaire en
@@ -107,13 +151,16 @@ fn serialiser_json_deterministe<T: Serialize>(valeur: &T) -> Result<String, serd
 /// lieu du jeu). **Aucune lecture réseau** : uniquement le disque local.
 ///
 /// Le HTML produit est déterministe pour un même contenu de `dir` : base64
-/// standard sans saut de ligne ni horodatage.
+/// standard sans saut de ligne ni horodatage. La version et l'empreinte du
+/// wasm proviennent de `runtime_manifest.json` quand il existe ; elles ne sont
+/// ni vérifiées ni recalculées ici (aucune dépendance de hachage embarquée).
 pub fn load_embedded_runtime(dir: &Path) -> Option<EmbeddedRuntime> {
     let glue = std::fs::read_to_string(dir.join(RUNTIME_GLUE_FILE)).ok()?;
     let wasm = std::fs::read(dir.join(RUNTIME_WASM_FILE)).ok()?;
     if glue.trim().is_empty() || wasm.is_empty() {
         return None;
     }
+    let manifeste = load_runtime_manifest(dir).unwrap_or_default();
     let wasm_base64 = STANDARD.encode(&wasm);
     let bytes = glue.len() + wasm_base64.len();
     debug_assert_eq!(wasm_base64.len(), longueur_base64(wasm.len()));
@@ -121,6 +168,8 @@ pub fn load_embedded_runtime(dir: &Path) -> Option<EmbeddedRuntime> {
         glue,
         wasm_base64,
         bytes,
+        engine_version: manifeste.engine_version,
+        wasm_sha256: manifeste.wasm_sha256,
     })
 }
 
@@ -218,6 +267,38 @@ fn injecter_runtime(html: String, runtime: &EmbeddedRuntime) -> String {
     }
 }
 
+/// Balise `<meta name="karacti-runtime">` décrivant le runtime embarqué.
+///
+/// Contenu `version=…;wasm=…` (l'un ou l'autre si une seule valeur est
+/// connue), chaîne vide quand aucune ne l'est : un export sans manifeste ne
+/// gagne donc aucune balise et reste identique à l'historique. La fonction est
+/// déterministe : même manifeste, même balise.
+fn balise_meta_runtime(runtime: &EmbeddedRuntime) -> String {
+    let mut morceaux = Vec::with_capacity(2);
+    if let Some(version) = &runtime.engine_version {
+        morceaux.push(format!("version={}", assainir_valeur_meta(version)));
+    }
+    if let Some(sha) = &runtime.wasm_sha256 {
+        morceaux.push(format!("wasm={}", assainir_valeur_meta(sha)));
+    }
+    if morceaux.is_empty() {
+        return String::new();
+    }
+    format!(
+        "  <meta name=\"karacti-runtime\" content=\"{}\">\n",
+        morceaux.join(";")
+    )
+}
+
+/// Neutralise les caractères qui casseraient l'attribut `content` d'une balise
+/// (manifeste altéré ou rédigé à la main).
+fn assainir_valeur_meta(valeur: &str) -> String {
+    valeur
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
+        .collect()
+}
+
 /// Diagnostic pré-vol du runtime embarqué (non bloquant).
 fn avertissement_runtime(bytes: usize) -> PreflightIssue {
     PreflightIssue::warning(
@@ -225,6 +306,18 @@ fn avertissement_runtime(bytes: usize) -> PreflightIssue {
         format!(
             "runtime embarqué : {} — la glue JS et le binaire wasm sont inclus dans le HTML ; le jeu est jouable hors ligne en file:// (le fichier est plus lourd d'autant)",
             taille_lisible(bytes)
+        ),
+    )
+}
+
+/// Diagnostic pré-vol d'un runtime construit pour une autre version du moteur.
+///
+/// Non bloquant : l'export reste possible, mais il jouerait l'ancien moteur.
+fn avertissement_runtime_perime(version_runtime: &str, version_moteur: &str) -> PreflightIssue {
+    PreflightIssue::warning(
+        "runtime-perime",
+        format!(
+            "le runtime embarqué a été construit pour la version {version_runtime}, le moteur est en {version_moteur} — relancez scripts/build_wasm.sh"
         ),
     )
 }
@@ -338,8 +431,10 @@ impl KaractiGamePackage {
     ) -> String {
         let package_json = serialiser_json_deterministe(self).unwrap_or_else(|_| "{}".to_string());
         let escaped_json = package_json.replace("</script>", "<\\/script>");
+        let meta_runtime = runtime.map(balise_meta_runtime).unwrap_or_default();
         let template = include_str!("standalone_template.html");
         let html = template
+            .replace("{{RUNTIME_META}}", &meta_runtime)
             .replace("{{TITLE}}", &self.metadata.title)
             .replace("{{AUTHOR}}", &self.metadata.author)
             .replace("{{GENRE}}", &self.metadata.genre)
@@ -370,8 +465,8 @@ pub struct PreflightIssue {
     pub severity: PreflightSeverity,
     /// Code technique stable : `"script-manquant"`, `"asset-manquant"`,
     /// `"budget-entites"`, `"budget-kvl"`, `"manifeste-absent"`,
-    /// `"runtime-embarque"`, ou l'un des codes relayés du manifeste
-    /// (`"fichier-absent"`, `"hash-incoherent"`, `"taille-different"`,
+    /// `"runtime-embarque"`, `"runtime-perime"`, ou l'un des codes relayés du
+    /// manifeste (`"fichier-absent"`, `"hash-incoherent"`, `"taille-different"`,
     /// `"budget-depasse"`, `"licence-manquante"`, `"chemin-invalide"`).
     pub code: &'static str,
     /// Message lisible en français, orienté créateur.
@@ -563,7 +658,26 @@ impl StandaloneExporter {
     /// Les dépassements de budget (> 500 entités, > 5000 connexions KVL
     /// cumulées) ne produisent que des avertissements : ils n'empêchent jamais
     /// l'export.
+    ///
+    /// Le runtime embarqué produit un avertissement `"runtime-embarque"` (taille
+    /// ajoutée au HTML) et, quand `runtime_manifest.json` date les artefacts
+    /// d'une autre version que `CARGO_PKG_VERSION`, un avertissement
+    /// `"runtime-perime"` : l'export resterait possible, mais jouerait un
+    /// ancien moteur.
     pub fn preflight(game: &GameState) -> PreflightReport {
+        let runtime_dir = default_runtime_dir();
+        Self::preflight_with_runtime_dir(game, Some(runtime_dir.as_path()))
+    }
+
+    /// Pré-vol identique à [`StandaloneExporter::preflight`], avec un
+    /// répertoire de runtime explicite (`None` = pas de runtime à inspecter).
+    ///
+    /// Permet aux tests de rester indépendants du vrai `dist/pkg` : ils
+    /// fabriquent un petit runtime factice dans un répertoire temporaire.
+    pub fn preflight_with_runtime_dir(
+        game: &GameState,
+        runtime_dir: Option<&Path>,
+    ) -> PreflightReport {
         const BUDGET_ENTITES: usize = 500;
         const BUDGET_CONNEXIONS_KVL: usize = 5000;
 
@@ -658,12 +772,27 @@ impl StandaloneExporter {
             ));
         }
 
-        // --- Runtime embarqué (avertissement uniquement) ---------------------
+        // --- Runtime embarqué (avertissements uniquement) --------------------
         // Sans artefacts wasm, l'export reste valide mais non jouable : jamais
         // bloquant. La taille annoncée est celle réellement ajoutée au HTML
         // (glue + binaire base64), calculée sans encoder le wasm.
-        if let Some(bytes) = taille_runtime_embarque(&default_runtime_dir()) {
-            issues.push(avertissement_runtime(bytes));
+        if let Some(dir) = runtime_dir {
+            if let Some(bytes) = taille_runtime_embarque(dir) {
+                issues.push(avertissement_runtime(bytes));
+                // Le manifeste peut dater les artefacts d'une autre version :
+                // l'export fonctionnerait, mais avec l'ancien moteur.
+                if let Some(version_runtime) =
+                    load_runtime_manifest(dir).and_then(|manifeste| manifeste.engine_version)
+                {
+                    let version_moteur = env!("CARGO_PKG_VERSION");
+                    if version_runtime != version_moteur {
+                        issues.push(avertissement_runtime_perime(
+                            &version_runtime,
+                            version_moteur,
+                        ));
+                    }
+                }
+            }
         }
 
         // --- Budgets (avertissements uniquement) -----------------------------
@@ -966,24 +1095,15 @@ mod tests {
     #[test]
     fn test_preflight_projet_sain() {
         let jeu = jeu_reference();
-        let report = StandaloneExporter::preflight(&jeu);
+        // Répertoire de runtime explicite vide : le test reste indépendant du
+        // vrai `dist/pkg` (ni `runtime-embarque`, ni `runtime-perime`).
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
         assert!(report.ok, "pré-vol du niveau de référence : {}", report.summary());
         assert_eq!(report.blocking_count(), 0, "aucun blocage attendu : {}", report.summary());
         // Le niveau de référence référence des scripts mais ne déclare pas de
-        // manifeste : seul l'avertissement `manifeste-absent` est attendu, plus
-        // l'avertissement `runtime-embarque` quand les artefacts wasm sont
-        // présents dans le dépôt (indépendant du contenu du jeu).
-        assert!(
-            report
-                .issues
-                .iter()
-                .all(|issue| matches!(issue.code, "manifeste-absent" | "runtime-embarque")),
-            "seuls les avertissements manifeste-absent et runtime-embarque sont attendus : {}",
-            report.summary()
-        );
-        let attendus =
-            1 + usize::from(report.issues.iter().any(|i| i.code == "runtime-embarque"));
-        assert_eq!(report.warnings().len(), attendus, "rapport : {}", report.summary());
+        // manifeste : seul l'avertissement `manifeste-absent` est attendu.
+        assert_eq!(report.warnings().len(), 1, "rapport : {}", report.summary());
+        assert_eq!(report.issues[0].code, "manifeste-absent");
     }
 
     #[test]
@@ -1244,10 +1364,36 @@ mod tests {
         assert_ne!(fa, StandaloneExporter::export_fingerprint(&autre));
     }
 
-    /// Répertoire temporaire unique par test (les tests s'exécutent en
-    /// parallèle) : jamais les artefacts réels de 3,5 Mo, seulement de petites
-    /// chaînes, pour rester rapide et indépendant de la machine.
-    fn repertoire_temporaire(nom: &str) -> PathBuf {
+    /// Répertoire temporaire unique par test, **supprimé automatiquement**.
+    ///
+    /// Les tests s'exécutent en parallèle : le nom mêle pid et nanosecondes.
+    /// Jamais les artefacts réels de 3,5 Mo, seulement de petites chaînes, pour
+    /// rester rapide et indépendant de la machine.
+    struct RepertoireTemporaire(PathBuf);
+
+    impl RepertoireTemporaire {
+        /// Chemin du répertoire, pour les API qui attendent un `Path`.
+        fn as_path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl std::ops::Deref for RepertoireTemporaire {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    /// Nettoyage en fin de test, y compris si le test panique (déroulement).
+    impl Drop for RepertoireTemporaire {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn repertoire_temporaire(nom: &str) -> RepertoireTemporaire {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duree| duree.as_nanos())
@@ -1257,13 +1403,21 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir_all(&base).expect("répertoire temporaire créé");
-        base
+        RepertoireTemporaire(base)
     }
 
     /// Écrit un faux runtime (`glue` JS + binaire wasm factice) dans `dir`.
     fn ecrire_faux_runtime(dir: &Path, glue: &str, wasm: &[u8]) {
         std::fs::write(dir.join(RUNTIME_GLUE_FILE), glue).expect("glue écrite");
         std::fs::write(dir.join(RUNTIME_WASM_FILE), wasm).expect("wasm écrit");
+    }
+
+    /// Écrit un manifeste de build factice (aucun vrai wasm n'est nécessaire).
+    fn ecrire_manifeste_runtime(dir: &Path, version: &str, wasm_sha: &str) {
+        let manifeste = format!(
+            "{{\n  \"engine_version\": \"{version}\",\n  \"wasm_sha256\": \"{wasm_sha}\",\n  \"glue_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\",\n  \"target\": \"wasm32-unknown-unknown\"\n}}\n"
+        );
+        std::fs::write(dir.join(RUNTIME_MANIFEST_FILE), manifeste).expect("manifeste écrit");
     }
 
     #[test]
@@ -1442,5 +1596,150 @@ mod tests {
             Some(load_embedded_runtime(&dir).unwrap().bytes)
         );
         assert!(taille_runtime_embarque(&repertoire_temporaire("avertissement_vide")).is_none());
+    }
+
+    /// Empreinte factice stable : 64 caractères hexadécimaux, comme un SHA-256.
+    const SHA_WASM_FACTICE: &str =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn test_runtime_manifeste_coherent_remonte_version_et_aucun_avertissement() {
+        let dir = repertoire_temporaire("manifeste_coherent");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        ecrire_manifeste_runtime(&dir, env!("CARGO_PKG_VERSION"), SHA_WASM_FACTICE);
+        let jeu = jeu_reference();
+
+        let runtime = load_embedded_runtime(&dir).expect("runtime factice chargeable");
+        assert_eq!(
+            runtime.engine_version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(runtime.wasm_sha256.as_deref(), Some(SHA_WASM_FACTICE));
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, Some(dir.as_path()));
+        assert!(report.ok, "pré-vol : {}", report.summary());
+        assert!(
+            !report.issues.iter().any(|i| i.code == "runtime-perime"),
+            "aucun runtime-perime quand les versions concordent : {}",
+            report.summary()
+        );
+        assert!(
+            report.issues.iter().any(|i| i.code == "runtime-embarque"),
+            "l'avertissement de taille reste présent : {}",
+            report.summary()
+        );
+    }
+
+    #[test]
+    fn test_runtime_manifeste_version_differente_avertit_sans_bloquer() {
+        let dir = repertoire_temporaire("manifeste_perime");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        let version_obsolete = format!("{}-perime", env!("CARGO_PKG_VERSION"));
+        assert_ne!(
+            version_obsolete,
+            env!("CARGO_PKG_VERSION"),
+            "la version factice doit différer de celle du moteur"
+        );
+        ecrire_manifeste_runtime(&dir, &version_obsolete, SHA_WASM_FACTICE);
+        let jeu = jeu_reference();
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, Some(dir.as_path()));
+        assert!(report.ok, "un runtime périmé n'empêche pas l'export : {}", report.summary());
+        assert_eq!(report.blocking_count(), 0, "rapport : {}", report.summary());
+
+        let issue = report
+            .issues
+            .iter()
+            .find(|i| i.code == "runtime-perime")
+            .expect("runtime-perime attendu");
+        assert_eq!(issue.severity, PreflightSeverity::Warning);
+        assert!(
+            issue
+                .message
+                .contains(&format!("construit pour la version {version_obsolete}")),
+            "message : {}",
+            issue.message
+        );
+        assert!(
+            issue
+                .message
+                .contains(&format!("le moteur est en {}", env!("CARGO_PKG_VERSION"))),
+            "message : {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("scripts/build_wasm.sh"),
+            "message : {}",
+            issue.message
+        );
+    }
+
+    #[test]
+    fn test_runtime_manifeste_absent_reste_compatible() {
+        let dir = repertoire_temporaire("manifeste_absent");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        let jeu = jeu_reference();
+
+        let runtime = load_embedded_runtime(&dir).expect("runtime factice chargeable");
+        assert_eq!(runtime.engine_version, None, "aucun manifeste : version inconnue");
+        assert_eq!(runtime.wasm_sha256, None, "aucun manifeste : sha inconnu");
+
+        let html = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Sans manifeste",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+        assert!(
+            !html.contains("<meta name=\"karacti-runtime\""),
+            "aucune méta sans manifeste (le template lit simplement une balise absente)"
+        );
+        assert!(html.contains("id=\"runtime-glue\""), "le runtime reste embarqué");
+        assert!(html.contains("id=\"embedded-package\""), "le paquet reste présent");
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, Some(dir.as_path()));
+        assert!(report.ok, "rapport : {}", report.summary());
+        assert!(
+            !report.issues.iter().any(|i| i.code == "runtime-perime"),
+            "pas d'avertissement sans manifeste : {}",
+            report.summary()
+        );
+    }
+
+    #[test]
+    fn test_export_runtime_html_contient_meta_quand_manifeste_existe() {
+        let dir = repertoire_temporaire("meta_runtime");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        ecrire_manifeste_runtime(&dir, env!("CARGO_PKG_VERSION"), SHA_WASM_FACTICE);
+        let jeu = jeu_reference();
+
+        let html = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Meta runtime",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+        let meta = format!(
+            "  <meta name=\"karacti-runtime\" content=\"version={};wasm={SHA_WASM_FACTICE}\">\n",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(html.contains(&meta), "balise meta attendue, absente du HTML");
+
+        let position = html.find("karacti-runtime").unwrap();
+        let fin_head = html.find("</head>").unwrap();
+        assert!(position < fin_head, "la méta doit être dans le <head>");
+        assert!(
+            position < html.find("id=\"embedded-package\"").unwrap(),
+            "la méta précède les données du jeu"
+        );
+
+        // Même projet + mêmes artefacts + même manifeste = fichier identique.
+        let second = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Meta runtime",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+        assert_eq!(html, second, "la méta doit rester déterministe");
     }
 }
