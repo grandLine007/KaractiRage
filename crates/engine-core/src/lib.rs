@@ -1,5 +1,6 @@
 pub mod adaptation;
 pub mod ai_patch;
+pub mod assets_manifest;
 pub mod audio;
 pub mod camera;
 pub mod dialogue;
