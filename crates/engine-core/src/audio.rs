@@ -492,6 +492,25 @@ impl AudioEngine {
         }
     }
 
+    /// Volume maître courant (0..1).
+    pub fn master_volume(&self) -> f32 {
+        self.state.lock().map(|state| state.master_volume).unwrap_or(0.5)
+    }
+
+    /// Fixe le volume maître (borné à `[0, 1]`).
+    pub fn set_master_volume(&self, volume: f32) {
+        if let Ok(mut state) = self.state.lock() {
+            state.master_volume = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { 0.5 };
+        }
+    }
+
+    /// Force l'état muet (contrairement à `toggle_mute`).
+    pub fn set_muted(&self, muted: bool) {
+        if let Ok(mut state) = self.state.lock() {
+            state.is_muted = muted;
+        }
+    }
+
     pub fn is_muted(&self) -> bool {
         if let Ok(st) = self.state.lock() {
             st.is_muted

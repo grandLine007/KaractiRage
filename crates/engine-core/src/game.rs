@@ -239,6 +239,11 @@ pub struct GameState {
     pub levels: Vec<crate::scene::SceneData>,
     /// Index du niveau courant dans [`Self::levels`].
     pub level_index: usize,
+    /// Identifiant stable du projet ouvert (vide = scène isolée).
+    ///
+    /// Ne dérive **jamais** du nom de scène : sinon un changement de niveau déplacerait
+    /// les sauvegardes dans un autre dossier.
+    pub project_id: String,
     /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
     pub camera3d: Option<crate::subsystems::Camera3DData>,
     /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
@@ -1144,6 +1149,7 @@ impl GameState {
             screen: crate::screens::GameScreen::Playing,
             levels: Vec::new(),
             level_index: 0,
+            project_id: String::new(),
             camera3d: None,
             lights: Vec::new(),
             save_config: crate::subsystems::SaveConfig::default(),
@@ -1242,6 +1248,7 @@ impl GameState {
         let screens = self.ui_screens.clone();
         let levels = self.levels.clone();
         let index = self.level_index;
+        let project_id = self.project_id.clone();
         let rebuilt = match levels.get(index) {
             Some(scene) => Self::from_scene_data(scene.clone(), &format!("projet:niveau_{}", index + 1)),
             None => Self::load_from_scene(&self.scene_path),
@@ -1250,6 +1257,7 @@ impl GameState {
             new_state.ui_screens = screens;
             new_state.levels = levels;
             new_state.level_index = index;
+            new_state.project_id = project_id;
             new_state.screen = crate::screens::GameScreen::initial(
                 new_state.ui_screens.iter().any(|s| s.kind == crate::subsystems::UiScreenKind::Menu),
                 new_state.kvl_context.get_var("menu_active") == Some(&Value::Bool(true)),
@@ -1275,6 +1283,7 @@ impl GameState {
         let screens = self.ui_screens.clone();
         let levels = self.levels.clone();
         let inventory = self.inventory.clone();
+        let project_id = self.project_id.clone();
         let Ok(mut fresh) = Self::from_scene_data(scene, &format!("projet:niveau_{}", next_index + 1))
         else {
             return false;
@@ -1283,6 +1292,7 @@ impl GameState {
         fresh.ui_screens = screens;
         fresh.levels = levels;
         fresh.level_index = next_index;
+        fresh.project_id = project_id;
         fresh.inventory = inventory;
         fresh.screen = crate::screens::GameScreen::Playing;
         fresh.editor.mode = EditorMode::Play;
@@ -1367,6 +1377,7 @@ impl GameState {
         self.ui_screens = project.ui_screens;
         self.levels = scenes;
         self.level_index = 0;
+        self.project_id = project.metadata.id.clone();
         self.camera3d = project.camera3d;
         self.lights = project.lights;
         self.save_config = project.save_config;
@@ -1420,7 +1431,11 @@ impl GameState {
         };
 
         let metadata = crate::project::ProjectMetadata {
-            id: format!("proj_{:x}", (self.scene_name.len() as u64) ^ 0xCAFEBABE),
+            id: if self.project_id.is_empty() {
+                format!("proj_{:x}", (self.scene_name.len() as u64) ^ 0xCAFEBABE)
+            } else {
+                self.project_id.clone()
+            },
             title: self.scene_name.clone(),
             author: "Créateur KaractiRage".to_string(),
             version: "1.0.0".to_string(),
@@ -1909,7 +1924,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
     }
 
     /// Reflète l'état d'écran dans les variables KVL (sortie, jamais entrée).
-    fn sync_screen_variables(&mut self) {
+    pub(crate) fn sync_screen_variables(&mut self) {
         self.kvl_context
             .set_var("menu_active", Value::Bool(self.screen == crate::screens::GameScreen::Menu));
         self.kvl_context
@@ -1924,6 +1939,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
     pub fn start_game(&mut self) {
         let screens = self.ui_screens.clone();
         let levels = self.levels.clone();
+        let project_id = self.project_id.clone();
         let rebuilt = match levels.first() {
             Some(first) => Self::from_scene_data(first.clone(), "projet:niveau_1"),
             None => Self::load_from_scene(&self.scene_path),
@@ -1932,6 +1948,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             fresh.ui_screens = screens;
             fresh.levels = levels;
             fresh.level_index = 0;
+            fresh.project_id = project_id;
             fresh.editor.mode = EditorMode::Play;
             *self = fresh;
         }

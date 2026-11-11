@@ -47,9 +47,20 @@ Un jeu qui possède **les six briques suivantes**, chacune vérifiable :
 - [x] Aucune régression : le HUD actuel reste tel quel (419 tests verts).
 
 ### P1.2 — Progression et sauvegarde
-- [ ] Sauvegarde de la progression (scène courante, variables, score) via `save_config`.
-- [ ] Reprise : quitter puis relancer restaure la progression.
-- [ ] Réglages persistants (volume, mute) séparés de la sauvegarde de partie.
+
+> **Avancement (11/11/2026)** : livré côté moteur et commandes Tauri.
+> `SaveState` (projet + **niveau courant** + variables KVL) remplace le simple projet ;
+> les anciens slots restent lisibles (niveau 1). `resume_state` reprend la sauvegarde la
+> plus récente. Les réglages audio vivent dans `~/.karactirage/settings.json`, séparés.
+> `project_id` est désormais **stable** (il dérivait du nom de scène, donc changeait à
+> chaque niveau : les sauvegardes partaient dans un dossier différent).
+> Limite : aucun menu de slots dans l'interface — les commandes existent
+> (`engine_save_game`, `engine_load_game`, `engine_resume_game`), l'écran viendra avec P1.6.
+
+- [x] Sauvegarde de la progression (niveau courant, variables, score) via `save_config`.
+- [x] Reprise : rechargement du projet puis `resume` restaure niveau et score (testé ;
+      le « quitter/relancer » est simulé par un rechargement complet, pas par un vrai redémarrage).
+- [x] Réglages persistants (volume, mute) dans un fichier **hors** sauvegarde de partie.
 
 ### P1.3 — Jeu de référence L3
 

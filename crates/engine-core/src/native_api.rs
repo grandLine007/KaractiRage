@@ -195,7 +195,7 @@ impl NativeEngine {
         crate::renderer::warmup_glyph_cache();
         let input = InputState::new();
 
-        Ok(Self {
+        let state = Self {
             game,
             canvas,
             input,
@@ -210,7 +210,31 @@ impl NativeEngine {
             ),
             review_baseline: None,
             workspace_root: None,
-        })
+        };
+        // Réglages utilisateur (hors partie) : appliqués au démarrage.
+        let audio_settings = crate::settings::AudioSettings::load();
+        state.game.audio.set_master_volume(audio_settings.volume);
+        state.game.audio.set_muted(audio_settings.muted);
+        Ok(state)
+    }
+
+    /// Réglages audio courants (volume maître, mute).
+    pub fn audio_settings(&self) -> crate::settings::AudioSettings {
+        crate::settings::AudioSettings {
+            volume: self.game.audio.master_volume(),
+            muted: self.game.audio.is_muted(),
+        }
+    }
+
+    /// Applique et persiste les réglages audio (jamais dans la sauvegarde de partie).
+    pub fn set_audio_settings(&mut self, volume: f32, muted: bool) -> crate::settings::AudioSettings {
+        let settings = crate::settings::AudioSettings { volume, muted }.sanitized();
+        self.game.audio.set_master_volume(settings.volume);
+        self.game.audio.set_muted(settings.muted);
+        if let Err(error) = settings.save() {
+            tracing::warn!("réglages audio non persistés : {error}");
+        }
+        settings
     }
 
     /// Redirige toutes les écritures d'authoring (graphes KVL, sprites importés)
@@ -219,6 +243,14 @@ impl NativeEngine {
     /// Utilisé par les tests et par l'ouverture d'un projet situé ailleurs sur le disque.
     pub fn set_workspace_root(&mut self, root: impl Into<std::path::PathBuf>) {
         self.workspace_root = Some(root.into());
+    }
+
+    /// Redirige les sauvegardes (slots) vers un répertoire précis.
+    ///
+    /// Utile aux tests et aux projets ouverts hors du `$KARACTI_HOME` par défaut.
+    pub fn set_save_root(&mut self, root: impl Into<std::path::PathBuf>) {
+        let config = self.save_manager.config.clone();
+        self.save_manager = SaveManager::with_root(config, root.into());
     }
 
     /// Racine du projet pour les écritures d'authoring.
@@ -1022,18 +1054,45 @@ impl NativeEngine {
     /// Sauvegarde l'état courant du jeu dans un slot (`0..slots`). Renvoie le chemin.
     pub fn save_game(&mut self, slot: u32) -> Result<String, String> {
         self.sync_save_config();
-        let project = self.game.export_current_project();
-        let path = self.save_manager.save(&project, slot as usize)?;
+        let state = self.capture_save_state();
+        let project_id = state.project.metadata.id.clone();
+        let path = self.save_manager.save_state(&state, &project_id, slot as usize)?;
         Ok(path.display().to_string())
+    }
+
+    /// Instantané de partie : projet + niveau courant + variables KVL.
+    fn capture_save_state(&self) -> crate::save::SaveState {
+        crate::save::SaveState::new(
+            self.game.export_current_project(),
+            self.game.level_index,
+            self.game.kvl_context.variables.clone(),
+        )
+    }
+
+    /// Applique une sauvegarde : projet, variables runtime, puis niveau sauvegardé.
+    ///
+    /// Une reprise remet toujours le jeu en `Playing` : charger une partie signifie
+    /// « reprendre où on s'était arrêté », pas « revenir au menu ».
+    fn apply_save_state(&mut self, state: crate::save::SaveState) {
+        let level = state.level_index;
+        self.game.load_project(state.project);
+        self.game.kvl_context.variables = state.variables;
+        for _ in 0..level {
+            if !self.game.next_level() {
+                break;
+            }
+        }
+        self.game.screen = crate::screens::GameScreen::Playing;
+        self.game.sync_screen_variables();
     }
 
     /// Charge un slot et remplace l'état courant du jeu. `false` si le slot est vide.
     pub fn load_game(&mut self, slot: u32) -> bool {
         self.sync_save_config();
         let project_id = self.game.export_current_project().metadata.id;
-        match self.save_manager.load(&project_id, slot as usize) {
-            Ok(project) => {
-                self.game.load_project(project);
+        match self.save_manager.load_state(&project_id, slot as usize) {
+            Ok(state) => {
+                self.apply_save_state(state);
                 true
             }
             Err(_) => false,
@@ -1044,9 +1103,9 @@ impl NativeEngine {
     pub fn resume_game(&mut self) -> bool {
         self.sync_save_config();
         let project_id = self.game.export_current_project().metadata.id;
-        match self.save_manager.resume(&project_id) {
-            Some(project) => {
-                self.game.load_project(project);
+        match self.save_manager.resume_state(&project_id) {
+            Some(state) => {
+                self.apply_save_state(state);
                 true
             }
             None => false,
@@ -1056,9 +1115,9 @@ impl NativeEngine {
     /// Avance l'auto-save d'un pas de temps ; renvoie le chemin écrit le cas échéant.
     pub fn auto_save(&mut self, dt: f32) -> Option<String> {
         self.sync_save_config();
-        let project = self.game.export_current_project();
+        let state = self.capture_save_state();
         self.save_manager
-            .auto_save_tick(dt, &project)
+            .auto_save_tick(dt, &state)
             .ok()
             .flatten()
             .map(|p| p.display().to_string())
@@ -2603,6 +2662,68 @@ mod tests {
             crate::render_packet::LightKind::Point
         );
         assert_eq!(packet.lights[0].pos, [2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_save_and_resume_restore_level_and_score() {
+        use kvl_core::Value;
+
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let root = std::env::temp_dir().join(format!(
+            "karacti_engine_progress_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        engine.set_save_root(root.clone());
+
+        let project_path = if std::path::Path::new("assets/projects/jeu_reference.karacti").exists() {
+            "assets/projects/jeu_reference.karacti"
+        } else {
+            "../../assets/projects/jeu_reference.karacti"
+        };
+        let project = crate::project::KaractiProject::load_from_file(project_path)
+            .expect("projet de référence");
+
+        // Partie avancée : niveau 2 et score 77.
+        engine.game.load_project(project.clone());
+        engine.game.next_level();
+        assert_eq!(engine.game.level_index, 1);
+        engine.game.kvl_context.set_var("score", Value::Int(77));
+        engine.save_game(0).expect("sauvegarde");
+
+        // Redémarrage : projet rechargé au niveau 1, score remis à zéro.
+        engine.game.load_project(project);
+        assert_eq!(engine.game.level_index, 0);
+        engine.game.kvl_context.set_var("score", Value::Int(0));
+
+        assert!(engine.resume_game(), "une reprise doit être disponible");
+        assert_eq!(engine.game.level_index, 1, "niveau sauvegardé restauré");
+        assert_eq!(
+            engine.game.kvl_context.get_var("score"),
+            Some(&Value::Int(77)),
+            "score restauré"
+        );
+        assert_eq!(engine.game.screen, crate::screens::GameScreen::Playing);
+        assert_eq!(engine.game.scene_name, "Niveau 2 : Crypte du Sanctuaire");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_audio_settings_are_clamped_and_applied() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+
+        // Volume hors bornes : borné, et appliqué à la sortie audio.
+        let applied = engine.set_audio_settings(4.0, true);
+        assert_eq!(applied.volume, 1.0);
+        assert!(applied.muted);
+        assert!((engine.game.audio.master_volume() - 1.0).abs() < f32::EPSILON);
+        assert!(engine.game.audio.is_muted());
+
+        let clamped_low = engine.set_audio_settings(-1.0, false);
+        assert_eq!(clamped_low.volume, 0.0);
+        assert!(!clamped_low.muted);
+        assert_eq!(engine.audio_settings(), clamped_low);
     }
 
     #[test]

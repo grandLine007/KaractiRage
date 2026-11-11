@@ -16,6 +16,7 @@ pub mod render_packet;
 pub mod replay;
 pub mod scene;
 pub mod screens;
+pub mod settings;
 pub mod sheet;
 pub mod spatial;
 pub mod telemetry;

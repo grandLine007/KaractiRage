@@ -1008,6 +1008,38 @@ fn engine_export_project_json(engine: tauri::State<'_, SharedEngine>) -> String 
 }
 
 #[tauri::command]
+fn engine_save_game(slot: u32, engine: tauri::State<'_, SharedEngine>) -> Result<String, String> {
+    engine.lock().unwrap().save_game(slot)
+}
+
+#[tauri::command]
+fn engine_load_game(slot: u32, engine: tauri::State<'_, SharedEngine>) -> bool {
+    engine.lock().unwrap().load_game(slot)
+}
+
+/// Reprend la partie la plus récente (projet, niveau et variables restaurés).
+#[tauri::command]
+fn engine_resume_game(engine: tauri::State<'_, SharedEngine>) -> bool {
+    engine.lock().unwrap().resume_game()
+}
+
+/// Réglages audio persistants (hors sauvegarde de partie).
+#[tauri::command]
+fn engine_audio_settings(engine: tauri::State<'_, SharedEngine>) -> String {
+    serde_json::to_string(&engine.lock().unwrap().audio_settings()).unwrap_or_default()
+}
+
+#[tauri::command]
+fn engine_set_audio_settings(
+    volume: f32,
+    muted: bool,
+    engine: tauri::State<'_, SharedEngine>,
+) -> String {
+    serde_json::to_string(&engine.lock().unwrap().set_audio_settings(volume, muted))
+        .unwrap_or_default()
+}
+
+#[tauri::command]
 fn engine_get_entities_summary(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().get_entities_summary_json()
 }
@@ -1607,6 +1639,11 @@ pub fn run() {
             engine_load_project_json,
             engine_export_project_json,
             engine_get_entities_summary,
+            engine_save_game,
+            engine_load_game,
+            engine_resume_game,
+            engine_audio_settings,
+            engine_set_audio_settings,
             engine_update_entity_transform,
             engine_delete_entity,
             engine_spawn_entity_preset,
