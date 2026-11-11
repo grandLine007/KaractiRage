@@ -244,6 +244,11 @@ pub struct GameState {
     /// Ne dérive **jamais** du nom de scène : sinon un changement de niveau déplacerait
     /// les sauvegardes dans un autre dossier.
     pub project_id: String,
+    /// Manifeste d'assets du projet (P2.1), transporté de `project.assets`.
+    ///
+    /// `None` quand le projet n'en déclare pas : le pré-vol d'export reste alors
+    /// silencieux, sauf si des entités référencent des scripts ou des assets.
+    pub assets_manifest: Option<crate::assets_manifest::AssetsManifest>,
     /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
     pub camera3d: Option<crate::subsystems::Camera3DData>,
     /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
@@ -1157,6 +1162,7 @@ impl GameState {
             levels: Vec::new(),
             level_index: 0,
             project_id: String::new(),
+            assets_manifest: None,
             camera3d: None,
             lights: Vec::new(),
             save_config: crate::subsystems::SaveConfig::default(),
@@ -1281,6 +1287,7 @@ impl GameState {
         let levels = self.levels.clone();
         let index = self.level_index;
         let project_id = self.project_id.clone();
+        let assets_manifest = self.assets_manifest.clone();
         let rebuilt = match levels.get(index) {
             Some(scene) => Self::from_scene_data(scene.clone(), &format!("projet:niveau_{}", index + 1)),
             None => Self::load_from_scene(&self.scene_path),
@@ -1290,6 +1297,7 @@ impl GameState {
             new_state.levels = levels;
             new_state.level_index = index;
             new_state.project_id = project_id;
+            new_state.assets_manifest = assets_manifest;
             // Même périphérique audio et mêmes réglages après un hot-reload.
             std::mem::swap(&mut new_state.audio, &mut self.audio);
             std::mem::swap(&mut new_state.replay, &mut self.replay);
@@ -1319,6 +1327,7 @@ impl GameState {
         let levels = self.levels.clone();
         let inventory = self.inventory.clone();
         let project_id = self.project_id.clone();
+        let assets_manifest = self.assets_manifest.clone();
         let Ok(mut fresh) = Self::from_scene_data(scene, &format!("projet:niveau_{}", next_index + 1))
         else {
             return false;
@@ -1328,6 +1337,7 @@ impl GameState {
         fresh.levels = levels;
         fresh.level_index = next_index;
         fresh.project_id = project_id;
+        fresh.assets_manifest = assets_manifest;
         fresh.inventory = inventory;
         fresh.screen = crate::screens::GameScreen::Playing;
         fresh.editor.mode = EditorMode::Play;
@@ -1420,6 +1430,7 @@ impl GameState {
         self.levels = scenes;
         self.level_index = 0;
         self.project_id = project.metadata.id.clone();
+        self.assets_manifest = project.assets;
         self.camera3d = project.camera3d;
         self.lights = project.lights;
         self.save_config = project.save_config;
@@ -1548,6 +1559,7 @@ impl GameState {
             camera3d: self.camera3d.clone(),
             lights: self.lights.clone(),
             levels: level_names,
+            assets: self.assets_manifest.clone(),
         }
     }
 
@@ -1989,6 +2001,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         let screens = self.ui_screens.clone();
         let levels = self.levels.clone();
         let project_id = self.project_id.clone();
+        let assets_manifest = self.assets_manifest.clone();
         let rebuilt = match levels.first() {
             Some(first) => Self::from_scene_data(first.clone(), "projet:niveau_1"),
             None => Self::load_from_scene(&self.scene_path),
@@ -1998,6 +2011,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             fresh.levels = levels;
             fresh.level_index = 0;
             fresh.project_id = project_id;
+            fresh.assets_manifest = assets_manifest;
             fresh.editor.mode = EditorMode::Play;
             std::mem::swap(&mut fresh.audio, &mut self.audio);
             std::mem::swap(&mut fresh.replay, &mut self.replay);
@@ -12087,6 +12101,89 @@ mod tests {
         assert_eq!(project.scenes[1].name, "NIVEAU 2 EDITE", "le niveau courant reflète l'état");
         assert_eq!(project.scenes[0].name, "NIVEAU 1", "les autres niveaux sont intacts");
         assert_eq!(project.levels.len(), 2, "les noms de niveaux sont renseignés");
+    }
+
+    /// Manifeste minimal avec licence, utilisé par les tests de transport.
+    fn manifeste_fixture() -> crate::assets_manifest::AssetsManifest {
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "hero_idle".to_string(),
+                kind: crate::assets_manifest::AssetKind::Sprite,
+                path: "assets/sprites/hero.png".to_string(),
+                bytes: 12,
+                hash: crate::ai_dictionary::hash_text(b"png-hero-idle"),
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".to_string()),
+                    created_at: "2026-11-11".to_string(),
+                },
+                dimensions: Some((32, 48)),
+                duration_ms: None,
+            })
+            .expect("entrée acceptée");
+        manifeste
+    }
+
+    #[test]
+    fn load_project_transporte_le_manifeste_dans_l_etat() {
+        let manifeste = manifeste_fixture();
+        let mut project = crate::project::KaractiProject::new_empty(
+            "Manifeste",
+            "auteur",
+            crate::recipe::GameGenre::Platformer,
+        );
+        project.assets = Some(manifeste.clone());
+
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
+        assert!(state.assets_manifest.is_none(), "None par défaut");
+        state.load_project(project);
+
+        assert_eq!(
+            state.assets_manifest,
+            Some(manifeste),
+            "le manifeste du projet est transporté dans GameState"
+        );
+    }
+
+    #[test]
+    fn export_current_project_restitue_le_manifeste() {
+        let manifeste = manifeste_fixture();
+        let mut state = state_with_screens();
+        state.assets_manifest = Some(manifeste.clone());
+
+        let project = state.export_current_project();
+        assert_eq!(
+            project.assets.as_ref(),
+            Some(&manifeste),
+            "l'export réécrit le manifeste dans le projet"
+        );
+
+        // Le JSON exporté reste relisible et conserve le manifeste.
+        let json = project.to_json().expect("sérialisation");
+        let relu = crate::project::KaractiProject::from_json(&json).expect("relecture");
+        assert!(relu.assets.is_some(), "le manifeste traverse le JSON exporté");
+    }
+
+    #[test]
+    fn manifeste_survit_a_start_game_next_level_et_reload() {
+        let manifeste = manifeste_fixture();
+        let mut state = state_with_screens();
+        state.levels = vec![level_scene("NIVEAU 1"), level_scene("NIVEAU 2")];
+        state.assets_manifest = Some(manifeste.clone());
+
+        state.start_game();
+        assert_eq!(state.assets_manifest, Some(manifeste.clone()), "start_game");
+
+        assert!(state.next_level(), "un second niveau est disponible");
+        assert_eq!(
+            state.assets_manifest,
+            Some(manifeste.clone()),
+            "next_level"
+        );
+
+        state.reload();
+        assert_eq!(state.assets_manifest, Some(manifeste), "reload");
     }
 
     #[test]

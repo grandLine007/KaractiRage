@@ -358,6 +358,17 @@ impl AssetsManifest {
         serde_json::to_string_pretty(self)
     }
 
+    /// Charge un manifeste depuis un fichier JSON, avec la même lecture stricte
+    /// que [`AssetsManifest::from_json`].
+    ///
+    /// Le manifeste n'est **pas** validé contre le disque ici : seul le format
+    /// est contrôlé. Utiliser [`AssetsManifest::validate`] pour vérifier
+    /// l'existence et l'empreinte des fichiers référencés.
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ManifestError> {
+        let contenu = fs::read_to_string(path)?;
+        Self::from_json(&contenu)
+    }
+
     /// Relit un manifeste JSON avec une **lecture stricte**.
     ///
     /// Refuse une version absente (`VersionInconnue(0)`) ou différente de
@@ -472,6 +483,9 @@ pub enum ManifestError {
         "version de manifeste inconnue : {0} (le moteur lit la version 1 ; la valeur 0 signifie que le champ `version` est absent)."
     )]
     VersionInconnue(u32),
+    /// Fichier de manifeste illisible (absent, permission refusée…).
+    #[error("manifeste illisible : {0}")]
+    Io(#[from] std::io::Error),
     /// JSON syntaxiquement invalide ou structurellement incorrect.
     #[error("manifeste JSON illisible : {0}")]
     Json(#[from] serde_json::Error),
@@ -881,6 +895,27 @@ mod tests {
 
         let relu = AssetsManifest::from_json(&json).expect("relecture");
         assert_eq!(relu, manifeste);
+    }
+
+    #[test]
+    fn from_file_lit_un_manifeste_et_signale_un_chemin_absent() {
+        let bac = Bac::neuf("from_file");
+        let mut manifeste = AssetsManifest::default();
+        manifeste
+            .register(entree("hero", AssetKind::Sprite, "assets/hero.png", b"png"))
+            .expect("entrée acceptée");
+        let chemin = bac.ecrire(
+            "manifeste.json",
+            manifeste.to_json().expect("sérialisation").as_bytes(),
+        );
+
+        let relu = AssetsManifest::from_file(&chemin).expect("manifeste lu depuis le disque");
+        assert_eq!(relu, manifeste);
+
+        let erreur = AssetsManifest::from_file(bac.dir.join("introuvable.json"))
+            .expect_err("fichier absent refusé");
+        assert!(matches!(erreur, ManifestError::Io(_)));
+        assert!(erreur.to_string().contains("manifeste illisible"));
     }
 
     #[test]

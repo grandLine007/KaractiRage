@@ -104,6 +104,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         camera3d: None,
         lights: Vec::new(),
         levels: vec!["niveau_1".to_string(), "niveau_2".to_string(), "niveau_3".to_string()],
+        // Le projet de référence ne déclare pas encore de manifeste d'assets.
+        assets: None,
     };
 
     project.save_to_file("assets/projects/jeu_reference.karacti")?;

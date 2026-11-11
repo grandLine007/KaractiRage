@@ -82,6 +82,12 @@ pub struct KaractiProject {
     pub lights: Vec<crate::subsystems::Light3DData>,
     #[serde(default)]
     pub levels: Vec<String>,
+    /// Manifeste d'assets du projet (P2.1) : provenance, hash et budget.
+    ///
+    /// `None` pour les projets antérieurs ou sans assets déclarés, qui restent
+    /// lisibles et exportables.
+    #[serde(default)]
+    pub assets: Option<crate::assets_manifest::AssetsManifest>,
 }
 
 impl KaractiProject {
@@ -190,6 +196,7 @@ impl KaractiProject {
             camera3d: None,
             lights: Vec::new(),
             levels: Vec::new(),
+            assets: None,
         }
     }
 
@@ -241,6 +248,7 @@ impl KaractiProject {
             camera3d: None,
             lights: Vec::new(),
             levels: Vec::new(),
+            assets: None,
         }
     }
 
@@ -397,6 +405,50 @@ mod tests {
             assert!(p.scene.entities.iter().any(|e| e.tag == "player"), "L'archétype {} doit avoir un joueur", arch);
             assert!(p.recipe.is_some(), "L'archétype {} doit contenir sa recette déclarative", arch);
         }
+    }
+
+    #[test]
+    fn test_project_roundtrip_preserves_assets_manifest() {
+        let mut project = KaractiProject::new_empty("Manifeste", "Auteur", GameGenre::Platformer);
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "hero_idle".to_string(),
+                kind: crate::assets_manifest::AssetKind::Sprite,
+                path: "assets/sprites/hero.png".to_string(),
+                bytes: 12,
+                hash: crate::ai_dictionary::hash_text(b"png-hero-idle"),
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".to_string()),
+                    created_at: "2026-11-11".to_string(),
+                },
+                dimensions: Some((32, 48)),
+                duration_ms: None,
+            })
+            .expect("entrée acceptée");
+        project.assets = Some(manifeste.clone());
+
+        let json = project.to_json().expect("sérialisation JSON");
+        let loaded = KaractiProject::from_json(&json).expect("désérialisation JSON");
+        assert_eq!(loaded.assets, Some(manifeste), "le manifeste traverse le JSON");
+    }
+
+    #[test]
+    fn test_project_without_assets_field_stays_readable() {
+        let project = KaractiProject::new_empty("Héritage", "Auteur", GameGenre::Platformer);
+        let mut valeur: serde_json::Value =
+            serde_json::to_value(&project).expect("projet sérialisable");
+        valeur
+            .as_object_mut()
+            .expect("objet JSON")
+            .remove("assets");
+
+        let loaded = KaractiProject::from_json(&valeur.to_string()).expect("projet relu");
+        assert!(
+            loaded.assets.is_none(),
+            "un projet sans manifeste reste lisible (None)"
+        );
     }
 
     #[test]

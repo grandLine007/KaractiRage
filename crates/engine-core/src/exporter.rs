@@ -4,7 +4,7 @@ use crate::game::GameState;
 use kvl_core::{Graph, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Métadonnées descriptives du jeu exporté
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -125,7 +125,10 @@ pub struct PreflightIssue {
     /// Gravité du diagnostic.
     pub severity: PreflightSeverity,
     /// Code technique stable : `"script-manquant"`, `"asset-manquant"`,
-    /// `"budget-entites"` ou `"budget-kvl"`.
+    /// `"budget-entites"`, `"budget-kvl"`, `"manifeste-absent"`, ou l'un des
+    /// codes relayés du manifeste (`"fichier-absent"`, `"hash-incoherent"`,
+    /// `"taille-different"`, `"budget-depasse"`, `"licence-manquante"`,
+    /// `"chemin-invalide"`).
     pub code: &'static str,
     /// Message lisible en français, orienté créateur.
     pub message: String,
@@ -283,6 +286,13 @@ impl StandaloneExporter {
     /// pour les PNG/SVG, `sheet_cache` pour les spritesheets/anims) ou si son
     /// fichier source existe sous `assets/`.
     ///
+    /// Quand le jeu porte un manifeste d'assets (`game.assets_manifest`), ses
+    /// entrées sont en plus vérifiées contre le disque : un fichier absent, une
+    /// taille ou un hash différent bloque l'export, une licence manquante
+    /// n'émet qu'un avertissement. Un projet **sans** manifeste reste
+    /// exportable ; il reçoit seulement l'avertissement `"manifeste-absent"`
+    /// lorsqu'une entité référence un script ou un asset de rendu.
+    ///
     /// Les dépassements de budget (> 500 entités, > 5000 connexions KVL
     /// cumulées) ne produisent que des avertissements : ils n'empêchent jamais
     /// l'export.
@@ -355,6 +365,30 @@ impl StandaloneExporter {
                     ));
                 }
             }
+        }
+
+        // --- Manifeste d'assets (P2.1) --------------------------------------
+        // Un projet sans manifeste reste exportable ; l'absence n'est signalée
+        // que si des entités référencent réellement des scripts ou des assets.
+        if let Some(manifeste) = &game.assets_manifest {
+            let racine = racine_du_manifeste(manifeste);
+            for issue in manifeste.validate(&racine) {
+                let severity = if issue.blocking {
+                    PreflightSeverity::Blocking
+                } else {
+                    PreflightSeverity::Warning
+                };
+                issues.push(PreflightIssue {
+                    severity,
+                    code: issue.code,
+                    message: format!("manifeste : {}", issue.message),
+                });
+            }
+        } else if entites_referencent_des_assets(game) {
+            issues.push(PreflightIssue::warning(
+                "manifeste-absent",
+                "des entités référencent des scripts ou des assets de rendu, mais le projet ne déclare aucun manifeste d'assets : leur provenance et leur intégrité ne sont pas vérifiées. Ajoute un manifeste au projet.".to_string(),
+            ));
         }
 
         // --- Budgets (avertissements uniquement) -----------------------------
@@ -473,6 +507,52 @@ fn fichier_existe(rel: &str) -> bool {
     }
     let racine = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
     Path::new(&format!("{racine}/{rel}")).is_file()
+}
+
+/// Racine disque du manifeste : répertoire courant, puis `../../` quand les
+/// chemins n'y répondent pas (même motif que [`fichier_existe`]).
+///
+/// Une entrée absente partout laisse la racine sur le répertoire courant : le
+/// diagnostic `fichier-absent` cite alors un chemin stable et compréhensible.
+fn racine_du_manifeste(manifeste: &crate::assets_manifest::AssetsManifest) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if manifeste
+        .entries
+        .iter()
+        .any(|entree| cwd.join(&entree.path).is_file())
+    {
+        return cwd;
+    }
+    let remontee = cwd.join("../..");
+    if manifeste
+        .entries
+        .iter()
+        .any(|entree| remontee.join(&entree.path).is_file())
+    {
+        return remontee;
+    }
+    cwd
+}
+
+/// `true` si au moins une entité référence un script ou un asset de rendu
+/// externe (SVG, PNG, spritesheet, animation) : c'est le cas où l'absence de
+/// manifeste mérite un avertissement de pré-vol.
+fn entites_referencent_des_assets(game: &GameState) -> bool {
+    game.entities.iter().any(|entite| {
+        entite
+            .script
+            .as_ref()
+            .is_some_and(|script| !script.script_path.trim().is_empty())
+            || entite.renderable.as_ref().is_some_and(|rendu| {
+                matches!(
+                    rendu.shape,
+                    ShapeKind::SvgRef { .. }
+                        | ShapeKind::ImageRef { .. }
+                        | ShapeKind::SheetRef { .. }
+                        | ShapeKind::AnimRef { .. }
+                )
+            })
+    })
 }
 
 /// Vérifie qu'un sprite vectoriel référencé par `SvgRef` est résolvable sur
@@ -605,7 +685,191 @@ mod tests {
         let report = StandaloneExporter::preflight(&jeu);
         assert!(report.ok, "pré-vol du niveau de référence : {}", report.summary());
         assert_eq!(report.blocking_count(), 0, "aucun blocage attendu : {}", report.summary());
-        assert!(report.issues.is_empty(), "aucun diagnostic attendu : {}", report.summary());
+        // Le niveau de référence référence des scripts mais ne déclare pas de
+        // manifeste : seul l'avertissement `manifeste-absent` est attendu.
+        assert!(
+            report
+                .issues
+                .iter()
+                .all(|issue| issue.code == "manifeste-absent"),
+            "seul l'avertissement manifeste-absent est attendu : {}",
+            report.summary()
+        );
+        assert_eq!(report.warnings().len(), 1, "rapport : {}", report.summary());
+    }
+
+    #[test]
+    fn test_preflight_signale_manifeste_absent_sans_bloquer() {
+        let jeu = jeu_reference();
+        assert!(
+            jeu.entities.iter().any(|entite| entite.script.is_some()),
+            "le jeu de référence doit référencer au moins un script"
+        );
+        assert!(jeu.assets_manifest.is_none(), "aucun manifeste par défaut");
+
+        let report = StandaloneExporter::preflight(&jeu);
+        let avertissement = report
+            .warnings()
+            .into_iter()
+            .find(|issue| issue.code == "manifeste-absent")
+            .expect("un avertissement manifeste-absent est attendu");
+        assert!(avertissement.message.contains("manifeste"));
+        assert!(report.ok, "l'absence de manifeste ne bloque pas l'export");
+        assert_eq!(report.blocking_count(), 0);
+    }
+
+    #[test]
+    fn test_preflight_sans_manifeste_ni_assets_reste_silencieux() {
+        let mut jeu = jeu_reference();
+        for entite in &mut jeu.entities {
+            entite.script = None;
+            if let Some(rendu) = &mut entite.renderable {
+                rendu.shape = ShapeKind::Rect;
+            }
+        }
+        assert!(!entites_referencent_des_assets(&jeu));
+
+        let report = StandaloneExporter::preflight(&jeu);
+        assert!(report.ok, "pré-vol : {}", report.summary());
+        assert!(
+            report.issues.is_empty(),
+            "aucun diagnostic attendu sans asset référencé : {}",
+            report.summary()
+        );
+    }
+
+    /// Chemin disque réel d'un asset du dépôt, quel que soit le cwd des tests.
+    fn chemin_asset_reference(rel: &str) -> PathBuf {
+        for candidat in [PathBuf::from(rel), PathBuf::from(format!("../../{rel}"))] {
+            if candidat.is_file() {
+                return candidat;
+            }
+        }
+        panic!("asset de référence introuvable : {rel}");
+    }
+
+    #[test]
+    fn test_preflight_manifeste_fichier_absent_bloque() {
+        let mut jeu = jeu_reference();
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "fantome".to_string(),
+                kind: crate::assets_manifest::AssetKind::Sprite,
+                // Nom unique et volontairement inexistant sous le cwd et ../../.
+                path: format!(
+                    "assets/sprites/manifeste_prevol_fantome_{}.png",
+                    std::process::id()
+                ),
+                bytes: 128,
+                hash: crate::ai_dictionary::hash_text(b"fantome"),
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".to_string()),
+                    created_at: "2026-11-11".to_string(),
+                },
+                dimensions: Some((16, 16)),
+                duration_ms: None,
+            })
+            .expect("entrée acceptée");
+        jeu.assets_manifest = Some(manifeste);
+
+        let report = StandaloneExporter::preflight(&jeu);
+        assert!(!report.ok, "un fichier déclaré absent doit bloquer");
+        assert_eq!(report.blocking_count(), 1, "rapport : {}", report.summary());
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.code == "fichier-absent")
+            .expect("le diagnostic fichier-absent du manifeste est attendu");
+        assert_eq!(issue.severity, PreflightSeverity::Blocking);
+        assert!(
+            issue.message.starts_with("manifeste : "),
+            "message attendu préfixé : {}",
+            issue.message
+        );
+        assert!(issue.message.contains("fantome"));
+    }
+
+    #[test]
+    fn test_preflight_manifeste_fichier_present_ne_signale_rien() {
+        let mut jeu = jeu_reference();
+        let rel = "assets/scenes/ref_niveau_1.scene.json";
+        let chemin = chemin_asset_reference(rel);
+        let (bytes, hash) =
+            crate::assets_manifest::verify_file(&chemin).expect("fichier de référence lisible");
+
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "niveau_reference".to_string(),
+                kind: crate::assets_manifest::AssetKind::Sprite,
+                path: rel.to_string(),
+                bytes,
+                hash,
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".to_string()),
+                    created_at: "2026-11-11".to_string(),
+                },
+                dimensions: None,
+                duration_ms: None,
+            })
+            .expect("entrée acceptée");
+        jeu.assets_manifest = Some(manifeste);
+
+        let report = StandaloneExporter::preflight(&jeu);
+        assert!(
+            report.ok,
+            "le manifeste valide ne doit rien bloquer : {}",
+            report.summary()
+        );
+        assert!(
+            report
+                .issues
+                .iter()
+                .all(|issue| !issue.message.starts_with("manifeste : ")),
+            "aucun diagnostic de manifeste attendu : {}",
+            report.summary()
+        );
+    }
+
+    #[test]
+    fn test_preflight_manifeste_licence_manquante_avertit_sans_bloquer() {
+        let mut jeu = jeu_reference();
+        let rel = "assets/scenes/ref_niveau_1.scene.json";
+        let (bytes, hash) = crate::assets_manifest::verify_file(&chemin_asset_reference(rel))
+            .expect("fichier de référence lisible");
+
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "sans_licence".to_string(),
+                kind: crate::assets_manifest::AssetKind::Sprite,
+                path: rel.to_string(),
+                bytes,
+                hash,
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: None,
+                    created_at: "2026-11-11".to_string(),
+                },
+                dimensions: None,
+                duration_ms: None,
+            })
+            .expect("entrée acceptée");
+        jeu.assets_manifest = Some(manifeste);
+
+        let report = StandaloneExporter::preflight(&jeu);
+        assert!(report.ok, "la licence n'est pas bloquante : {}", report.summary());
+        assert_eq!(report.blocking_count(), 0);
+        let issue = report
+            .warnings()
+            .into_iter()
+            .find(|issue| issue.code == "licence-manquante")
+            .expect("l'avertissement de licence est attendu");
+        assert!(issue.message.starts_with("manifeste : "));
+        assert!(!issue.message.contains("manifeste-absent"));
     }
 
     #[test]
