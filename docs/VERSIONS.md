@@ -7,7 +7,8 @@
 |---|---|---|---|---|
 | v0.2.0 | — | Édition IA inline (contrat, ops, prompt, barre + `✦`) | [RAPPORT_v0.2.0](RAPPORTS/RAPPORT_v0.2.0.md) | rétroactif (non taguée) |
 | v0.3.0 | P1 | Boucle « jeu 2D complet » | [RAPPORT_v0.3.0](RAPPORTS/RAPPORT_v0.3.0.md) | **prêt, non taguée** |
-| v0.4.0 | P2 | Manifeste d'assets, Tiled, audio, rechargement à chaud | à écrire | à venir |
+| v0.3.1 | fin P1 + P2.1 | AC2 (replay hashé), UI sauvegarde, pré-vol UI, manifeste d'assets | [RAPPORT_v0.3.1](RAPPORTS/RAPPORT_v0.3.1.md) | **prêt, non taguée** |
+| v0.4.0 | P2 | Import Tiled, audio par fichiers, rechargement à chaud | à écrire | à venir |
 | v0.5.0 | P3 | Packs image/audio locaux (endpoint compatible OpenAI) | à écrire | à venir |
 | v0.6.0 | P4 | glTF, 3D déclarative, 2.5D, Blender MCP | à écrire | à venir |
 | v0.7.0 | P5 | Qualité IA mesurée (40 × 10, seuils) | à écrire | à venir |
