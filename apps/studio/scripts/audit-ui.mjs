@@ -44,6 +44,8 @@ const VIEWPORTS = [
 
 // Séquence de navigation linéaire (état persistant dans la page) :
 // chaque étape s'exécute après la précédente, depuis l'écran Hub d'accueil.
+// Une étape peut définir `after(page)`, exécuté APRÈS la capture, pour remettre
+// l'interface dans l'état attendu par les étapes suivantes.
 const STEPS = [
   { id: 'hub', label: 'Hub' },
   { id: 'play', label: 'Play', run: (p) => p.getByTestId('hub').getByLabel('Fermer').click() },
@@ -55,6 +57,34 @@ const STEPS = [
   { id: 'kvl-noeuds', label: 'KVL Nœuds', run: (p) => p.getByTestId('kv-palette').getByText('Nœuds', { exact: false }).click() },
   { id: 'pixel', label: 'Pixel Art', run: (p) => p.getByTestId('header-modes').getByText('Pixel', { exact: false }).click() },
   { id: 'vector', label: 'Vectoriel', run: (p) => p.getByTestId('header-modes').getByText('Vectoriel', { exact: false }).click() },
+  // Panneau « Sauvegardes » (non modal, ancré au-dessus du pied de page) : dernière
+  // étape, pour ne jamais laisser un panneau ouvert devant les écrans suivants.
+  // On revient d'abord en mode Édition (le panneau est accessible depuis tous les
+  // modes via le pied de page), on l'ouvre par le bouton `aria-label="Sauvegarde"`,
+  // on attend le dialogue (`#save-slots-panel`, role="dialog"), puis `after` le
+  // referme avant de quitter la page.
+  // Échap est le raccourci documenté (App.tsx), mais il est consommé par la barre IA
+  // inline restée ouverte depuis l'étape `edition-ia` (premier Échap = fermeture de
+  // la barre IA). On garde donc un repli déterministe sur le bouton de fermeture du
+  // panneau si Échap ne l'a pas refermé.
+  {
+    id: 'sauvegardes',
+    label: 'Sauvegardes',
+    run: async (p) => {
+      await p.getByTestId('header-modes').getByText('Créer', { exact: false }).click();
+      await p.getByLabel('Sauvegarde', { exact: true }).click();
+      await p.locator('#save-slots-panel').waitFor({ state: 'visible', timeout: 5000 });
+    },
+    after: async (p) => {
+      const panel = p.locator('#save-slots-panel');
+      await p.keyboard.press('Escape');
+      await p.waitForTimeout(200);
+      if (await panel.isVisible().catch(() => false)) {
+        await p.getByLabel('Fermer le panneau Sauvegardes').click();
+      }
+      await panel.waitFor({ state: 'detached', timeout: 5000 });
+    },
+  },
 ];
 
 // Scénarios de pannes (UX-005) — une capture 1440×900 chacun.
@@ -253,6 +283,8 @@ async function main() {
             `[audit] ${step.id} @${vp.name} header=${metrics.header_height ?? '—'}px cible_min=${metrics.header_target_min ?? '—'}px canvas_ratio=${metrics.canvas ? metrics.canvas.ratio : '—'} axe_crit/serious=${serious} overflow=${metrics.overflow_x}px tronqué=${metrics.truncated_count}`,
           );
           logViolations(axe);
+          // Remise en état APRÈS la capture (ex. refermer le panneau Sauvegardes).
+          if (step.after) await step.after(page);
         }
         await page.close();
       }
