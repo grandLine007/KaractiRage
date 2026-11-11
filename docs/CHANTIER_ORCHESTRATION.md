@@ -37,6 +37,18 @@
 | γ « manifeste » | **P2.1** : manifeste d'assets (provenance, hash, budget) | `crates/engine-core/src/assets_manifest.rs` (+ 1 ligne `lib.rs` par le meneur) | Schéma versionné, hash stable, budget refusé, tests |
 | meneur | **Pré-vol visible** dans l'export du Studio | `App.tsx` (après β), `engineBridge.ts` | Un export bloqué affiche la liste des blocages, pas un échec muet |
 
+## 3bis. Vague 3 — terminée
+
+| Agent | Tâche | Périmètre | Critère de sortie |
+|---|---|---|---|
+| δ « manifeste-prévol » | Brancher le manifeste sur le projet et le pré-vol d'export | `project.rs`, `game.rs`, `exporter.rs`, `assets_manifest.rs` | roundtrip projet, pré-vol bloquant sur fichier absent, avertissement `manifeste-absent` |
+| ζ « CSS » | Corriger le reset `button` non layeré | `index.css` (+ composant si illisible) | utilitaires Tailwind de nouveau effectifs, build/lint inchangés, rapport de dérive sans mise à jour de baseline |
+
+**Contrainte d'environnement (bloquante pour P2.2)** : `crates.io` répond **403** depuis
+cette machine et le crate `tiled` n'est pas en cache local. **Aucune nouvelle dépendance
+ne peut être ajoutée** dans cette session. L'import Tiled (P2.2) et l'audio Kira (P2.3)
+sont donc reportés à une session avec accès réseau, ou devront être fournis en vendor.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
@@ -72,3 +84,5 @@ gates   : build OK · lint 14/0 · audit 35 captures 0 violation · export-smoke
 | 11/11 | 1 | ✅ α (replay, AC2) · ✅ β (UI sauvegarde) — intégrés |
 | 11/11 | 2 | ✅ γ (manifeste P2.1) · ✅ meneur (pré-vol UI) — intégrés |
 | 11/11 | 2bis | Gates : 469 tests, 0 warning, audit 0 violation, dérive 0,193 % |
+| 11/11 | 3 | ✅ δ (manifeste branché) · ✅ ζ (cascade CSS + contrastes) — baseline régénérée par le meneur |
+| 11/11 | 3bis | Gates : 480 tests, 0 warning, audit 35 captures 0 violation, dérive 0 |
