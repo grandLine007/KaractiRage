@@ -74,11 +74,15 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
+    // Le runtime embarqué est ce qui rend le fichier jouable en file:// ; on
+    // l'annonce pour distinguer un export de données d'un export jouable.
+    let runtime_embarque = html.contains("id=\"runtime-glue\"");
     println!(
-        "export OK — {} entités, {} graphes KVL, {} Ko, empreinte {}",
+        "export OK — {} entités, {} graphes KVL, {} Ko, runtime {}, empreinte {}",
         game.entities.len(),
         game.kvl_graphs.len(),
         html.len() / 1024,
+        if runtime_embarque { "embarqué" } else { "absent" },
         StandaloneExporter::export_fingerprint(&html)
     );
     ExitCode::SUCCESS

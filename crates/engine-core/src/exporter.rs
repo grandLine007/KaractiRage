@@ -6,6 +6,229 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+/// Nom du fichier de glue JS produit par `wasm-bindgen --target web`.
+const RUNTIME_GLUE_FILE: &str = "engine_wasm.js";
+/// Nom du binaire wasm produit par `wasm-bindgen`.
+const RUNTIME_WASM_FILE: &str = "engine_wasm_bg.wasm";
+
+/// Runtime WASM embarquable dans un export HTML autonome.
+///
+/// Regroupe la glue JS `engine_wasm.js` et le binaire `engine_wasm_bg.wasm`
+/// encodé en base64. L'exporteur les insère dans deux balises `<script>` non
+/// exécutées ; le template les décode et charge la glue via une Blob URL, puis
+/// instancie le module avec `initSync({ module: octets })`. Résultat : un seul
+/// fichier `.html`, jouable même en `file://` (aucun `import()` de module
+/// voisin, donc aucune requête CORS et aucune requête réseau).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddedRuntime {
+    /// Contenu texte de `engine_wasm.js` (glue wasm-bindgen).
+    pub glue: String,
+    /// Contenu de `engine_wasm_bg.wasm` encodé en base64 standard.
+    pub wasm_base64: String,
+    /// Taille réellement embarquée (glue + base64), en octets.
+    ///
+    /// C'est le surcoût du runtime dans le HTML : le base64 pèse environ 4/3
+    /// du binaire wasm. Sert à l'avertissement de pré-vol `runtime-embarque`.
+    pub bytes: usize,
+}
+
+impl EmbeddedRuntime {
+    /// Taille lisible en français, par exemple `« 4,7 Mo »`.
+    pub fn human_size(&self) -> String {
+        taille_lisible(self.bytes)
+    }
+}
+
+/// Longueur exacte d'un encodage base64 standard (remplissage compris).
+fn longueur_base64(octets: usize) -> usize {
+    if octets == 0 {
+        0
+    } else {
+        4 * ((octets + 2) / 3)
+    }
+}
+
+/// Formate une taille en octets à la française (`« 4,7 Mo »`).
+///
+/// Le seuil et le diviseur sont des multiples binaires (1 Mo = 1 024 Ko), comme
+/// les tailles affichées par le reste du Studio.
+fn taille_lisible(octets: usize) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * KIB;
+    let octets_f = octets as f64;
+    if octets_f >= MIB {
+        format!("{:.1} Mo", octets_f / MIB).replace('.', ",")
+    } else if octets_f >= KIB {
+        format!("{:.1} Ko", octets_f / KIB).replace('.', ",")
+    } else {
+        format!("{octets} o")
+    }
+}
+
+/// Trie récursivement les clés d'un [`serde_json::Value`].
+///
+/// Les tables du package (`kvl_graphs`, `sprite_assets`, `sheet_assets`,
+/// `initial_variables`) sont des `HashMap` : leur ordre d'itération dépend de
+/// la graine aléatoire du processus. Sans tri, deux exports du **même** projet
+/// produisent des JSON différents, donc des fichiers et des empreintes
+/// différentes. Le tri rend l'export reproductible octet pour octet.
+fn trier_cles_json(valeur: serde_json::Value) -> serde_json::Value {
+    match valeur {
+        serde_json::Value::Object(table) => {
+            let mut entrees: Vec<(String, serde_json::Value)> = table.into_iter().collect();
+            entrees.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut trie = serde_json::Map::with_capacity(entrees.len());
+            for (cle, valeur) in entrees {
+                trie.insert(cle, trier_cles_json(valeur));
+            }
+            serde_json::Value::Object(trie)
+        }
+        serde_json::Value::Array(elements) => {
+            serde_json::Value::Array(elements.into_iter().map(trier_cles_json).collect())
+        }
+        autre => autre,
+    }
+}
+
+/// Sérialise une valeur en JSON compact et **déterministe** (clés triées).
+///
+/// Utilisé pour le paquet embarqué dans le HTML : à projet et artefacts
+/// identiques, le fichier exporté est identique à l'octet près.
+fn serialiser_json_deterministe<T: Serialize>(valeur: &T) -> Result<String, serde_json::Error> {
+    let value = serde_json::to_value(valeur)?;
+    serde_json::to_string(&trier_cles_json(value))
+}
+
+/// Charge le runtime WASM embarquable depuis `dir`.
+///
+/// Lit `engine_wasm.js` et `engine_wasm_bg.wasm`, puis encode le binaire en
+/// base64. Renvoie `None` si l'un des deux fichiers est absent, illisible ou
+/// vide : l'appelant produit alors un export sans runtime (carte explicite au
+/// lieu du jeu). **Aucune lecture réseau** : uniquement le disque local.
+///
+/// Le HTML produit est déterministe pour un même contenu de `dir` : base64
+/// standard sans saut de ligne ni horodatage.
+pub fn load_embedded_runtime(dir: &Path) -> Option<EmbeddedRuntime> {
+    let glue = std::fs::read_to_string(dir.join(RUNTIME_GLUE_FILE)).ok()?;
+    let wasm = std::fs::read(dir.join(RUNTIME_WASM_FILE)).ok()?;
+    if glue.trim().is_empty() || wasm.is_empty() {
+        return None;
+    }
+    let wasm_base64 = STANDARD.encode(&wasm);
+    let bytes = glue.len() + wasm_base64.len();
+    debug_assert_eq!(wasm_base64.len(), longueur_base64(wasm.len()));
+    Some(EmbeddedRuntime {
+        glue,
+        wasm_base64,
+        bytes,
+    })
+}
+
+/// Taille embarquée d'un runtime présent dans `dir`, **sans** encoder le wasm.
+///
+/// Utilisée par le pré-vol : inutile de lire et d'encoder 3,5 Mo juste pour
+/// afficher un avertissement de taille. Le calcul reproduit exactement la
+/// longueur base64, donc la taille annoncée est celle du HTML final.
+fn taille_runtime_embarque(dir: &Path) -> Option<usize> {
+    let glue = std::fs::metadata(dir.join(RUNTIME_GLUE_FILE)).ok()?;
+    let wasm = std::fs::metadata(dir.join(RUNTIME_WASM_FILE)).ok()?;
+    if !glue.is_file() || !wasm.is_file() || glue.len() == 0 || wasm.len() == 0 {
+        return None;
+    }
+    let glue = usize::try_from(glue.len()).ok()?;
+    let wasm = usize::try_from(wasm.len()).ok()?;
+    Some(glue + longueur_base64(wasm))
+}
+
+/// Répertoire du runtime utilisé par [`StandaloneExporter::export_html`].
+///
+/// Ordre de résolution :
+/// 1. `$KARACTI_RUNTIME_DIR` s'il est défini — même s'il ne contient rien, ce
+///    qui est le moyen explicite de forcer un export sans runtime ;
+/// 2. `dist/pkg` du répertoire courant ;
+/// 3. `dist/pkg` à la racine du dépôt (`CARGO_MANIFEST_DIR/../..`), pour que
+///    l'export fonctionne aussi quand le binaire est lancé depuis
+///    `crates/…` ou `apps/studio/…`.
+///
+/// Aucune de ces pistes n'est une URL : tout vient du disque local.
+pub fn default_runtime_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("KARACTI_RUNTIME_DIR") {
+        return PathBuf::from(dir);
+    }
+    let racine_courante = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let local = racine_courante.join("dist/pkg");
+    if local.join(RUNTIME_WASM_FILE).is_file() {
+        return local;
+    }
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dist/pkg")
+}
+
+/// Échappe les fins de balise `</script` d'un contenu inséré dans un
+/// `<script type="text/plain">` : le parseur HTML couperait le script.
+///
+/// L'échappement `<\/script` est neutre en JavaScript (le `/` échappé vaut `/`
+/// dans une chaîne ou une expression régulière) et ne modifie donc pas la glue.
+/// La comparaison ignore la casse, comme le parseur HTML.
+fn echapper_fin_de_script(source: &str) -> String {
+    const MOTIF: &[u8] = b"</script";
+    let octets = source.as_bytes();
+    let mut sortie = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < octets.len() {
+        if i + MOTIF.len() <= octets.len()
+            && octets[i..i + MOTIF.len()].eq_ignore_ascii_case(MOTIF)
+        {
+            sortie.push_str("<\\/script");
+            i += MOTIF.len();
+        } else {
+            let caractere = source[i..]
+                .chars()
+                .next()
+                .expect("indice toujours aligné sur une frontière UTF-8");
+            sortie.push(caractere);
+            i += caractere.len_utf8();
+        }
+    }
+    sortie
+}
+
+/// Injecte les deux balises de runtime juste avant `</body>`.
+///
+/// Sans `</body>` (HTML étranger), le bloc est ajouté à la fin : la page reste
+/// lisible et le runtime disponible.
+fn injecter_runtime(html: String, runtime: &EmbeddedRuntime) -> String {
+    let bloc = format!(
+        "  <script id=\"runtime-glue\" type=\"text/plain\">\n{}\n  </script>\n  <script id=\"runtime-wasm\" type=\"application/base64\">\n{}\n  </script>\n",
+        echapper_fin_de_script(&runtime.glue),
+        runtime.wasm_base64
+    );
+    match html.rfind("</body>") {
+        Some(position) => {
+            let mut sortie = String::with_capacity(html.len() + bloc.len());
+            sortie.push_str(&html[..position]);
+            sortie.push_str(&bloc);
+            sortie.push_str(&html[position..]);
+            sortie
+        }
+        None => {
+            let mut sortie = html;
+            sortie.push_str(&bloc);
+            sortie
+        }
+    }
+}
+
+/// Diagnostic pré-vol du runtime embarqué (non bloquant).
+fn avertissement_runtime(bytes: usize) -> PreflightIssue {
+    PreflightIssue::warning(
+        "runtime-embarque",
+        format!(
+            "runtime embarqué : {} — la glue JS et le binaire wasm sont inclus dans le HTML ; le jeu est jouable hors ligne en file:// (le fichier est plus lourd d'autant)",
+            taille_lisible(bytes)
+        ),
+    )
+}
+
 /// Métadonnées descriptives du jeu exporté
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PackageMetadata {
@@ -96,14 +319,35 @@ impl KaractiGamePackage {
 
     /// Génère un document HTML5 standalone complet intégrant le package et le lecteur Web
     pub fn generate_standalone_html(&self) -> String {
-        let package_json = self.to_json().unwrap_or_else(|_| "{}".to_string());
+        self.generate_standalone_html_with_runtime(None)
+    }
+
+    /// Génère le document HTML5 autonome, en embarquant éventuellement le
+    /// runtime WASM (glue + binaire base64) avant `</body>`.
+    ///
+    /// `None` produit le même document qu'historiquement : données du jeu
+    /// seules, carte d'identification au démarrage, aucune dépendance externe.
+    /// `Some(runtime)` produit un fichier réellement jouable en un seul fichier.
+    ///
+    /// Le paquet est sérialisé avec les **clés triées** : les `HashMap` du
+    /// package n'exposent donc pas leur ordre d'itération aléatoire, et deux
+    /// exports du même projet donnent exactement le même fichier.
+    pub fn generate_standalone_html_with_runtime(
+        &self,
+        runtime: Option<&EmbeddedRuntime>,
+    ) -> String {
+        let package_json = serialiser_json_deterministe(self).unwrap_or_else(|_| "{}".to_string());
         let escaped_json = package_json.replace("</script>", "<\\/script>");
         let template = include_str!("standalone_template.html");
-        template
+        let html = template
             .replace("{{TITLE}}", &self.metadata.title)
             .replace("{{AUTHOR}}", &self.metadata.author)
             .replace("{{GENRE}}", &self.metadata.genre)
-            .replace("{{EMBEDDED_JSON}}", &escaped_json)
+            .replace("{{EMBEDDED_JSON}}", &escaped_json);
+        match runtime {
+            Some(runtime) => injecter_runtime(html, runtime),
+            None => html,
+        }
     }
 }
 
@@ -125,10 +369,10 @@ pub struct PreflightIssue {
     /// Gravité du diagnostic.
     pub severity: PreflightSeverity,
     /// Code technique stable : `"script-manquant"`, `"asset-manquant"`,
-    /// `"budget-entites"`, `"budget-kvl"`, `"manifeste-absent"`, ou l'un des
-    /// codes relayés du manifeste (`"fichier-absent"`, `"hash-incoherent"`,
-    /// `"taille-different"`, `"budget-depasse"`, `"licence-manquante"`,
-    /// `"chemin-invalide"`).
+    /// `"budget-entites"`, `"budget-kvl"`, `"manifeste-absent"`,
+    /// `"runtime-embarque"`, ou l'un des codes relayés du manifeste
+    /// (`"fichier-absent"`, `"hash-incoherent"`, `"taille-different"`,
+    /// `"budget-depasse"`, `"licence-manquante"`, `"chemin-invalide"`).
     pub code: &'static str,
     /// Message lisible en français, orienté créateur.
     pub message: String,
@@ -271,10 +515,33 @@ impl StandaloneExporter {
         }
     }
 
-    /// Exporte le jeu en un fichier HTML standalone complet
+    /// Exporte le jeu en un fichier HTML standalone complet.
+    ///
+    /// Le runtime WASM est cherché via [`default_runtime_dir`]
+    /// (`$KARACTI_RUNTIME_DIR`, sinon `dist/pkg`), **sur le disque local
+    /// uniquement** : aucune lecture réseau. S'il est trouvé, le HTML contient
+    /// la glue et le binaire wasm et le jeu démarre même en `file://`.
     pub fn export_html(game: &GameState, title: &str, author: &str) -> String {
+        let runtime_dir = default_runtime_dir();
+        Self::export_html_with_runtime(game, title, author, Some(runtime_dir.as_path()))
+    }
+
+    /// Exporte le jeu en HTML autonome avec un runtime explicite.
+    ///
+    /// `runtime_dir = Some(dir)` tente de charger `engine_wasm.js` et
+    /// `engine_wasm_bg.wasm` depuis `dir` ; si les artefacts sont absents ou
+    /// illisibles, l'export reste valide mais sans runtime (carte explicite).
+    /// `None` produit volontairement un export sans runtime, comme
+    /// [`KaractiGamePackage::generate_standalone_html`].
+    pub fn export_html_with_runtime(
+        game: &GameState,
+        title: &str,
+        author: &str,
+        runtime_dir: Option<&Path>,
+    ) -> String {
         let package = Self::create_package(game, title, author);
-        package.generate_standalone_html()
+        let runtime = runtime_dir.and_then(load_embedded_runtime);
+        package.generate_standalone_html_with_runtime(runtime.as_ref())
     }
 
     /// Pré-vol d'export : vérifie que chaque script et chaque asset référencés
@@ -391,6 +658,14 @@ impl StandaloneExporter {
             ));
         }
 
+        // --- Runtime embarqué (avertissement uniquement) ---------------------
+        // Sans artefacts wasm, l'export reste valide mais non jouable : jamais
+        // bloquant. La taille annoncée est celle réellement ajoutée au HTML
+        // (glue + binaire base64), calculée sans encoder le wasm.
+        if let Some(bytes) = taille_runtime_embarque(&default_runtime_dir()) {
+            issues.push(avertissement_runtime(bytes));
+        }
+
         // --- Budgets (avertissements uniquement) -----------------------------
         if game.entities.len() > BUDGET_ENTITES {
             issues.push(PreflightIssue::warning(
@@ -445,6 +720,15 @@ impl StandaloneExporter {
     /// constante (`"2026-10-16"`), donc l'export est reproductible. Si ce champ
     /// devenait un horodatage réel, il faudrait l'exclure du paquet avant
     /// hachage, sinon deux exports identiques produiraient deux empreintes.
+    ///
+    /// Limite assumée : le **runtime embarqué** (`#runtime-glue` + le wasm
+    /// base64, soit ~4,7 Mo) n'entre pas dans l'empreinte. Deux exports du même
+    /// jeu produits avec des artefacts wasm différents partagent donc la même
+    /// empreinte alors que leurs fichiers diffèrent : c'est voulu, l'empreinte
+    /// identifie le contenu du jeu (entités, graphes KVL, assets), pas le
+    /// binaire du moteur. En revanche, à projet et artefacts identiques, la
+    /// sortie est octet pour octet identique (base64 déterministe, aucune date
+    /// volatile).
     ///
     /// Ce n'est pas un hash cryptographique : il sert à détecter une dérive de
     /// contenu, pas à authentifier un export.
@@ -686,16 +970,20 @@ mod tests {
         assert!(report.ok, "pré-vol du niveau de référence : {}", report.summary());
         assert_eq!(report.blocking_count(), 0, "aucun blocage attendu : {}", report.summary());
         // Le niveau de référence référence des scripts mais ne déclare pas de
-        // manifeste : seul l'avertissement `manifeste-absent` est attendu.
+        // manifeste : seul l'avertissement `manifeste-absent` est attendu, plus
+        // l'avertissement `runtime-embarque` quand les artefacts wasm sont
+        // présents dans le dépôt (indépendant du contenu du jeu).
         assert!(
             report
                 .issues
                 .iter()
-                .all(|issue| issue.code == "manifeste-absent"),
-            "seul l'avertissement manifeste-absent est attendu : {}",
+                .all(|issue| matches!(issue.code, "manifeste-absent" | "runtime-embarque")),
+            "seuls les avertissements manifeste-absent et runtime-embarque sont attendus : {}",
             report.summary()
         );
-        assert_eq!(report.warnings().len(), 1, "rapport : {}", report.summary());
+        let attendus =
+            1 + usize::from(report.issues.iter().any(|i| i.code == "runtime-embarque"));
+        assert_eq!(report.warnings().len(), attendus, "rapport : {}", report.summary());
     }
 
     #[test]
@@ -731,8 +1019,13 @@ mod tests {
 
         let report = StandaloneExporter::preflight(&jeu);
         assert!(report.ok, "pré-vol : {}", report.summary());
+        // Aucun diagnostic lié au contenu ; l'éventuel `runtime-embarque` ne
+        // dépend que de la présence des artefacts wasm sur la machine.
         assert!(
-            report.issues.is_empty(),
+            report
+                .issues
+                .iter()
+                .all(|issue| issue.code == "runtime-embarque"),
             "aucun diagnostic attendu sans asset référencé : {}",
             report.summary()
         );
@@ -949,5 +1242,205 @@ mod tests {
 
         let autre = StandaloneExporter::export_html(&jeu, "Autre titre", "Testeur");
         assert_ne!(fa, StandaloneExporter::export_fingerprint(&autre));
+    }
+
+    /// Répertoire temporaire unique par test (les tests s'exécutent en
+    /// parallèle) : jamais les artefacts réels de 3,5 Mo, seulement de petites
+    /// chaînes, pour rester rapide et indépendant de la machine.
+    fn repertoire_temporaire(nom: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duree| duree.as_nanos())
+            .unwrap_or(0);
+        let base = std::env::temp_dir().join(format!(
+            "karacti_runtime_{nom}_{}_{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&base).expect("répertoire temporaire créé");
+        base
+    }
+
+    /// Écrit un faux runtime (`glue` JS + binaire wasm factice) dans `dir`.
+    fn ecrire_faux_runtime(dir: &Path, glue: &str, wasm: &[u8]) {
+        std::fs::write(dir.join(RUNTIME_GLUE_FILE), glue).expect("glue écrite");
+        std::fs::write(dir.join(RUNTIME_WASM_FILE), wasm).expect("wasm écrit");
+    }
+
+    #[test]
+    fn test_load_embedded_runtime_lit_les_artefacts() {
+        let dir = repertoire_temporaire("load");
+        let glue = "export function initSync(module) { return module; }\n";
+        let wasm = b"\0asm\x01\0\0\0";
+        ecrire_faux_runtime(&dir, glue, wasm);
+
+        let runtime = load_embedded_runtime(&dir).expect("runtime factice chargeable");
+        assert_eq!(runtime.glue, glue);
+        assert_eq!(runtime.wasm_base64, STANDARD.encode(wasm));
+        assert_eq!(runtime.bytes, glue.len() + runtime.wasm_base64.len());
+        // La taille annoncée est exactement celle du HTML (base64 compris).
+        assert_eq!(runtime.bytes, taille_runtime_embarque(&dir).unwrap());
+        assert!(runtime.human_size().ends_with(" o"));
+    }
+
+    #[test]
+    fn test_load_embedded_runtime_renvoie_none_si_absent_ou_vide() {
+        let dir = repertoire_temporaire("absent");
+        assert!(load_embedded_runtime(&dir).is_none(), "répertoire vide");
+
+        // Glue vide : artefact inutilisable.
+        ecrire_faux_runtime(&dir, "   \n", b"\0asm");
+        assert!(load_embedded_runtime(&dir).is_none(), "glue vide");
+
+        // Binaire wasm vide.
+        ecrire_faux_runtime(&dir, "export const x = 1;", b"");
+        assert!(load_embedded_runtime(&dir).is_none(), "wasm vide");
+
+        // Fichier wasm manquant.
+        std::fs::remove_file(dir.join(RUNTIME_WASM_FILE)).unwrap();
+        assert!(load_embedded_runtime(&dir).is_none(), "wasm absent");
+    }
+
+    #[test]
+    fn test_echapper_fin_de_script_insensible_a_la_casse() {
+        assert_eq!(echapper_fin_de_script("a</script>b"), "a<\\/script>b");
+        assert_eq!(echapper_fin_de_script("a</SCRIPT>b"), "a<\\/script>b");
+        assert_eq!(echapper_fin_de_script("a</ScRiPt >b"), "a<\\/script >b");
+        assert_eq!(echapper_fin_de_script(" rien à échapper "), " rien à échapper ");
+    }
+
+    #[test]
+    fn test_export_html_with_runtime_injecte_avant_body() {
+        let dir = repertoire_temporaire("injecte");
+        let glue = "export function initSync() {}\n// piège : const s = \"</script>\";\n";
+        ecrire_faux_runtime(&dir, glue, b"\0asm\x01\0\0\0");
+        let jeu = jeu_reference();
+
+        let html = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Runtime",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+
+        assert!(html.contains("id=\"runtime-glue\""));
+        assert!(html.contains("id=\"runtime-wasm\" type=\"application/base64\""));
+        let injection = html.find("id=\"runtime-glue\"").unwrap();
+        let fin_body = html.rfind("</body>").unwrap();
+        assert!(injection < fin_body, "le runtime doit être injecté avant </body>");
+        // Le paquet est toujours présent avant le runtime.
+        assert!(html.find("id=\"embedded-package\"").unwrap() < injection);
+
+        // La glue piégée est échappée : exactement 4 fermetures de script
+        // (paquet, module, glue, wasm), aucune coupure prématurée.
+        assert_eq!(html.matches("</script>").count(), 4);
+        assert!(!html.contains("</SCRIPT>"));
+        assert!(html.contains("<\\/script>"), "la glue doit être échappée");
+
+        // Le runtime n'est pas haché : l'empreinte reste celle du paquet.
+        assert_eq!(
+            StandaloneExporter::export_fingerprint(&html),
+            StandaloneExporter::export_fingerprint(
+                &StandaloneExporter::export_html_with_runtime(
+                    &jeu,
+                    "Runtime",
+                    "Testeur",
+                    None
+                )
+            )
+        );
+    }
+
+    #[test]
+    fn test_export_html_with_runtime_absent_reste_jouable_en_donnees() {
+        let dir = repertoire_temporaire("vide");
+        let jeu = jeu_reference();
+
+        for html in [
+            StandaloneExporter::export_html_with_runtime(&jeu, "Sans", "Testeur", None),
+            StandaloneExporter::export_html_with_runtime(
+                &jeu,
+                "Sans",
+                "Testeur",
+                Some(dir.as_path()),
+            ),
+        ] {
+            assert!(!html.contains("id=\"runtime-glue\""));
+            assert!(!html.contains("id=\"runtime-wasm\""));
+            assert!(html.contains("id=\"embedded-package\""));
+            assert!(html.contains("id=\"game-canvas\""));
+            // L'import sibling (source de l'erreur CORS) a disparu du template :
+            // seul l'import de la Blob URL subsiste.
+            assert!(!html.contains("await import('./pkg"));
+            assert!(html.contains("URL.createObjectURL(new Blob"));
+            assert!(html.contains("putImageData"));
+            assert!(html.contains("wasm_last_error"));
+        }
+    }
+
+    #[test]
+    fn test_export_html_with_runtime_est_deterministe() {
+        let dir = repertoire_temporaire("deterministe");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        let jeu = jeu_reference();
+
+        let a = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Déterminisme",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+        let b = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Déterminisme",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+        assert_eq!(a, b, "même projet + mêmes artefacts = même fichier");
+        assert_eq!(
+            StandaloneExporter::export_fingerprint(&a),
+            StandaloneExporter::export_fingerprint(&b)
+        );
+    }
+
+    #[test]
+    fn test_serialisation_json_deterministe_trie_les_cles() {
+        // `HashMap` n'a pas d'ordre stable entre processus : le tri des clés
+        // est ce qui rend le HTML reproductible.
+        let mut table = HashMap::new();
+        table.insert("zeta".to_string(), 1u32);
+        table.insert("alpha".to_string(), 2u32);
+        table.insert("mike".to_string(), 3u32);
+        assert_eq!(
+            serialiser_json_deterministe(&table).unwrap(),
+            r#"{"alpha":2,"mike":3,"zeta":1}"#
+        );
+
+        // Les objets imbriqués dans des tableaux sont triés eux aussi.
+        let imbrique = serde_json::json!({"z": {"b": 1, "a": 2}, "a": [{"y": 1, "x": 2}]});
+        assert_eq!(
+            serialiser_json_deterministe(&imbrique).unwrap(),
+            r#"{"a":[{"x":2,"y":1}],"z":{"a":2,"b":1}}"#
+        );
+    }
+
+    #[test]
+    fn test_preflight_avertit_runtime_embarque_sans_bloquer() {
+        // 4 882 616 octets = glue + base64 d'environ 3,5 Mo de wasm.
+        let issue = avertissement_runtime(4_882_616);
+        assert_eq!(issue.severity, PreflightSeverity::Warning);
+        assert_eq!(issue.code, "runtime-embarque");
+        assert!(
+            issue.message.starts_with("runtime embarqué : 4,7 Mo"),
+            "message attendu avec la taille : {}",
+            issue.message
+        );
+
+        let dir = repertoire_temporaire("avertissement");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        assert_eq!(
+            taille_runtime_embarque(&dir),
+            Some(load_embedded_runtime(&dir).unwrap().bytes)
+        );
+        assert!(taille_runtime_embarque(&repertoire_temporaire("avertissement_vide")).is_none());
     }
 }

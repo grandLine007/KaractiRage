@@ -180,7 +180,7 @@
       </div>
       <div class="header-badges">
         <span class="badge badge-genre">{{GENRE}}</span>
-        <span class="badge badge-wasm">WASM • 60 FPS</span>
+        <span class="badge badge-wasm" id="badge-runtime">WASM • 60 FPS</span>
         <button id="btn-fullscreen" class="btn-fullscreen">⛶ PLEIN ÉCRAN</button>
       </div>
     </header>
@@ -213,8 +213,15 @@
 {{EMBEDDED_JSON}}
   </script>
 
+  <!-- Runtime embarqué : l'exportateur insère ici, juste avant la fermeture du
+       body, deux balises non exécutées — la glue wasm-bindgen en
+       type="text/plain" et le binaire en type="application/base64". Comme un
+       script module est différé, le module ci-dessous les trouve dans le DOM
+       même s'il apparaît avant elles dans le source. -->
   <script type="module">
-    // Données du jeu embarquées dans le HTML
+    // -----------------------------------------------------------------------
+    // Données du jeu embarquées dans le HTML (toujours présentes).
+    // -----------------------------------------------------------------------
     const rawData = document.getElementById('embedded-package').textContent;
     const gamePackage = JSON.parse(rawData);
     console.log("🎮 KaractiRage Standalone:", gamePackage.metadata.title, gamePackage);
@@ -225,6 +232,7 @@
     const startBtn = document.getElementById('start-btn');
     const btnFullscreen = document.getElementById('btn-fullscreen');
     const viewportBox = document.getElementById('viewport-box');
+    const runtimeBadge = document.getElementById('badge-runtime');
 
     let gameStarted = false;
 
@@ -237,7 +245,8 @@
       }
     });
 
-    // Démarrage du jeu
+    // Démarrage du jeu : le runtime tourne déjà, ce bouton lève simplement
+    // l'écran d'accueil pour laisser voir et piloter le canvas.
     function launchGame() {
       if (gameStarted) return;
       gameStarted = true;
@@ -248,10 +257,38 @@
     overlayStart.addEventListener('click', launchGame);
     startBtn.addEventListener('click', launchGame);
 
-    // Carte d'identification : ce que contient l'export, sans prétendre le jouer.
+    // -----------------------------------------------------------------------
+    // État du runtime, lisible par les outils (export-smoke.mjs) :
+    //   'running'      moteur embarqué démarré, frames rendues
+    //   'absent'       pas de runtime dans ce fichier (export de données)
+    //   'error:<msg>'  runtime présent mais démarrage impossible
+    // -----------------------------------------------------------------------
+    function setRuntimeState(state) {
+      window.__karacti_runtime = state;
+    }
+
+    // Carte d'identification ou d'erreur : ce que contient l'export, sans
+    // prétendre le jouer. Le texte est découpé pour ne pas sortir du canvas.
+    function wrapLines(text, maxWidth) {
+      const words = String(text).split(/\s+/).filter(Boolean);
+      const lines = [];
+      let current = '';
+      for (const word of words) {
+        const candidate = current ? current + ' ' + word : word;
+        if (current && ctx.measureText(candidate).width > maxWidth) {
+          lines.push(current);
+          current = word;
+        } else {
+          current = candidate;
+        }
+      }
+      if (current) lines.push(current);
+      return lines;
+    }
+
     function renderStaticCard(message) {
       ctx.fillStyle = "#0D1322";
-      ctx.fillRect(0, 0, 1200, 800);
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "#38BDF8";
       ctx.font = "bold 24px sans-serif";
       ctx.fillText(gamePackage.metadata.title, 80, 120);
@@ -264,52 +301,133 @@
       );
       ctx.fillStyle = "#F59E0B";
       ctx.font = "bold 15px sans-serif";
-      ctx.fillText(message, 80, 210);
+      let y = 210;
+      for (const line of wrapLines(message, canvas.width - 160)) {
+        if (y > canvas.height - 40) break;
+        ctx.fillText(line, 80, y);
+        y += 24;
+      }
     }
 
-    // Initialisation du runtime WASM avec fallback gracieux.
+    // -----------------------------------------------------------------------
+    // Runtime WASM embarqué.
     //
-    // Une page ouverte en `file://` ne peut pas importer de module voisin (CORS) :
-    // on ne tente donc l'import que si le HTML est servi en http(s) avec un dossier
-    // `pkg/` à côté. Sur `file://`, on affiche la carte d'identification — sans erreur
-    // console, sans requête réseau.
+    // Choix assumé : plus AUCUN repli `import('./pkg/engine_wasm.js')`.
+    //   • en file://, un import de module voisin est bloqué (CORS) : c'était
+    //     exactement la cause de la carte d'identification ;
+    //   • même servi en http(s), ce repli transformerait le « fichier unique »
+    //     en fichier dépendant d'un dossier pkg/ externe (donc de requêtes).
+    // Désormais : soit la glue + le binaire sont embarqués dans cette page (et
+    // le jeu tourne), soit on affiche une carte explicite. Zéro réseau.
+    // -----------------------------------------------------------------------
+    function base64ToBytes(b64) {
+      const clean = String(b64).replace(/\s+/g, '');
+      const binary = atob(clean);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+
     async function initRuntime() {
-      if (!location.protocol.startsWith("http")) {
+      const glueTag = document.getElementById('runtime-glue');
+      const wasmTag = document.getElementById('runtime-wasm');
+
+      if (!glueTag || !wasmTag) {
+        setRuntimeState('absent');
+        if (runtimeBadge) runtimeBadge.textContent = 'RUNTIME ABSENT';
         renderStaticCard(
-          "Export de données : le runtime jouable n'est pas embarqué dans ce fichier unique."
+          "Export de données : ce fichier ne contient pas le runtime jouable. " +
+          "Le moteur n'est pas chargé depuis un fichier ouvert en file:// " +
+          "(un import de ./pkg/engine_wasm.js y est bloqué par le navigateur). " +
+          "Réexportez le jeu avec les artefacts wasm (dist/pkg) pour obtenir un fichier unique jouable."
         );
         return;
       }
-      try {
-        const wasmModule = await import('./pkg/engine_wasm.js');
-        await wasmModule.default();
-        wasmModule.wasm_init_engine();
 
-        if (typeof wasmModule.wasm_import_game_package === 'function') {
-          wasmModule.wasm_import_game_package(JSON.stringify(gamePackage));
+      try {
+        const glue = glueTag.textContent || '';
+        const bytes = base64ToBytes(wasmTag.textContent || '');
+        if (bytes.length === 0 || glue.trim().length === 0) {
+          throw new Error('runtime embarqué vide ou corrompu');
+        }
+
+        // La glue est chargée depuis une Blob URL : aucun fichier voisin, donc
+        // aucun CORS, même en file://.
+        const blobUrl = URL.createObjectURL(new Blob([glue], { type: 'text/javascript' }));
+        let wasmModule;
+        try {
+          wasmModule = await import(blobUrl);
+        } finally {
+          URL.revokeObjectURL(blobUrl);
+        }
+
+        // Instanciation synchrone à partir des octets déjà en mémoire : aucun
+        // fetch de engine_wasm_bg.wasm.
+        wasmModule.initSync({ module: bytes });
+
+        if (!wasmModule.wasm_init_engine()) {
+          const detail = typeof wasmModule.wasm_last_error === 'function'
+            ? wasmModule.wasm_last_error()
+            : '';
+          throw new Error(detail || 'wasm_init_engine a renvoyé false');
         }
 
         const width = wasmModule.wasm_get_canvas_width();
         const height = wasmModule.wasm_get_canvas_height();
+        if (!width || !height) throw new Error('dimensions de canvas invalides');
+        canvas.width = width;
+        canvas.height = height;
 
+        wasmModule.wasm_import_game_package(JSON.stringify(gamePackage));
+
+        // WebAssembly.Memory exposé par le module (--target web n'exporte pas
+        // __wbindgen_memory). On relit .buffer à chaque frame : une croissance
+        // du tas wasm détache les anciens ArrayBuffer.
+        const memory = typeof wasmModule.wasm_memory === 'function'
+          ? wasmModule.wasm_memory()
+          : null;
+        if (!memory) throw new Error('mémoire wasm inaccessible');
+
+        // Recopie explicite du framebuffer wasm dans une ImageData, puis
+        // putImageData : seul chemin validé par le prototype.
+        const image = ctx.createImageData(width, height);
         let lastTime = performance.now();
-        function loop(now) {
+        let premiereFrame = true;
+        let framesSansFramebuffer = 0;
+
+        function drawFrame(now) {
           const dt = Math.min((now - lastTime) / 1000.0, 0.1);
           lastTime = now;
-
           wasmModule.wasm_render_frame(dt);
+
           const ptr = wasmModule.wasm_get_framebuffer_ptr();
           if (ptr !== 0) {
-            const pixels = new Uint8ClampedArray(wasmModule.wasm_memory ? wasmModule.wasm_memory().buffer : wasmModule.__wbindgen_memory().buffer, ptr, width * height * 4);
-            const img = new ImageData(pixels, width, height);
-            ctx.putImageData(img, 0, 0);
+            framesSansFramebuffer = 0;
+            const pixels = new Uint8ClampedArray(memory.buffer, ptr, width * height * 4);
+            image.data.set(pixels);
+            ctx.putImageData(image, 0, 0);
+            if (premiereFrame) {
+              premiereFrame = false;
+              setRuntimeState('running');
+              if (runtimeBadge) runtimeBadge.textContent = 'WASM • MOTEUR ACTIF';
+            }
+          } else {
+            framesSansFramebuffer++;
+            if (framesSansFramebuffer === 120) {
+              const message = 'le moteur a démarré mais ne produit aucun framebuffer après 120 frames';
+              setRuntimeState('error:' + message);
+              if (runtimeBadge) runtimeBadge.textContent = 'ERREUR RUNTIME';
+              renderStaticCard('Échec du rendu : ' + message + '.');
+            }
           }
-          requestAnimationFrame(loop);
+          requestAnimationFrame(drawFrame);
         }
-        requestAnimationFrame(loop);
-      } catch (err) {
-        console.info("Runtime WASM indisponible, affichage pré-calculé.");
-        renderStaticCard("Runtime WASM introuvable à côté de ce fichier.");
+        requestAnimationFrame(drawFrame);
+      } catch (erreur) {
+        const message = erreur && erreur.message ? erreur.message : String(erreur);
+        setRuntimeState('error:' + message);
+        if (runtimeBadge) runtimeBadge.textContent = 'ERREUR RUNTIME';
+        renderStaticCard("Échec du démarrage du moteur embarqué : " + message);
       }
     }
 

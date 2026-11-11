@@ -18,16 +18,28 @@
  *     contient au moins une entité ;
  *   - au moins un `<canvas>` est présent dans le document.
  *
+ * Avec `--expect-runtime`, le test va plus loin et vérifie que le jeu TOURNE :
+ *
+ *   - `window.__karacti_runtime` vaut `'running'` (attente jusqu'à 20 s) ;
+ *   - l'état est explicitement `'absent'` (pas de runtime embarqué) ou
+ *     `'error:<message>'` (échec de démarrage) sinon, avec un message clair ;
+ *   - le canvas contient des pixels : plus de 1000 pixels non noirs, ou plus
+ *     de 20 couleurs distinctes (échantillonnage `ctx.getImageData`).
+ *
  * Usage :
  *   node scripts/export-smoke.mjs <chemin-vers-html> [--json] [--timeout <ms>]
+ *                                 [--expect-runtime]
  *   node scripts/export-smoke.mjs --help
  *
  * Options :
  *   --json           sort un objet JSON machine (rien d'autre sur stdout) :
  *                    { ok, entities, consoleErrors, pageErrors,
- *                      networkRequests, problems }
+ *                      networkRequests, runtime, expectedRuntime,
+ *                      nonBlackPixels, canvasColors, problems }
  *   --timeout <ms>   délai global (défaut : 30 000 ms), pour ne jamais
  *                    suspendre un CI.
+ *   --expect-runtime exige que le runtime WASM embarqué démarre et rende des
+ *                    pixels (sinon échec propre, sans crash).
  *   -h, --help       affiche cette aide.
  *
  * Codes de sortie :
@@ -47,6 +59,15 @@ import { pathToFileURL } from 'node:url';
 /** Délai global par défaut : 30 s (borne dure, jamais de CI suspendu). */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+/** Attente maximale du démarrage du runtime embarqué (--expect-runtime). */
+const RUNTIME_TIMEOUT_MS = 20_000;
+
+/** Seuils de contenu du canvas : plus de 1000 pixels non noirs… */
+const PIXELS_MIN_NON_BLACK = 1000;
+
+/** …ou plus de 20 couleurs distinctes. */
+const COLORS_MIN_DISTINCT = 20;
+
 /** Schémas d'URL qui ne constituent PAS une requête réseau. */
 const LOCAL_PROTOCOLS = ['file:', 'data:', 'blob:', 'about:', 'chrome:', 'devtools:'];
 
@@ -57,9 +78,12 @@ en file:// dans un Chrome headless et vérifie qu'il tourne hors ligne, sans
 erreur console, avec un paquet embarqué valide et un canvas.
 
 Options :
-  --json           sortie JSON machine { ok, entities, consoleErrors,
-                   pageErrors, networkRequests, problems }
+  --json           sortie JSON machine { ok, entities, consoleErrors, pageErrors,
+                   networkRequests, runtime, expectedRuntime, nonBlackPixels,
+                   canvasColors, problems }
   --timeout <ms>   délai global en millisecondes (défaut : ${DEFAULT_TIMEOUT_MS})
+  --expect-runtime exige que le runtime WASM embarqué démarre (runtime=running)
+                   et rende des pixels dans le canvas
   -h, --help       affiche cette aide
 
 Codes de sortie :
@@ -69,6 +93,7 @@ Codes de sortie :
 
 Exemples :
   npm run export:smoke -- ./jeu-standalone.html
+  node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime
   node scripts/export-smoke.mjs ./jeu-standalone.html --json
 `;
 
@@ -76,11 +101,19 @@ const argv = process.argv.slice(2);
 
 /** Analyse très simple des arguments (aucune lib de CLI : script autonome). */
 function parseArgs(args) {
-  const opts = { file: null, json: false, help: false, timeoutMs: DEFAULT_TIMEOUT_MS };
+  const opts = {
+    file: null,
+    json: false,
+    help: false,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    expectRuntime: false,
+  };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json') {
       opts.json = true;
+    } else if (arg === '--expect-runtime') {
+      opts.expectRuntime = true;
     } else if (arg === '-h' || arg === '--help') {
       opts.help = true;
     } else if (arg === '--timeout') {
@@ -115,15 +148,10 @@ function isLocalUrl(url) {
 }
 
 /** Sortie d'erreur d'usage / d'environnement : message clair + exit 2. */
-function usageError(message, json) {
+function usageError(message, json, expectRuntime = false) {
   if (json) {
-    process.stdout.write(
-      JSON.stringify(
-        { ok: false, entities: null, consoleErrors: [], pageErrors: [], networkRequests: [], problems: [message] },
-        null,
-        2,
-      ) + '\n',
-    );
+    const payload = { ...emptyResult(), expectedRuntime: expectRuntime, problems: [message] };
+    process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
   } else {
     console.error(`[export-smoke] ${message}`);
     console.error('[export-smoke] Voir : node scripts/export-smoke.mjs --help');
@@ -134,9 +162,24 @@ function usageError(message, json) {
 /**
  * Résultat vide : structure unique utilisée pour toutes les sorties JSON,
  * y compris en cas d'échec précoce.
+ *
+ * `runtime` vaut `'running' | 'absent' | 'error'` (ou `null` si l'état n'a pas
+ * pu être observé), `nonBlackPixels`/`canvasColors` restent `null` quand le
+ * canvas n'a pas été échantillonné (sans `--expect-runtime`).
  */
 function emptyResult() {
-  return { ok: false, entities: null, consoleErrors: [], pageErrors: [], networkRequests: [], problems: [] };
+  return {
+    ok: false,
+    entities: null,
+    consoleErrors: [],
+    pageErrors: [],
+    networkRequests: [],
+    runtime: null,
+    expectedRuntime: false,
+    nonBlackPixels: null,
+    canvasColors: null,
+    problems: [],
+  };
 }
 
 /** Lance Chrome (canal stable) avec repli sur le Chromium fourni par Playwright. */
@@ -158,9 +201,101 @@ async function launchBrowser() {
   throw new Error(`aucun navigateur Chrome/Chromium n'a pu être lancé (${failures.join(' | ')})`);
 }
 
+/**
+ * Lit `window.__karacti_runtime` sans échouer si la page n'est pas prête.
+ * Renvoie la chaîne brute (`'running'`, `'absent'`, `'error:…'`) ou `null`.
+ */
+async function readRuntimeState(page) {
+  return await page.evaluate(() =>
+    typeof window.__karacti_runtime === 'string' ? window.__karacti_runtime : null,
+  );
+}
+
+/**
+ * Attend que le runtime embarqué atteigne un état terminal.
+ *
+ * Renvoie `{ state: 'running' | 'absent' | 'error' | 'pending', raw, detail }`.
+ * `pending` = ni démarré ni en erreur à l'échéance (timeout propre, pas un
+ * crash) : le message d'échec du test dira lequel des deux manque.
+ */
+async function waitForRuntime(page, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let raw = null;
+  let detail = null;
+  for (;;) {
+    try {
+      raw = await readRuntimeState(page);
+      detail = null;
+    } catch (err) {
+      // La page peut se fermer ou se figer : on ne masque pas la cause.
+      raw = null;
+      detail = String(err?.message ?? err).split('\n')[0];
+    }
+    if (raw === 'running') return { state: 'running', raw, detail: null };
+    if (raw && raw.startsWith('error')) return { state: 'error', raw, detail: null };
+    if (raw === 'absent') return { state: 'absent', raw, detail: null };
+    if (Date.now() >= deadline) return { state: 'pending', raw, detail };
+    await page.waitForTimeout(100);
+  }
+}
+
+/**
+ * Échantillonne le canvas : nombre de pixels non noirs et de couleurs
+ * distinctes, via `ctx.getImageData` (jamais via le framebuffer wasm, pour
+ * prouver que le rendu est bien recopié dans le canvas).
+ */
+async function sampleCanvas(page) {
+  return await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return { ok: false, reason: 'aucun canvas dans le document' };
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { ok: false, reason: 'contexte 2D indisponible' };
+    const width = canvas.width;
+    const height = canvas.height;
+    if (!width || !height) return { ok: false, reason: `canvas de taille nulle (${width}x${height})` };
+    let data;
+    try {
+      data = ctx.getImageData(0, 0, width, height).data;
+    } catch (err) {
+      return { ok: false, reason: `getImageData impossible : ${String(err?.message ?? err)}` };
+    }
+    let nonBlack = 0;
+    const colors = new Set();
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      if (r !== 0 || g !== 0 || b !== 0) nonBlack++;
+      // Plafond volontaire : au-delà du seuil, le nombre exact de couleurs
+      // n'apporte plus rien et coûterait de la mémoire.
+      if (colors.size <= 64) colors.add((r << 16) | (g << 8) | b);
+    }
+    return { ok: true, width, height, nonBlack, colors: colors.size };
+  });
+}
+
+/**
+ * Attend que le canvas ait du contenu (> 1000 pixels non noirs OU > 20
+ * couleurs distinctes). Le rendu peut arriver quelques frames après
+ * `running` : on ré-échantillonne jusqu'à l'échéance.
+ */
+async function waitForCanvasContent(page, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let last = { ok: false, reason: 'canvas jamais échantillonné' };
+  for (;;) {
+    last = await sampleCanvas(page);
+    if (last.ok && (last.nonBlack > PIXELS_MIN_NON_BLACK || last.colors > COLORS_MIN_DISTINCT)) {
+      return last;
+    }
+    if (Date.now() >= deadline) return last;
+    await page.waitForTimeout(100);
+  }
+}
+
 /** Exécute le test de fumée. Renvoie l'objet résultat + un code de sortie. */
-async function runSmoke(filePath, timeoutMs) {
+async function runSmoke(filePath, timeoutMs, expectRuntime = false) {
   const result = emptyResult();
+  result.expectedRuntime = expectRuntime;
   const url = pathToFileURL(filePath).href;
   const startedAt = Date.now();
   let browser = null;
@@ -267,6 +402,64 @@ async function runSmoke(filePath, timeoutMs) {
           result.problems.push('aucun <canvas> dans le document : le jeu ne peut pas s\'afficher');
         }
       }
+
+      // --- Runtime WASM embarqué (uniquement avec --expect-runtime) -----------
+      // Sans l'option, le comportement historique est conservé : on ne juge pas
+      // le démarrage du moteur, on se contente de constater son état.
+      if (expectRuntime) {
+        const budgetRuntime = Math.max(
+          2_000,
+          Math.min(RUNTIME_TIMEOUT_MS, timeoutMs - (Date.now() - startedAt) - 1_500),
+        );
+        const observation = await waitForRuntime(page, budgetRuntime);
+        result.runtime = observation.state === 'pending' ? null : observation.state;
+        if (observation.state !== 'running') {
+          let constat;
+          if (observation.state === 'absent') {
+            constat =
+              'état observé : absent — ce HTML ne contient aucun runtime embarqué (export sans dist/pkg ?)';
+          } else if (observation.state === 'error') {
+            constat = `le moteur a échoué : ${observation.raw}`;
+          } else if (observation.raw) {
+            constat = `état observé : ${observation.raw}`;
+          } else {
+            constat = `window.__karacti_runtime jamais défini après ${budgetRuntime} ms`;
+          }
+          result.problems.push(`runtime attendu "running" mais ${constat}`);
+        } else {
+          const budgetPixels = Math.max(
+            2_000,
+            Math.min(5_000, timeoutMs - (Date.now() - startedAt) - 1_000),
+          );
+          const sampling = await waitForCanvasContent(page, budgetPixels);
+          if (!sampling.ok) {
+            result.problems.push(`canvas non échantillonnable : ${sampling.reason}`);
+          } else {
+            result.nonBlackPixels = sampling.nonBlack;
+            result.canvasColors = sampling.colors;
+            if (
+              !(
+                sampling.nonBlack > PIXELS_MIN_NON_BLACK ||
+                sampling.colors > COLORS_MIN_DISTINCT
+              )
+            ) {
+              result.problems.push(
+                `runtime running mais canvas quasi vide : ${sampling.nonBlack} pixel(s) non noir(s), ` +
+                  `${sampling.colors} couleur(s) distincte(s) ` +
+                  `(seuil : > ${PIXELS_MIN_NON_BLACK} pixels ou > ${COLORS_MIN_DISTINCT} couleurs)`,
+              );
+            }
+          }
+        }
+      } else {
+        // Constat sans attente : renseigne le JSON, jamais bloquant.
+        try {
+          const raw = await readRuntimeState(page);
+          result.runtime = raw === null ? null : raw.startsWith('error') ? 'error' : raw;
+        } catch {
+          result.runtime = null;
+        }
+      }
     }
 
     // --- Contrôles runtime : erreurs console, exceptions, réseau ----------------
@@ -289,16 +482,27 @@ async function runSmoke(filePath, timeoutMs) {
 /** Rapport humain : une ligne « OK » compacte, ou la liste des problèmes. */
 function printReport(filePath, result) {
   const errors = result.consoleErrors.length + result.pageErrors.length;
+  // Le détail runtime n'apparaît qu'en mode --expect-runtime : sans l'option,
+  // la sortie humaine historique reste strictement inchangée.
+  const runtimeSuffix = result.expectedRuntime ? `, runtime=${result.runtime ?? 'indéfini'}` : '';
+  const pixelsSuffix =
+    result.expectedRuntime && result.nonBlackPixels !== null
+      ? `, ${result.nonBlackPixels} pixels non noirs (${result.canvasColors} couleurs)`
+      : '';
   if (result.ok) {
     const plural = result.entities === 1 ? '' : 's';
-    console.log(`[export-smoke] OK — ${result.entities} entité${plural}, 0 erreur, 0 requête réseau`);
+    console.log(
+      `[export-smoke] OK — ${result.entities} entité${plural}, 0 erreur, 0 requête réseau` +
+        `${runtimeSuffix}${pixelsSuffix}`,
+    );
     return;
   }
   console.error(`[export-smoke] ÉCHEC — ${result.problems.length} problème(s) sur ${filePath}`);
   for (const problem of result.problems) console.error(`[export-smoke]   • ${problem}`);
   console.error(
     `[export-smoke] résumé : ${result.entities ?? 0} entité(s), ` +
-      `${errors} erreur(s) console/page, ${result.networkRequests.length} requête(s) réseau non-file://`,
+      `${errors} erreur(s) console/page, ${result.networkRequests.length} requête(s) réseau non-file://` +
+      runtimeSuffix,
   );
 }
 
@@ -307,26 +511,27 @@ const parsed = parseArgs(argv);
 const JSON_OUTPUT = Boolean(parsed.json);
 
 async function main() {
-  if (parsed.error) usageError(parsed.error, JSON_OUTPUT);
+  const expectRuntime = Boolean(parsed.expectRuntime);
+  if (parsed.error) usageError(parsed.error, JSON_OUTPUT, expectRuntime);
   if (parsed.help) {
     // L'aide documente l'usage ; code 2 (aucun test exécuté).
     process.stdout.write(USAGE);
     process.exit(2);
   }
-  if (!parsed.file) usageError('chemin du fichier HTML manquant', JSON_OUTPUT);
+  if (!parsed.file) usageError('chemin du fichier HTML manquant', JSON_OUTPUT, expectRuntime);
 
   const filePath = path.resolve(process.cwd(), parsed.file);
-  if (!existsSync(filePath)) usageError(`fichier introuvable : ${filePath}`, JSON_OUTPUT);
-  if (!statSync(filePath).isFile()) usageError(`ce n'est pas un fichier : ${filePath}`, JSON_OUTPUT);
+  if (!existsSync(filePath)) usageError(`fichier introuvable : ${filePath}`, JSON_OUTPUT, expectRuntime);
+  if (!statSync(filePath).isFile()) usageError(`ce n'est pas un fichier : ${filePath}`, JSON_OUTPUT, expectRuntime);
 
   let result;
   try {
-    result = await runSmoke(filePath, parsed.timeoutMs);
+    result = await runSmoke(filePath, parsed.timeoutMs, expectRuntime);
   } catch (err) {
     // Erreur d'environnement (navigateur indisponible, sandbox…) : exit 2.
     const message = String(err?.message ?? err).split('\n')[0];
     if (JSON_OUTPUT) {
-      const failed = { ...emptyResult(), problems: [message] };
+      const failed = { ...emptyResult(), expectedRuntime: expectRuntime, problems: [message] };
       process.stdout.write(JSON.stringify(failed, null, 2) + '\n');
     } else {
       console.error(`[export-smoke] impossible d'exécuter le test : ${message}`);
