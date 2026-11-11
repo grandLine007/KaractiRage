@@ -17,6 +17,7 @@ import { KvlGraphEditor } from './components/KvlGraphEditor';
 import { PxlArtWorkspace } from './components/PxlArtWorkspace';
 import { VectorWorkspace } from './components/VectorWorkspace';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { SaveSlotsPanel, SAVE_SLOTS_PANEL_ID } from './components/SaveSlotsPanel';
 import { useStudioState } from './hooks/useStudioState';
 import {
   launchArchetypeGame,
@@ -41,9 +42,10 @@ import {
   getEngineStatus,
   getAudioSettings,
   setAudioSettings,
+  getExportPreflight,
   type StudioEntitySummary,
 } from './services/engineBridge';
-import { Check, X, HelpCircle, Volume2, VolumeX } from 'lucide-react';
+import { Check, X, HelpCircle, Volume2, VolumeX, Save } from 'lucide-react';
 import type { ProjectEntry } from './services/projectBridge';
 import { getAiEditContext, undoAiEdit, type AiApplyReport } from './services/aiEditBridge';
 import { prewarm3D } from './render3d/prewarm';
@@ -63,6 +65,8 @@ export function App() {
   const [pendingAiPatch, setPendingAiPatch] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  // Panneau « Sauvegardes » (non modal, ancré au-dessus du pied de page).
+  const [isSavePanelOpen, setIsSavePanelOpen] = useState(false);
   // Réglages audio (persistés hors partie) : lus au démarrage, écrits à chaque changement.
   const [audio, setAudioState] = useState({ volume: 0.5, muted: false });
   // Édition IA inline : barre ancrée (pas de modale) + dernière transaction annulable.
@@ -93,6 +97,7 @@ export function App() {
   }, [editorState]);
 
   const toastIdRef = useRef(0);
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
   const pushToast = useCallback((message: string, kind: Toast['kind'] = 'info') => {
     const id = ++toastIdRef.current;
     setToasts(prev => [...prev, { id, message, kind }]);
@@ -101,6 +106,26 @@ export function App() {
   const dismissToast = useCallback((id: number) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
+
+  // Panneau Sauvegardes : fermeture + retour du focus au bouton d'ouverture (Échap).
+  const closeSavePanel = useCallback((restoreFocus = false) => {
+    setIsSavePanelOpen(false);
+    if (restoreFocus) saveButtonRef.current?.focus();
+  }, []);
+
+  // Clic extérieur (hors bouton et hors panneau) : fermeture propre, sans voler le focus.
+  useEffect(() => {
+    if (!isSavePanelOpen) return;
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (saveButtonRef.current?.contains(target)) return;
+      if (document.getElementById(SAVE_SLOTS_PANEL_ID)?.contains(target)) return;
+      closeSavePanel(false);
+    }
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [isSavePanelOpen, closeSavePanel]);
 
   // --- Édition IA inline (barre ancrée) -------------------------------------
   const openAiEdit = useCallback((field: string | null = null) => {
@@ -201,6 +226,36 @@ export function App() {
     setCurrentMode(mode);
   }, []);
 
+  // --- Sauvegarde / reprise de partie (panneau « Sauvegardes ») -------------
+
+  const handleGameSaved = useCallback((slot: number, message: string) => {
+    pushToast(
+      message || `Échec de la sauvegarde du slot ${slot + 1}.`,
+      message ? 'success' : 'error'
+    );
+  }, [pushToast]);
+
+  const handleGameLoaded = useCallback((slot: number, ok: boolean) => {
+    if (!ok) {
+      pushToast(`Slot ${slot + 1} vide ou illisible.`, 'error');
+      return;
+    }
+    setIsSavePanelOpen(false);
+    refresh();
+    pushToast(`Slot ${slot + 1} chargé : niveau et variables restaurés.`, 'success');
+  }, [refresh, pushToast]);
+
+  const handleGameResumed = useCallback((ok: boolean) => {
+    if (!ok) {
+      pushToast('Aucune sauvegarde récente à reprendre.', 'error');
+      return;
+    }
+    setIsSavePanelOpen(false);
+    applyMode('play');
+    refresh();
+    pushToast('Dernière sauvegarde reprise — retour en mode jeu.', 'success');
+  }, [applyMode, refresh, pushToast]);
+
   // Validation ou Rollback du Patch IA
   const handleAcceptAi = useCallback(() => {
     void acceptAiPatch();
@@ -227,7 +282,14 @@ export function App() {
         return;
       }
 
-      // 0. Édition IA inline : Ctrl/⌘ K ouvre la barre ancrée (jamais une modale).
+      // 0. Panneau Sauvegardes : Échap le referme en priorité et rend le focus au bouton.
+      if (e.key === 'Escape' && isSavePanelOpen) {
+        e.preventDefault();
+        closeSavePanel(true);
+        return;
+      }
+
+      // 0bis. Édition IA inline : Ctrl/⌘ K ouvre la barre ancrée (jamais une modale).
       if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault();
         if (isAiBarOpen) closeAiEdit();
@@ -235,7 +297,7 @@ export function App() {
         return;
       }
 
-      // 0bis. Annulation de la dernière édition IA (une intention = une transaction).
+      // 0ter. Annulation de la dernière édition IA (une intention = une transaction).
       if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey && lastAiTransaction) {
         e.preventDefault();
         const transaction = lastAiTransaction;
@@ -317,7 +379,7 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentMode, pendingAiPatch, handleAcceptAi, handleRejectAi, refresh, applyMode, isAiBarOpen, openAiEdit, closeAiEdit, lastAiTransaction, pushToast]);
+  }, [currentMode, pendingAiPatch, handleAcceptAi, handleRejectAi, refresh, applyMode, isAiBarOpen, openAiEdit, closeAiEdit, lastAiTransaction, pushToast, isSavePanelOpen, closeSavePanel]);
 
   // --- Handlers d'édition connectés au moteur natif -------------------------
 
@@ -464,7 +526,19 @@ export function App() {
   };
 
   // Export Standalone HTML5 Universel (Commandement 9)
-  const handleExportStandalone = () => {
+  // Export précédé du **pré-vol** : un jeu incomplet est refusé avec la liste exacte,
+  // jamais exporté en silence.
+  const handleExportStandalone = async () => {
+    const preflight = await getExportPreflight();
+    if (!preflight.ok) {
+      pushToast(`Export refusé — ${preflight.summary || 'pré-vol en échec'}`, 'error');
+      setMetrics(prev => ({ ...prev, status: `⛔ Export refusé : ${preflight.summary}` }));
+      return;
+    }
+    const warnings = preflight.issues.filter(issue => issue.severity === 'warning');
+    if (warnings.length > 0) {
+      pushToast(`${warnings.length} avertissement(s) : ${warnings[0].message}`, 'info');
+    }
     void downloadStandaloneGame("MonJeuKaractiRage", "Créateur KaractiRage");
     setMetrics(prev => ({
       ...prev,
@@ -480,7 +554,7 @@ export function App() {
         onModeChange={applyMode}
         onOpenHub={() => setIsHubOpen(true)}
         onOpenAiAssistant={() => setIsAiModalOpen(true)}
-        onExportStandalone={handleExportStandalone}
+        onExportStandalone={() => { void handleExportStandalone(); }}
       />
 
       {/* 2. Bandeau Flottant de Révision IA (Boucle de Confiance & Rollback en 1 clic) */}
@@ -599,12 +673,37 @@ export function App() {
       </div>
 
       {/* 4. Barre de Statut Inférieure */}
-      <footer className="flex items-center justify-between gap-3 px-4 py-1.5 bg-[#0d0819] border-t border-[#2d1b4e] text-xs text-[#94a3b8] shrink-0">
+      <footer className="relative flex items-center justify-between gap-3 px-4 py-1.5 bg-[#0d0819] border-t border-[#2d1b4e] text-xs text-[#94a3b8] shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <span className="w-2 h-2 rounded-full bg-[#34d399] animate-pulse shrink-0" />
           <span className="font-medium text-[#cbd5e1] truncate">{metrics.status}</span>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          <button
+            ref={saveButtonRef}
+            onClick={() => setIsSavePanelOpen(prev => !prev)}
+            className={`flex items-center justify-center w-6 h-6 rounded-[var(--radius-4)] transition ${
+              isSavePanelOpen
+                ? 'text-[#a855f7] bg-[#1e1338]'
+                : 'text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338]'
+            }`}
+            title={isSavePanelOpen ? 'Fermer les sauvegardes (Échap)' : 'Sauvegardes de partie'}
+            aria-label="Sauvegarde"
+            aria-haspopup="dialog"
+            aria-expanded={isSavePanelOpen}
+          >
+            <Save size={13} aria-hidden="true" />
+          </button>
+          {/* Panneau Sauvegardes (non modal) : juste après le bouton pour l'ordre de tabulation. */}
+          {isSavePanelOpen && (
+            <SaveSlotsPanel
+              isOpen={isSavePanelOpen}
+              onClose={() => closeSavePanel(true)}
+              onSaved={handleGameSaved}
+              onLoaded={handleGameLoaded}
+              onResumed={handleGameResumed}
+            />
+          )}
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => applyAudio(audio.volume, !audio.muted)}
