@@ -64,6 +64,30 @@ C'était la cause exacte de l'export non jouable (AC3).
 remettre le test de fumée au vert avec un vrai jeu animé — c'est la promesse
 « partager un jeu » qui se ferme.
 
+## 3quater. Vague 5 — AC3 fermé (runtime embarqué)
+
+| Agent | Tâche | Résultat |
+|---|---|---|
+| λ « runtime-embarqué » | Inliner la glue + le wasm dans le HTML exporté | **export jouable en file://** : 4,7 Mo, `runtime=running`, 960000 px non noirs, 0 erreur, 0 réseau ; deux exports identiques (sha256) |
+| meneur | Parité de l'export alternatif + message du script wasm | `to_standalone_html` embarque aussi le runtime |
+
+**Bug découvert au passage** : l'ordre des `HashMap` rendait deux exports du même projet
+**différents**. Corrigé par une sérialisation JSON à clés triées — condition nécessaire
+pour que l'empreinte et la reproductibilité aient un sens.
+
+**Vague 5b en cours** : entrées clavier dans le template (`wasm_on_key_down/up`), sans
+lesquelles le jeu s'affiche mais ne se joue pas.
+
+## 3quinquies. Vague 5b — entrées (AC3 complet)
+
+| Agent | Tâche | Résultat |
+|---|---|---|
+| μ « entrées wasm » | `wasm_on_key_down/up`, `wasm_on_mouse_move`, `KEY_MAP` dans le template, `--expect-input` | **preuve de jouabilité** : 5778 px modifiés par `ArrowRight`, centroïde du joueur +351 px |
+| meneur | relâchement des touches sur `blur`/`visibilitychange` | évite une touche collée après alt-tab |
+
+**AC3 fermé.** État final : export 4,86 Mo, `runtime=running`, 0 réseau, 0 erreur,
+déplacement au clavier prouvé, exports identiques au bit près.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |

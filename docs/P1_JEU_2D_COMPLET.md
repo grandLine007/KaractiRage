@@ -126,12 +126,15 @@ Un jeu qui possède **les six briques suivantes**, chacune vérifiable :
 > **Reste bloqué** : le **runtime jouable embarqué**. Le WASM se charge (glue + binaire
 > inlinés par blobs testés avec succès) mais `NativeEngine::init` panique sur
 > `std::env::temp_dir` : il n'existe pas d'initialisation wasm sans système de fichiers.
-> AC3 est donc **partiellement atteint** : auto-porteur et hors ligne, mais le jeu
-> affiche une carte d'identification. Le runtime embarqué est reporté en **P6**.
+> **AC3 est désormais complet (v0.3.3)** : `ProjectRegistry::home_dir()` retombait sur
+> `std::env::temp_dir()`, qui panique sous wasm32 ; corrigé, le runtime démarre sans
+> système de fichiers, la glue et le binaire sont inlinés, et le joueur se déplace au
+> clavier dans le fichier exporté.
 
 - [x] Export HTML5 autonome : un seul fichier, **0 requête réseau, 0 erreur console**
-      (vérifié par `export-smoke.mjs`) — mais **non jouable** tant que le runtime wasm
-      n'a pas d'init sans disque (P6).
+      (vérifié par `export-smoke.mjs`).
+- [x] **Export jouable** (v0.3.3) : runtime WASM embarqué, entrées clavier, déplacement
+      du joueur prouvé dans le fichier exporté (`--expect-input`).
 - [x] Export du package de projet réimportable (inchangé, couvert par les tests existants).
 - [x] Pré-vol : refus d'export si un script KVL ou un asset référencé manque.
 - [x] Empreinte d'export stable (même projet → même contenu).
