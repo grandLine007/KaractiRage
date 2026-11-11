@@ -231,6 +231,27 @@ export async function getEditorState(): Promise<StudioEditorState> {
   });
 }
 
+export interface AudioSettings {
+  volume: number;
+  muted: boolean;
+}
+
+/** Réglages audio persistants (hors sauvegarde de partie). */
+export async function getAudioSettings(): Promise<AudioSettings> {
+  return await safeInvokeJson<AudioSettings>('engine_audio_settings', undefined, {
+    volume: 0.5,
+    muted: false,
+  });
+}
+
+export async function setAudioSettings(volume: number, muted: boolean): Promise<AudioSettings> {
+  return await safeInvokeJson<AudioSettings>(
+    'engine_set_audio_settings',
+    { volume, muted },
+    { volume, muted },
+  );
+}
+
 export async function selectEntity(id: number): Promise<boolean> {
   return await invoke('engine_select_entity', { id });
 }

@@ -1258,6 +1258,8 @@ impl GameState {
             new_state.levels = levels;
             new_state.level_index = index;
             new_state.project_id = project_id;
+            // Même périphérique audio et mêmes réglages après un hot-reload.
+            std::mem::swap(&mut new_state.audio, &mut self.audio);
             new_state.screen = crate::screens::GameScreen::initial(
                 new_state.ui_screens.iter().any(|s| s.kind == crate::subsystems::UiScreenKind::Menu),
                 new_state.kvl_context.get_var("menu_active") == Some(&Value::Bool(true)),
@@ -1296,7 +1298,11 @@ impl GameState {
         fresh.inventory = inventory;
         fresh.screen = crate::screens::GameScreen::Playing;
         fresh.editor.mode = EditorMode::Play;
+        // L'audio n'est pas clonable : on garde le même périphérique et les mêmes réglages
+        // (volume/mute) à travers le changement de niveau.
+        std::mem::swap(&mut fresh.audio, &mut self.audio);
         *self = fresh;
+        self.audio.play(SoundType::QuestSuccess);
         self.set_status(format!("Niveau {} / {}", next_index + 1, self.levels.len()));
         true
     }
@@ -1950,6 +1956,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             fresh.level_index = 0;
             fresh.project_id = project_id;
             fresh.editor.mode = EditorMode::Play;
+            std::mem::swap(&mut fresh.audio, &mut self.audio);
             *self = fresh;
         }
         self.screen = crate::screens::GameScreen::Playing;

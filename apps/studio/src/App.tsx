@@ -39,9 +39,11 @@ import {
   spawn3dPreset,
   setEditorMode,
   getEngineStatus,
+  getAudioSettings,
+  setAudioSettings,
   type StudioEntitySummary,
 } from './services/engineBridge';
-import { Check, X, HelpCircle } from 'lucide-react';
+import { Check, X, HelpCircle, Volume2, VolumeX } from 'lucide-react';
 import type { ProjectEntry } from './services/projectBridge';
 import { getAiEditContext, undoAiEdit, type AiApplyReport } from './services/aiEditBridge';
 import { prewarm3D } from './render3d/prewarm';
@@ -61,6 +63,8 @@ export function App() {
   const [pendingAiPatch, setPendingAiPatch] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  // Réglages audio (persistés hors partie) : lus au démarrage, écrits à chaque changement.
+  const [audio, setAudioState] = useState({ volume: 0.5, muted: false });
   // Édition IA inline : barre ancrée (pas de modale) + dernière transaction annulable.
   const [isAiBarOpen, setIsAiBarOpen] = useState(false);
   const [aiFieldHint, setAiFieldHint] = useState<string | null>(null);
@@ -111,6 +115,19 @@ export function App() {
   const closeAiEdit = useCallback(() => {
     setIsAiBarOpen(false);
     setAiFieldHint(null);
+  }, []);
+
+  useEffect(() => {
+    void getAudioSettings().then(settings => {
+      setAudioState({ volume: settings.volume, muted: settings.muted });
+    });
+  }, []);
+
+  const applyAudio = useCallback((volume: number, muted: boolean) => {
+    setAudioState({ volume, muted });
+    void setAudioSettings(volume, muted).then(settings => {
+      setAudioState({ volume: settings.volume, muted: settings.muted });
+    });
   }, []);
 
   const handleAiApplied = useCallback((report: AiApplyReport) => {
@@ -588,6 +605,31 @@ export function App() {
           <span className="font-medium text-[#cbd5e1] truncate">{metrics.status}</span>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => applyAudio(audio.volume, !audio.muted)}
+              className="flex items-center justify-center w-6 h-6 rounded-[var(--radius-4)] text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338] transition"
+              title={audio.muted ? 'Réactiver le son' : 'Couper le son'}
+              aria-label={audio.muted ? 'Réactiver le son' : 'Couper le son'}
+              aria-pressed={audio.muted}
+            >
+              {audio.muted ? <VolumeX size={13} aria-hidden="true" /> : <Volume2 size={13} aria-hidden="true" />}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={Math.round(audio.volume * 100)}
+              onChange={event => applyAudio(Number(event.target.value) / 100, audio.muted)}
+              className="w-20 h-1 accent-[#a855f7] cursor-pointer"
+              aria-label="Volume général"
+              title={`Volume ${Math.round(audio.volume * 100)} %`}
+            />
+            <span className="text-[10px] text-[#94a3b8] w-7 tabular-nums" aria-hidden="true">
+              {Math.round(audio.volume * 100)}%
+            </span>
+          </div>
           <button
             onClick={() => setIsHelpOpen(true)}
             className="flex items-center gap-1 px-2 py-1 rounded-md text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338] transition"

@@ -92,10 +92,20 @@ Un jeu qui possède **les six briques suivantes**, chacune vérifiable :
 - [x] **Défaite** couverte (mort → `game_over`), au niveau de la machine à états.
 
 ### P1.4 — Audio et réglages
-- [ ] Effets sonores existants branchés sur les événements réels (dégâts, collecte, porte,
-      victoire, défaite).
-- [ ] Volume et mute réglables dans l'interface, persistants.
-- [ ] *Hors P1* : fichiers audio, musique externe, bus, spatialisation → **P2 (Kira)**.
+
+> **Avancement (11/11/2026)** : livré. Les effets couvraient déjà collecte (hausse de
+> score), dégâts, porte, mort et victoire ; `PlaySound:<id>` côté KVL était déjà consommé
+> par le moteur. Ajouté : son de **passage de niveau**, préservation du périphérique audio
+> et des réglages à travers `next_level`/`start_game`/`reload` (auparavant chaque niveau
+> recréait l'`AudioEngine` et **perdait volume et mute**), et contrôle volume/mute dans le
+> pied de page.
+> Le gate d'audit a attrapé une régression de contraste de ma part (`#64748b`, token
+> décoratif, utilisé pour le pourcentage) : corrigé avant commit.
+
+- [x] Effets sonores branchés sur les événements réels (dégâts, collecte, porte,
+      passage de niveau, victoire, défaite).
+- [x] Volume et mute réglables dans l'interface, persistants (`engine_audio_settings`).
+- [x] *Hors P1* : fichiers audio, musique externe, bus, spatialisation → **P2 (Kira)**.
 
 ### P1.5 — Export et pré-vol minimal
 - [ ] Export HTML5 autonome : un seul fichier, sans réseau, sans erreur console.
