@@ -352,7 +352,12 @@ impl KaractiProject {
 
     /// Génère le package standalone HTML5 souverain autonome du projet.
     pub fn to_standalone_html(&self) -> String {
-        self.to_game_package().generate_standalone_html()
+        // Même contrat que `StandaloneExporter::export_html` : si les artefacts wasm
+        // sont présents (`dist/pkg` ou `$KARACTI_RUNTIME_DIR`), l'export est jouable.
+        let runtime =
+            crate::exporter::load_embedded_runtime(&crate::exporter::default_runtime_dir());
+        self.to_game_package()
+            .generate_standalone_html_with_runtime(runtime.as_ref())
     }
 
     /// Exporte le projet selon une cible d'export (consomme `export_target`).

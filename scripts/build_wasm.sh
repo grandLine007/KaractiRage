@@ -14,4 +14,5 @@ wasm-bindgen target/wasm32-unknown-unknown/release/engine_wasm.wasm \
   --target web
 
 echo "✅ Terminé : dist/pkg/engine_wasm.js (+ engine_wasm_bg.wasm)."
-echo "   Placez le dossier pkg/ à côté de votre HTML exporté (le template importe ./pkg/engine_wasm.js)."
+echo "   Les exports HTML embarquent ces artefacts automatiquement (dist/pkg)."
+echo "   Pour un binaire packagé hors dépôt, définissez KARACTI_RUNTIME_DIR=chemin/vers/pkg."
