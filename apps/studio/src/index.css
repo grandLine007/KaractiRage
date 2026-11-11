@@ -127,34 +127,46 @@ h1, h2, h3, h4, h5, h6 {
   text-transform: uppercase;
 }
 
-button {
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  color: inherit;
-  font-family: inherit;
-  transition: all 0.15s ease-in-out;
-}
+/* Resets de contrôles natifs — IMPÉRATIVEMENT dans `@layer base` (correctif couches).
+   Cause : Tailwind v4 émet notre CSS d'auteur APRÈS `@layer utilities`, donc une règle
+   non layerée est « hors couche » et gagne sur TOUT utilitaire (`bg-*`, `text-*`,
+   `border-*`, y compris les variantes `hover:`/`disabled:`), quelle que soit sa
+   spécificité — une déclaration hors couche bat toute déclaration d'une couche.
+   Ici, base est déclarée AVANT utilities par `@import "tailwindcss"` : le rendu par
+   défaut reste identique (fond transparent, bordure nulle, cursor pointer, focus
+   visible) mais les utilitaires reprennent la main dès qu'ils sont présents.
+   À conserver : `cursor`, `transition`, `:active` et le reset de bordure servent à
+   neutraliser l'apparence native des boutons macOS/Chrome. */
+@layer base {
+  button {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    transition: all 0.15s ease-in-out;
+  }
 
-button:active {
-  transform: scale(0.98);
-}
+  button:active {
+    transform: scale(0.98);
+  }
 
-input, textarea, select {
-  font-family: inherit;
-  color: inherit;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.15s ease;
-}
+  input, textarea, select {
+    font-family: inherit;
+    color: inherit;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
 
-input:focus, textarea:focus, select:focus {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.4);
+  input:focus, textarea:focus, select:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.4);
+  }
 }
 
 .animate-spin {

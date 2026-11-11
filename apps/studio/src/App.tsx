@@ -567,7 +567,7 @@ export function App() {
           <div className="flex items-center gap-1.5 ml-2">
             <button
               onClick={handleAcceptAi}
-              className="flex items-center gap-1 px-3 py-1 bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold rounded-full transition shadow"
+              className="flex items-center gap-1 px-3 py-1 bg-[#047857] hover:bg-[#065f46] text-white text-xs font-bold rounded-full transition shadow"
               title="Valider définitivement (Entrée)"
             >
               <Check size={13} />

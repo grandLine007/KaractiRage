@@ -472,7 +472,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
             <p className="text-xs text-[#94a3b8] mb-4">{loadError}</p>
             <button
               onClick={retryEngine}
-              className="px-4 py-2 bg-[#f43f5e] text-white rounded font-medium text-xs hover:bg-[#e11d48]"
+              className="px-4 py-2 bg-[#e11d48] text-white rounded font-medium text-xs hover:bg-[#be123c]"
             >
               Réessayer
             </button>

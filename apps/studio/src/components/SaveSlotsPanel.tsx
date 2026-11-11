@@ -133,8 +133,7 @@ export const SaveSlotsPanel: React.FC<SaveSlotsPanelProps> = ({
           disabled={busy}
           aria-busy={isResuming}
           title="Reprendre la sauvegarde la plus récente"
-          className="flex h-7 w-full items-center justify-center gap-2 rounded-[var(--radius-6)] text-xs font-bold transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-          style={{ backgroundColor: 'var(--accent-primary)', color: 'var(--bg-deep)' }}
+          className="flex h-7 w-full items-center justify-center gap-2 rounded-[var(--radius-6)] bg-[var(--accent-primary)] text-[var(--bg-deep)] text-xs font-bold transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isResuming
             ? <Loader2 size={13} className="animate-spin" aria-hidden="true" />
@@ -163,12 +162,7 @@ export const SaveSlotsPanel: React.FC<SaveSlotsPanelProps> = ({
                     aria-busy={saving}
                     aria-label={`Sauvegarder dans le slot ${slot + 1}`}
                     title={`Sauvegarder la partie dans le slot ${slot + 1}`}
-                    className="flex h-6 flex-1 items-center justify-center gap-1 rounded-[var(--radius-4)] text-xs font-semibold transition hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-50"
-                    style={{
-                      backgroundColor: 'var(--bg-panel)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-main)',
-                    }}
+                    className="flex h-6 flex-1 items-center justify-center gap-1 rounded-[var(--radius-4)] border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-main)] text-xs font-semibold transition hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {saving
                       ? <Loader2 size={12} className="animate-spin" aria-hidden="true" />
@@ -182,12 +176,7 @@ export const SaveSlotsPanel: React.FC<SaveSlotsPanelProps> = ({
                     aria-busy={loading}
                     aria-label={`Charger le slot ${slot + 1}`}
                     title={`Charger la partie du slot ${slot + 1}`}
-                    className="flex h-6 flex-1 items-center justify-center gap-1 rounded-[var(--radius-4)] text-xs font-semibold transition hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-50"
-                    style={{
-                      backgroundColor: 'var(--bg-panel)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-main)',
-                    }}
+                    className="flex h-6 flex-1 items-center justify-center gap-1 rounded-[var(--radius-4)] border border-[var(--border-subtle)] bg-[var(--bg-panel)] text-[var(--text-main)] text-xs font-semibold transition hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {loading
                       ? <Loader2 size={12} className="animate-spin" aria-hidden="true" />
