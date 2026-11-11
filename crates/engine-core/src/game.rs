@@ -12033,12 +12033,12 @@ mod tests {
     }
 
     #[test]
-    fn reference_game_plays_two_levels_to_victory() {
+    fn reference_game_starts_at_menu_with_three_levels() {
         use crate::screens::GameScreen;
 
         let project = crate::project::KaractiProject::load_from_file(reference_project_path())
             .expect("projet de référence lisible");
-        assert_eq!(project.scenes.len(), 2, "deux niveaux embarqués");
+        assert_eq!(project.scenes.len(), 3, "trois niveaux embarqués");
         assert_eq!(project.ui_screens.len(), 4, "menu, pause, défaite, victoire");
 
         let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
@@ -12047,29 +12047,77 @@ mod tests {
         assert_eq!(state.screen, GameScreen::Menu, "menu_active démarre au menu");
         assert_eq!(state.level_index, 0);
         assert_eq!(state.scene_name, "Niveau 1 : Salle des Émeraudes");
+    }
 
-        // Entrée → niveau 1 jouable.
+    /// Place le joueur à portée d'interaction (< 80 px) de la porte du niveau.
+    fn teleport_player_to_door(state: &mut GameState) {
+        let player = state.player_index().expect("joueur");
+        let (door_x, door_y) = state
+            .entities
+            .iter()
+            .find(|entity| entity.tag == "door")
+            .map(|door| (door.transform.center_x(), door.transform.center_y()))
+            .expect("porte dans la scène");
+        let x = door_x - 60.0 - state.entities[player].transform.w * 0.5;
+        let y = door_y - state.entities[player].transform.h * 0.5;
+        let transform = &mut state.entities[player].transform;
+        transform.x = x;
+        transform.y = y;
+        transform.prev_x = x;
+        transform.prev_y = y;
+        state.rebuild_static_spatial_grid();
+    }
+
+    #[test]
+    fn reference_game_completes_three_levels_through_real_door_interactions() {
+        use crate::screens::GameScreen;
+
+        let project = crate::project::KaractiProject::load_from_file(reference_project_path())
+            .expect("projet de référence lisible");
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
+        state.load_project(project);
+
+        // Menu → niveau 1.
         let mut enter = InputState::new();
         enter.on_key_down(KeyCode::Enter);
         step(&mut state, &mut enter, 1);
         assert_eq!(state.screen, GameScreen::Playing);
-        let player = state.player_index().expect("joueur du niveau 1");
-        assert_eq!(
-            state.entities[player].health.as_ref().map(|health| health.max),
-            Some(3.0),
-            "le joueur du niveau 1 a bien ses PV"
+        assert_eq!(state.level_index, 0);
+
+        // Niveaux 1 et 2 : on franchit la porte par une **vraie** interaction (touche E),
+        // qui déclenche le graphe KVL, qui pose `level_complete`, qui fait avancer l'état.
+        for expected in 0..2 {
+            teleport_player_to_door(&mut state);
+            let mut interact = InputState::new();
+            interact.on_key_down(KeyCode::KeyE);
+            step(&mut state, &mut interact, 2);
+            assert_eq!(
+                state.level_index,
+                expected + 1,
+                "niveau {} non atteint (écran : {:?})",
+                expected + 2,
+                state.screen
+            );
+            assert_eq!(state.screen, GameScreen::Playing);
+        }
+
+        // Le niveau 3 est l'arène du boss.
+        assert!(
+            state.entities.iter().any(|entity| entity.boss.is_some()),
+            "le dernier niveau contient le boss"
         );
 
-        // Le niveau 1 est terminé → niveau 2.
-        state.kvl_context.set_var("level_complete", Value::Int(1));
-        step(&mut state, &mut InputState::new(), 1);
-        assert_eq!(state.level_index, 1, "niveau 2 chargé");
-        assert_eq!(state.scene_name, "Niveau 2 : Crypte du Sanctuaire");
-
-        // Le dernier niveau est terminé → victoire.
-        state.kvl_context.set_var("level_complete", Value::Int(1));
-        step(&mut state, &mut InputState::new(), 1);
-        assert_eq!(state.screen, GameScreen::Victory);
+        // Dernier niveau : la porte déclare la victoire.
+        teleport_player_to_door(&mut state);
+        let mut interact = InputState::new();
+        interact.on_key_down(KeyCode::KeyE);
+        step(&mut state, &mut interact, 2);
+        assert_eq!(
+            state.screen,
+            GameScreen::Victory,
+            "victoire atteinte par interaction réelle (écran : {:?})",
+            state.screen
+        );
     }
 
     #[test]

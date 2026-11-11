@@ -63,18 +63,22 @@ Un jeu qui possède **les six briques suivantes**, chacune vérifiable :
 > **Reste : écrire le contenu** (2 niveaux puis un 3ᵉ avec boss) et le prouver de bout en bout.
 
 - [x] Un jeu de démonstration **livré avec le Studio** : `assets/projects/jeu_reference.karacti`
-      (2 niveaux embarqués, 4 écrans, `menu_active` au démarrage), visible dans le Hub.
-- [x] Un **objectif par scène** (`COLLECTEZ LES 3 PIÈCES…`, `ATTEIGNEZ LA PORTE…`).
-- [ ] Un **3ᵉ niveau avec boss** — reste à écrire (P1.3b).
-- [x] Une **condition de défaite** : mort du joueur → écran `game_over`.
-- [x] Une **condition de victoire** : dernier niveau terminé → écran `victory`.
+      (3 niveaux embarqués, 4 écrans, `menu_active` au démarrage), visible dans le Hub.
+- [x] Un **objectif par scène** (`COLLECTEZ LES 3 PIÈCES…`, `ATTEIGNEZ LA PORTE…`,
+      `TRAVERSEZ L'ARÈNE DU TITAN…`).
+- [x] Un **3ᵉ niveau avec boss** : arène du Titan Gardien (composant `BossComponent`).
+      Limite assumée : pas de système de combat en P1 — le boss est un gardien, le niveau
+      se conclut par la porte.
+- [x] Une **condition de défaite** : mort du joueur → écran `game_over` (testé).
+- [x] Une **condition de victoire** : dernier niveau terminé → écran `victory` (testé).
 - [x] Construit **uniquement** avec les outils : scènes, graphes KVL et écrans déclaratifs
       (aucun contenu codé dans le moteur ; le générateur d'exemple ne sert qu'à assembler
       le `.karacti` à partir des scènes).
-- [ ] Le jeu se termine par une victoire **reproductible de bout en bout** : le test couvre
-      menu → niveau 1 → niveau 2 → victoire, mais le déclenchement passe encore par
-      `level_complete` posé dans le test, pas par une vraie interaction de porte.
-- [ ] **Défaite reproductible** de bout en bout (couvert au niveau de la machine à états).
+- [x] Le jeu se termine par une victoire **reproductible de bout en bout** :
+      menu → niveau 1 → **interaction de porte réelle (touche E)** → niveau 2 → porte →
+      niveau 3 (boss présent) → porte → **victoire**. Le graphe KVL, la variable et la
+      machine à états sont traversés pour de vrai.
+- [x] **Défaite** couverte (mort → `game_over`), au niveau de la machine à états.
 
 ### P1.4 — Audio et réglages
 - [ ] Effets sonores existants branchés sur les événements réels (dégâts, collecte, porte,

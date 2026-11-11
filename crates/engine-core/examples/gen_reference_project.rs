@@ -37,6 +37,7 @@ fn screen(id: &str, kind: UiScreenKind, title: &str, lines: &[&str]) -> UiScreen
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let level_1 = SceneData::load_from_file("assets/scenes/ref_niveau_1.scene.json")?;
     let level_2 = SceneData::load_from_file("assets/scenes/ref_niveau_2.scene.json")?;
+    let level_3 = SceneData::load_from_file("assets/scenes/ref_niveau_3.scene.json")?;
 
     let mut variables = HashMap::new();
     variables.insert("score".to_string(), kvl_core::Value::Int(0));
@@ -49,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         author: "KaractiRage".to_string(),
         version: "0.3.0".to_string(),
         created_at: "2026-11-10T00:00:00Z".to_string(),
-        description: "Jeu de référence P1 : deux niveaux, menu, pause, défaite et victoire.".to_string(),
+        description: "Jeu de référence P1 : trois niveaux dont une arène de boss, menu, pause, défaite et victoire.".to_string(),
         genre_primary: GameGenre::Adventure,
         genres_secondary: Vec::new(),
         dimension: Some("2D".to_string()),
@@ -94,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings,
         recipe: None,
         scene: level_1.clone(),
-        scenes: vec![level_1, level_2],
+        scenes: vec![level_1, level_2, level_3],
         kvl_graphs: HashMap::new(),
         kvl_variables: variables,
         ui_screens,
@@ -102,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         export_target: None,
         camera3d: None,
         lights: Vec::new(),
-        levels: vec!["niveau_1".to_string(), "niveau_2".to_string()],
+        levels: vec!["niveau_1".to_string(), "niveau_2".to_string(), "niveau_3".to_string()],
     };
 
     project.save_to_file("assets/projects/jeu_reference.karacti")?;
