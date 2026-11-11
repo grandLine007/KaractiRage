@@ -971,6 +971,22 @@ fn engine_plugin_catalog(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().plugin_catalog()
 }
 
+/// Pré-vol d'export : liste les blocages (script/asset manquant) et les budgets.
+#[tauri::command]
+fn engine_export_preflight(engine: tauri::State<'_, SharedEngine>) -> String {
+    engine.lock().unwrap().export_preflight_json()
+}
+
+/// Export HTML5 validé par le pré-vol (chaîne vide + message en cas de refus).
+#[tauri::command]
+fn engine_export_standalone_html_checked(
+    title: String,
+    author: String,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    engine.lock().unwrap().export_standalone_html_checked(&title, &author)
+}
+
 #[tauri::command]
 fn engine_export_standalone_html(title: String, author: String, engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().export_standalone_html(&title, &author)
@@ -1632,6 +1648,8 @@ pub fn run() {
             engine_kvl_rename_graph,
             engine_kvl_delete_graph,
             engine_export_standalone_html,
+            engine_export_standalone_html_checked,
+            engine_export_preflight,
             engine_move_player_to,
             engine_get_player_pos,
             engine_interact,

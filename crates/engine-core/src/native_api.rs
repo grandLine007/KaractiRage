@@ -851,6 +851,41 @@ impl NativeEngine {
 
     // --- Export / import ------------------------------------------------------
 
+    /// Pré-vol d'export sérialisé : `{ ok, issues[], summary }`.
+    ///
+    /// Ne modifie rien : sert au Studio à refuser un export avant de l'écrire.
+    pub fn export_preflight_json(&self) -> String {
+        use crate::exporter::PreflightSeverity;
+
+        let report = crate::exporter::StandaloneExporter::preflight(&self.game);
+        let issues: Vec<serde_json::Value> = report
+            .issues
+            .iter()
+            .map(|issue| {
+                serde_json::json!({
+                    "severity": match issue.severity {
+                        PreflightSeverity::Blocking => "blocking",
+                        PreflightSeverity::Warning => "warning",
+                    },
+                    "code": issue.code,
+                    "message": issue.message,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "ok": report.ok,
+            "issues": issues,
+            "summary": report.summary(),
+        })
+        .to_string()
+    }
+
+    /// Export HTML5 **validé** par le pré-vol ; renvoie le résumé des blocages sinon.
+    pub fn export_standalone_html_checked(&self, title: &str, author: &str) -> Result<String, String> {
+        crate::exporter::StandaloneExporter::export_html_checked(&self.game, title, author)
+            .map_err(|report| report.summary())
+    }
+
     pub fn export_standalone_html(&self, title: &str, author: &str) -> String {
         crate::exporter::StandaloneExporter::export_html(&self.game, title, author)
     }

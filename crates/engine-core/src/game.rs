@@ -281,6 +281,28 @@ pub struct GameState {
     pub export_root: std::path::PathBuf,
 }
 
+/// Lit le contenu d'un script KVL référencé par une entité.
+///
+/// Ordre : chemin courant, puis `../../` (tests lancés depuis le crate), puis les
+/// scripts de démonstration embarqués dans le binaire.
+fn resolve_script_content(script_path: &str) -> Option<String> {
+    if let Ok(content) = fs::read_to_string(script_path) {
+        return Some(content);
+    }
+    if let Ok(content) = fs::read_to_string(format!("../../{}", script_path)) {
+        return Some(content);
+    }
+    if script_path.contains("coin_pickup") {
+        Some(include_str!("../../../assets/scripts/coin_pickup.kvl.json").to_string())
+    } else if script_path.contains("door_interaction") {
+        Some(include_str!("../../../assets/scripts/door_interaction.kvl.json").to_string())
+    } else if script_path.contains("guard_alert") {
+        Some(include_str!("../../../assets/scripts/guard_alert.kvl.json").to_string())
+    } else {
+        None
+    }
+}
+
 impl GameState {
     /// Notifie l'utilisateur via la barre d'état (toast temporaire Dark Atelier avec auto-fade après 4s)
     pub fn set_status(&mut self, msg: impl Into<String>) {
@@ -1014,21 +1036,6 @@ impl GameState {
         let mut kvl_context = ExecutionContext::new();
         kvl_context.set_var("score", Value::Int(0));
 
-        let resolve_script_content = |script_path: &str| -> Option<String> {
-            if let Ok(c) = fs::read_to_string(script_path) {
-                Some(c)
-            } else if let Ok(c) = fs::read_to_string(format!("../../{}", script_path)) {
-                Some(c)
-            } else if script_path.contains("coin_pickup") {
-                Some(include_str!("../../../assets/scripts/coin_pickup.kvl.json").to_string())
-            } else if script_path.contains("door_interaction") {
-                Some(include_str!("../../../assets/scripts/door_interaction.kvl.json").to_string())
-            } else if script_path.contains("guard_alert") {
-                Some(include_str!("../../../assets/scripts/guard_alert.kvl.json").to_string())
-            } else {
-                None
-            }
-        };
 
         // Chargement data-driven universel des graphes KVL pour TOUTES les entités scriptées
         for ent in &entities {
@@ -1243,6 +1250,31 @@ impl GameState {
         }
     }
 
+    /// Charge les scripts KVL référencés par des entités (graphes manquants résolus sur
+    /// disque) et initialise leurs variables.
+    ///
+    /// Sans cela, un projet ouvert via `load_project` n'aurait aucun script dans
+    /// `kvl_graphs` : la porte ne s'ouvrirait pas et l'export serait vide de logique.
+    pub fn import_scripts(&mut self, script_paths: &[String]) {
+        for path in script_paths {
+            if path.is_empty() || self.kvl_graphs.contains_key(path) {
+                continue;
+            }
+            let Some(content) = resolve_script_content(path) else {
+                continue;
+            };
+            let Ok(graph) = Graph::from_json(&content) else {
+                continue;
+            };
+            for (key, variable) in &graph.variables {
+                if self.kvl_context.get_var(key).is_none() {
+                    self.kvl_context.set_var(key.clone(), variable.initial_value.clone());
+                }
+            }
+            self.kvl_graphs.insert(path.clone(), graph);
+        }
+    }
+
     pub fn reload(&mut self) {
         // Les écrans et les niveaux viennent du projet, pas de la scène : on les conserve.
         let screens = self.ui_screens.clone();
@@ -1394,6 +1426,13 @@ impl GameState {
         if self.kvl_context.get_var("score").is_none() {
             self.kvl_context.set_var("score", Value::Int(0));
         }
+        // Les graphes ne sont pas dans le projet : on les résout depuis les entités.
+        let script_paths: Vec<String> = self
+            .entities
+            .iter()
+            .filter_map(|entity| entity.script.as_ref().map(|script| script.script_path.clone()))
+            .collect();
+        self.import_scripts(&script_paths);
 
         self.rebuild_static_spatial_grid();
         self.editor.selected = crate::editor::SelectedEntity::None;
@@ -9267,16 +9306,27 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
 
         match fmt {
             0 => {
-                // 1. Export Web HTML5 Standalone (fichier autonome unique)
-                let html_content = crate::exporter::StandaloneExporter::export_html(self, &title, &author);
-                let out_path = export_root.join("standalone_game.html");
-                if std::fs::write(&out_path, &html_content).is_ok() {
-                    self.set_status(&format!(
-                        "✨ Jeu exporté en HTML5 autonome dans '{}' (Prêt à jouer) !",
-                        out_path.display()
-                    ));
-                } else {
-                    self.set_status(&format!("✨ Export HTML5 prêt en mémoire : {} Ko !", html_content.len() / 1024));
+                // 1. Export Web HTML5 (données + carte d'identification ; le runtime
+                //    WASM embarqué n'est pas encore disponible — voir P6).
+                match crate::exporter::StandaloneExporter::export_html_checked(self, &title, &author) {
+                    Ok(html_content) => {
+                        let out_path = export_root.join("standalone_game.html");
+                        if std::fs::write(&out_path, &html_content).is_ok() {
+                            self.set_status(&format!(
+                                "💾 Export HTML5 (données) écrit dans '{}' — runtime jouable requis (P6).",
+                                out_path.display()
+                            ));
+                        } else {
+                            self.set_status(&format!(
+                                "💾 Export HTML5 prêt en mémoire : {} Ko !",
+                                html_content.len() / 1024
+                            ));
+                        }
+                    }
+                    Err(report) => {
+                        self.set_status(format!("⛔ Export refusé : {}", report.summary()));
+                        self.audio.play(SoundType::AccessDenied);
+                    }
                 }
             }
             1 => {
@@ -12175,6 +12225,39 @@ mod tests {
     }
 
     #[test]
+    fn reference_project_export_embeds_scripts_and_passes_preflight() {
+        use crate::exporter::StandaloneExporter;
+
+        let project = crate::project::KaractiProject::load_from_file(reference_project_path())
+            .expect("projet de référence");
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de base");
+        state.load_project(project);
+
+        assert!(
+            state.kvl_graphs.len() >= 2,
+            "les scripts référencés par les entités doivent être chargés au projet : {:?}",
+            state.kvl_graphs.keys().collect::<Vec<_>>()
+        );
+
+        let report = StandaloneExporter::preflight(&state);
+        assert!(report.ok, "pré-vol : {}", report.summary());
+
+        let html = StandaloneExporter::export_html_checked(&state, "Export Test", "Auteur")
+            .expect("export autorisé");
+        assert!(html.contains("embedded-package"), "paquet embarqué présent");
+        assert!(html.contains("ref_porte_niveau"), "le graphe de porte est embarqué");
+        assert!(
+            !html.contains("fonts.googleapis.com") && !html.contains("fonts.gstatic.com"),
+            "aucune police externe (export hors ligne)"
+        );
+        assert_eq!(
+            StandaloneExporter::export_fingerprint(&html),
+            StandaloneExporter::export_fingerprint(&html),
+            "l'empreinte est stable"
+        );
+    }
+
+    #[test]
     fn test_data_driven_objective_hierarchy() {        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
             .expect("Scène chargée");
 
@@ -14409,7 +14492,7 @@ mod tests {
         state.update(0.016, &input_enter);
 
         assert!(!state.editor.show_export_modal, "La modale doit se fermer après confirmation d'export");
-        assert!(state.status_message.contains("exporté"), "Un message de confirmation doit s'afficher");
+        assert!(state.status_message.contains("Export HTML5"), "Un message de confirmation doit s'afficher");
         // Le fichier a été écrit dans le répertoire temporaire, pas dans le dépôt.
         assert!(
             export_root.join("standalone_game.html").is_file(),

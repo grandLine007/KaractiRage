@@ -5,9 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{TITLE}} — Jeu Autonome KaractiRage</title>
   <meta name="description" content="{{TITLE}} par {{AUTHOR}} — Moteur KaractiRage 2D & Logique KVL 60 FPS">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Outfit:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <!-- Aucune ressource externe : le jeu doit fonctionner hors ligne (K4 / AC3).
+       Les polices sont des piles système, pas des requêtes réseau. -->
   <style>
     :root {
       --bg-deep: #060913;
@@ -23,7 +22,7 @@
     body {
       background: var(--bg-deep);
       color: var(--text-main);
-      font-family: 'Outfit', -apple-system, sans-serif;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
@@ -50,7 +49,7 @@
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
     }
     .title-group h1 {
-      font-family: 'Space Grotesk', sans-serif;
+      font-family: ui-rounded, 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
       font-size: 20px;
       font-weight: 700;
       letter-spacing: 0.5px;
@@ -67,7 +66,7 @@
       align-items: center;
     }
     .badge {
-      font-family: 'Fira Code', monospace;
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
       font-size: 11px;
       font-weight: 600;
       padding: 4px 10px;
@@ -85,7 +84,7 @@
       padding: 6px 14px;
       border-radius: 4px;
       cursor: pointer;
-      font-family: 'Space Grotesk', sans-serif;
+      font-family: ui-rounded, 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
       font-size: 12px;
       font-weight: 600;
       transition: all 0.15s ease;
@@ -139,7 +138,7 @@
     .start-btn {
       background: #0284C7;
       color: #FFF;
-      font-family: 'Space Grotesk', sans-serif;
+      font-family: ui-rounded, 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
       font-size: 16px;
       font-weight: 700;
       padding: 12px 28px;
@@ -166,7 +165,7 @@
       color: #E2E8F0;
       padding: 2px 6px;
       border-radius: 3px;
-      font-family: 'Fira Code', monospace;
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
       font-size: 11px;
       border: 1px solid #334155;
     }
@@ -249,8 +248,38 @@
     overlayStart.addEventListener('click', launchGame);
     startBtn.addEventListener('click', launchGame);
 
-    // Initialisation du runtime WASM avec fallback gracieux
+    // Carte d'identification : ce que contient l'export, sans prétendre le jouer.
+    function renderStaticCard(message) {
+      ctx.fillStyle = "#0D1322";
+      ctx.fillRect(0, 0, 1200, 800);
+      ctx.fillStyle = "#38BDF8";
+      ctx.font = "bold 24px sans-serif";
+      ctx.fillText(gamePackage.metadata.title, 80, 120);
+      ctx.fillStyle = "#94A3B8";
+      ctx.font = "16px sans-serif";
+      ctx.fillText(
+        "Entités : " + gamePackage.entities.length + " | Graphes KVL : " + Object.keys(gamePackage.kvl_graphs).length,
+        80,
+        160
+      );
+      ctx.fillStyle = "#F59E0B";
+      ctx.font = "bold 15px sans-serif";
+      ctx.fillText(message, 80, 210);
+    }
+
+    // Initialisation du runtime WASM avec fallback gracieux.
+    //
+    // Une page ouverte en `file://` ne peut pas importer de module voisin (CORS) :
+    // on ne tente donc l'import que si le HTML est servi en http(s) avec un dossier
+    // `pkg/` à côté. Sur `file://`, on affiche la carte d'identification — sans erreur
+    // console, sans requête réseau.
     async function initRuntime() {
+      if (!location.protocol.startsWith("http")) {
+        renderStaticCard(
+          "Export de données : le runtime jouable n'est pas embarqué dans ce fichier unique."
+        );
+        return;
+      }
       try {
         const wasmModule = await import('./pkg/engine_wasm.js');
         await wasmModule.default();
@@ -279,15 +308,8 @@
         }
         requestAnimationFrame(loop);
       } catch (err) {
-        console.info("Info: Runtime WASM externe non détecté, affichage pré-calculé.");
-        ctx.fillStyle = "#0D1322";
-        ctx.fillRect(0, 0, 1200, 800);
-        ctx.fillStyle = "#38BDF8";
-        ctx.font = "bold 24px sans-serif";
-        ctx.fillText(gamePackage.metadata.title, 80, 120);
-        ctx.fillStyle = "#94A3B8";
-        ctx.font = "16px sans-serif";
-        ctx.fillText("Entités : " + gamePackage.entities.length + " | Graphes KVL : " + Object.keys(gamePackage.kvl_graphs).length, 80, 160);
+        console.info("Runtime WASM indisponible, affichage pré-calculé.");
+        renderStaticCard("Runtime WASM introuvable à côté de ce fichier.");
       }
     }
 

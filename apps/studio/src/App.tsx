@@ -468,7 +468,7 @@ export function App() {
     void downloadStandaloneGame("MonJeuKaractiRage", "Créateur KaractiRage");
     setMetrics(prev => ({
       ...prev,
-      status: "📦 Fichier HTML5 Standalone téléchargé avec succès ! Jouable sans serveur ni compte."
+      status: "📦 Export HTML5 téléchargé (données + écrans). Runtime jouable embarqué : prévu en P6."
     }));
   };
 

@@ -108,10 +108,35 @@ Un jeu qui possède **les six briques suivantes**, chacune vérifiable :
 - [x] *Hors P1* : fichiers audio, musique externe, bus, spatialisation → **P2 (Kira)**.
 
 ### P1.5 — Export et pré-vol minimal
-- [ ] Export HTML5 autonome : un seul fichier, sans réseau, sans erreur console.
-- [ ] Export du package de projet réimportable.
-- [ ] Pré-vol : refus d'export si un script KVL ou un asset référencé manque.
-- [ ] Empreinte d'export stable (même projet → même contenu, hors date).
+
+> **Avancement (11/11/2026)** — livré, avec une **découverte majeure** sur AC3.
+>
+> Ce qui est livré : pré-vol bloquant (`StandaloneExporter::preflight`, 5 tests),
+> `export_html_checked`, empreinte stable (`export_fingerprint`), CLI
+> `export_game`, test de fumée navigateur (`apps/studio/scripts/export-smoke.mjs`),
+> commandes Tauri `engine_export_preflight` / `engine_export_standalone_html_checked`.
+>
+> **Ce que l'audit a révélé** : l'export HTML5 n'était **pas jouable**. Le template
+> importait `./pkg/engine_wasm.js` (interdit en `file://` : CORS) et retombait sur une
+> carte statique, tout en affichant « Prêt à jouer ». Deux corrections : plus aucune
+> police externe (Google Fonts supprimés), import du runtime conditionné au `http(s)`,
+> message honnête. Le test de fumée sur l'export réel du jeu de référence passe
+> désormais : **9 entités, 0 erreur console, 0 requête réseau**.
+>
+> **Reste bloqué** : le **runtime jouable embarqué**. Le WASM se charge (glue + binaire
+> inlinés par blobs testés avec succès) mais `NativeEngine::init` panique sur
+> `std::env::temp_dir` : il n'existe pas d'initialisation wasm sans système de fichiers.
+> AC3 est donc **partiellement atteint** : auto-porteur et hors ligne, mais le jeu
+> affiche une carte d'identification. Le runtime embarqué est reporté en **P6**.
+
+- [x] Export HTML5 autonome : un seul fichier, **0 requête réseau, 0 erreur console**
+      (vérifié par `export-smoke.mjs`) — mais **non jouable** tant que le runtime wasm
+      n'a pas d'init sans disque (P6).
+- [x] Export du package de projet réimportable (inchangé, couvert par les tests existants).
+- [x] Pré-vol : refus d'export si un script KVL ou un asset référencé manque.
+- [x] Empreinte d'export stable (même projet → même contenu).
+- [x] Les scripts référencés par les entités sont chargés à l'ouverture d'un projet
+      (auparavant `kvl_graphs` restait vide : l'export perdait toute la logique).
 
 ### P1.6 — Preuves et documentation
 - [ ] Test de bout en bout : un replay déterministe traverse menu → 3 scènes → victoire.
