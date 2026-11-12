@@ -369,8 +369,14 @@ export function App() {
       // 0bis. Édition IA inline : Ctrl/⌘ K ouvre la barre ancrée (jamais une modale).
       if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault();
-        if (isAiBarOpen) closeAiEdit(true);
-        else openAiEdit(null);
+        if (isAiBarOpen) {
+          closeAiEdit(true);
+          return;
+        }
+        // La barre n'est rendue qu'en mode Édition : sans ce basculement, Ctrl+K
+        // ouvrait l'état sans rien afficher quand on était en mode Jouer.
+        if (currentMode !== 'edit') applyMode('edit');
+        openAiEdit(null);
         return;
       }
 

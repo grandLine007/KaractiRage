@@ -83,8 +83,11 @@ impl RecipeGenres {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GameDimension {
+    #[serde(alias = "2D", alias = "2d")]
     TwoD,
+    #[serde(alias = "2.5D", alias = "2.5d", alias = "2_5d")]
     TwoAndHalfD,
+    #[serde(alias = "3D", alias = "3d")]
     ThreeD,
 }
 
@@ -899,6 +902,20 @@ mod tests {
         assert!(rep_boss.is_valid);
         let (s_boss, _) = RecipeProjectGenerator::generate(&r_boss);
         assert!(s_boss.entities.iter().any(|e| e.tag == "boss"), "La scène de boss doit contenir une entité boss");
+    }
+
+    #[test]
+    fn dimension_accepte_les_etiquettes_du_studio() {
+        // Le Studio envoie historiquement « 2D » / « 2.5D » / « 3D » : le moteur doit
+        // accepter ces étiquettes autant que les variantes canoniques (snake_case).
+        let deux_d: GameDimension = serde_json::from_str("\"2D\"").expect("2D accepté");
+        let deux_d_canon: GameDimension = serde_json::from_str("\"two_d\"").expect("two_d accepté");
+        let demi: GameDimension = serde_json::from_str("\"2.5D\"").expect("2.5D accepté");
+        let trois_d: GameDimension = serde_json::from_str("\"3D\"").expect("3D accepté");
+        assert_eq!(deux_d, GameDimension::TwoD);
+        assert_eq!(deux_d_canon, GameDimension::TwoD);
+        assert_eq!(demi, GameDimension::TwoAndHalfD);
+        assert_eq!(trois_d, GameDimension::ThreeD);
     }
 }
 

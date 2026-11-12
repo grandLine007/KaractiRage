@@ -917,5 +917,33 @@ mod tests {
 
         let _ = fs::remove_dir_all(&home);
     }
+
+    #[test]
+    fn new_project_config_accepte_le_payload_du_studio() {
+        // Contrat exact entre le Studio (services/projectBridge.ts) et le moteur.
+        // Ce test aurait attrapé « unknown variant 2D » au lieu de le laisser à l'utilisateur.
+        let payload = r#"{
+            "title": "Mon Jeu",
+            "genre": "adventure",
+            "dimension": "two_d",
+            "archetype": null,
+            "destination_dir": "",
+            "default_mode": "edit"
+        }"#;
+        let config: NewProjectConfig = serde_json::from_str(payload).expect("payload canonique");
+        assert_eq!(config.dimension, GameDimension::TwoD);
+        assert_eq!(config.genre, GameGenre::Adventure);
+
+        let historique = r#"{
+            "title": "Mon Jeu",
+            "genre": "adventure",
+            "dimension": "2D",
+            "destination_dir": "",
+            "default_mode": "edit"
+        }"#;
+        let legacy: NewProjectConfig =
+            serde_json::from_str(historique).expect("ancienne étiquette 2D acceptée par alias");
+        assert_eq!(legacy.dimension, GameDimension::TwoD);
+    }
 }
 // __CHUNK_END__

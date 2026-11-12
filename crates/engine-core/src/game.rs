@@ -11069,6 +11069,13 @@ mod tests {
             .expect("Chargement de la scène de test");
 
         let p_idx = state.player_index().unwrap();
+        // Le Studio auto-sauvegarde la scène de démonstration quand on joue : ce test
+        // ne doit pas dépendre des coordonnées du fichier (il cassait dès qu'une
+        // partie réelle avait déplacé le joueur). On place le joueur explicitement.
+        state.entities[p_idx].transform.x = 189.0;
+        state.entities[p_idx].transform.y = 106.0;
+        state.entities[p_idx].transform.prev_x = 189.0;
+        state.entities[p_idx].transform.prev_y = 106.0;
         let init_x = state.entities[p_idx].transform.x;
         let init_y = state.entities[p_idx].transform.y;
         assert_eq!(init_x as i32, 189);

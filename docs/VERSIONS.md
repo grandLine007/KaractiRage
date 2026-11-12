@@ -11,6 +11,7 @@
 | v0.3.2 | P2.1 + dette UI | Manifeste branché au pré-vol, cascade CSS corrigée, baseline régénérée | [RAPPORT_v0.3.2](RAPPORTS/RAPPORT_v0.3.2.md) | **prêt, non taguée** |
 | v0.3.3 | P1 (AC3) + dette | Export HTML jouable (runtime WASM embarqué), entrées clavier, déterminisme | [RAPPORT_v0.3.3](RAPPORTS/RAPPORT_v0.3.3.md) | **prêt, non taguée** |
 | v0.3.4 | P1 soldé | AC1 mesuré, pile Échap LIFO, garde-fou runtime périmé, hub sans erreur console | [RAPPORT_v0.3.4](RAPPORTS/RAPPORT_v0.3.4.md) | **prêt, non taguée** |
+| v0.3.5 | P1 (correctifs) | Création de projet réparée (`2D` → `two_d`), Ctrl+K opérationnel, test hermétique | [RAPPORT_v0.3.5](RAPPORTS/RAPPORT_v0.3.5.md) | **prêt, non taguée** |
 | v0.4.0 | P2 | Import Tiled, audio par fichiers, rechargement à chaud | à écrire | **bloqué réseau** |
 | v0.5.0 | P3 | Packs image/audio locaux (endpoint compatible OpenAI) | à écrire | à venir |
 | v0.6.0 | P4 | glTF, 3D déclarative, 2.5D, Blender MCP | à écrire | à venir |

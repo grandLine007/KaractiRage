@@ -63,12 +63,33 @@ export async function listProjects(extraDirs: string[] = []): Promise<ProjectEnt
   return safeInvokeJson<ProjectEntry[]>('engine_list_projects', { extraDirs } as Record<string, unknown>, []);
 }
 
+/** Valeur `GameDimension` attendue par le moteur (serde snake_case). */
+export type DimensionWire = 'two_d' | 'two_and_half_d' | 'three_d';
+
+const DIMENSION_WIRE: Record<string, DimensionWire> = {
+  '2D': 'two_d',
+  '2.5D': 'two_and_half_d',
+  '3D': 'three_d',
+  two_d: 'two_d',
+  two_and_half_d: 'two_and_half_d',
+  three_d: 'three_d',
+};
+
+/**
+ * Traduit l'étiquette affichée (« 2D », « 2.5D », « 3D ») en variante serde.
+ * Sans ça, le moteur refuse la config : `unknown variant 2D`.
+ */
+export function dimensionToWire(dimension: string): DimensionWire {
+  return DIMENSION_WIRE[dimension] ?? 'two_d';
+}
+
 /** Crée un projet sur disque et le charge immédiatement dans le moteur. */
 export async function createProject(config: NewProjectConfig): Promise<ProjectEntry> {
   if (!isTauri()) {
     return DEMO_PROJECTS[0];
   }
-  const raw: string = await invoke('engine_create_project', { configJson: JSON.stringify(config) });
+  const payload = { ...config, dimension: dimensionToWire(config.dimension) };
+  const raw: string = await invoke('engine_create_project', { configJson: JSON.stringify(payload) });
   return JSON.parse(raw) as ProjectEntry;
 }
 
