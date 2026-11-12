@@ -167,7 +167,7 @@ pub struct AiGeneratedGamePayload {
     pub entities: Vec<AiGeneratedEntity>,
     #[serde(default, deserialize_with = "de_vec_or_default")]
     pub kvl_actions: Vec<AiGeneratedKvlAction>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_variables_tolerantes")]
     pub variables: Option<std::collections::HashMap<String, String>>,
 }
 
@@ -324,16 +324,18 @@ pub struct AiGeneratedEntity {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedKvlAction {
     pub event: String,
+    /// Souvent omis par les petits modèles, qui placent l'effet dans `on_true_action`.
+    #[serde(default)]
     pub action: String,
     #[serde(default)]
     pub target_entity: Option<String>,
     #[serde(default)]
     pub condition: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_action_option_tolerante")]
     pub on_true_action: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_action_option_tolerante")]
     pub on_false_action: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_action_option_tolerante")]
     pub second_action: Option<String>,
 }
 
@@ -375,6 +377,68 @@ fn strings_to_objects(list: &mut serde_json::Value, build: impl Fn(&str) -> serd
 /// - `platforms` / `hazards` en tableau de chaînes → tableau d'objets ;
 /// - `entities` en tableau de chaînes → tableau d'objets ;
 /// - `variables` en tableau `{name, type}` (ou de chaînes) → objet `{ name: "0" }`.
+/// Normalise une action KVL qui peut arriver sous deux formes selon le modèle :
+/// - une chaîne (`"SetVariable:score:1"`),
+/// - un objet (`{"event":"SetVariable","name":"score","value":1}`).
+///
+/// Les petits modèles produisent très souvent la seconde : la refuser faisait échouer
+/// tout le payload (« invalid type: map, expected a string »).
+fn action_value_to_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Object(obj) => {
+            if let Some(action) = obj.get("action").and_then(|v| v.as_str()) {
+                return Some(action.to_string());
+            }
+            let event = obj.get("event").and_then(|v| v.as_str())?;
+            let name = obj.get("name").and_then(|v| v.as_str());
+            let argument = obj.get("value").map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            });
+            Some(match (name, argument) {
+                (Some(n), Some(v)) => format!("{event}:{n}:{v}"),
+                (Some(n), None) => format!("{event}:{n}"),
+                (None, Some(v)) => format!("{event}:{v}"),
+                (None, None) => event.to_string(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Désérialise une action optionnelle en acceptant chaîne **ou** objet.
+fn de_action_option_tolerante<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.as_ref().and_then(action_value_to_string))
+}
+
+/// Désérialise `variables` en acceptant nombres, booléens et chaînes.
+fn de_variables_tolerantes<'de, D>(
+    deserializer: D,
+) -> Result<Option<std::collections::HashMap<String, String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(serde_json::Value::Object(map)) = value else {
+        return Ok(None);
+    };
+    let mut out = std::collections::HashMap::new();
+    for (key, raw) in map {
+        let text = match raw {
+            serde_json::Value::String(s) => s,
+            serde_json::Value::Null => continue,
+            other => other.to_string(),
+        };
+        out.insert(key, text);
+    }
+    Ok(Some(out))
+}
+
 pub fn repair_llm_payload(value: &mut serde_json::Value) {
     let Some(root) = value.as_object_mut() else { return };
 
@@ -409,7 +473,52 @@ pub fn repair_llm_payload(value: &mut serde_json::Value) {
         }
     }
 
+    if let Some(actions) = root.get_mut("kvl_actions") {
+        if let Some(arr) = actions.as_array_mut() {
+            for action in arr.iter_mut() {
+                let Some(obj) = action.as_object_mut() else { continue };
+                for key in ["on_true_action", "on_false_action", "second_action"] {
+                    if let Some(nested) = obj.get(key).cloned() {
+                        if nested.is_object() {
+                            if let Some(text) = action_value_to_string(&nested) {
+                                obj.insert(key.to_string(), serde_json::Value::String(text));
+                            }
+                        }
+                    }
+                }
+                // Si `action` manque (cas fréquent : l'effet est dans on_true_action),
+                // on le dérive pour que le graphe KVL ait une action par défaut.
+                let action_vide = obj
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true);
+                if action_vide {
+                    let derivee = obj
+                        .get("on_true_action")
+                        .and_then(|v| action_value_to_string(v))
+                        .or_else(|| obj.get("second_action").and_then(|v| action_value_to_string(v)));
+                    if let Some(texte) = derivee {
+                        obj.insert("action".to_string(), serde_json::Value::String(texte));
+                    }
+                }
+            }
+        }
+    }
+
     if let Some(variables) = root.get_mut("variables") {
+        // Un modèle écrit souvent `{"score": 0}` (nombre) alors que le schéma attend
+        // des chaînes : on convertit les scalaires au lieu de rejeter le payload.
+        if let Some(map) = variables.as_object_mut() {
+            let conversions: Vec<(String, serde_json::Value)> = map
+                .iter()
+                .filter(|(_, v)| !v.is_string() && !v.is_array())
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.to_string())))
+                .collect();
+            for (key, value) in conversions {
+                map.insert(key, value);
+            }
+        }
         if let Some(arr) = variables.as_array() {
             let mut map = serde_json::Map::new();
             for item in arr {
@@ -1363,6 +1472,52 @@ mod contract_tests {
 
         assert!(checked >= 2, "Au moins 2 fixtures attendues dans {FIXTURES_DIR}");
         println!("[contrat] {checked} fixtures validées (moteur + sandbox)");
+    }
+
+    #[test]
+    fn parse_le_payload_reel_d_un_petit_modele() {
+        // Payload exact rapporté par l'utilisateur : actions en objets et variables
+        // numériques. Il échouait avec « invalid type: map, expected a string ».
+        let raw = r#"{
+  "title": "Gold Placement",
+  "description": "Collect and place gold pieces to complete the level.",
+  "primary_genre": "puzzle",
+  "terrain": ["platforms", "spikes"],
+  "gameplay_loop": {
+    "objective": "collect all GoldPiece",
+    "win_condition": "score >= 10",
+    "lose_condition": "health <= 0 or time limit reached"
+  },
+  "entities": ["GoldPiece", "Player", "Enemy"],
+  "kvl_actions": [
+    { "event": "OnItemUse", "action": "GiveItem:gold_piece:1" },
+    { "event": "AddScore", "condition": "score < 10", "on_true_action": { "event": "SetVariable", "name": "score", "value": 1 } },
+    { "event": "DamagePlayer", "condition": "enemy_attacked_player", "on_true_action": { "event": "SetVariable", "name": "health", "value": 0 } }
+  ],
+  "variables": { "score": 0, "health": 30 }
+}"#;
+
+        let payload = AiClient::parse_llm_json_response(raw).expect("le payload doit être accepté");
+        assert_eq!(payload.title, "Gold Placement");
+
+        let variables = payload.variables.expect("variables présentes");
+        assert_eq!(variables.get("score").map(String::as_str), Some("0"));
+        assert_eq!(variables.get("health").map(String::as_str), Some("30"));
+
+        assert_eq!(payload.kvl_actions.len(), 3);
+        assert_eq!(payload.kvl_actions[0].action, "GiveItem:gold_piece:1");
+        assert_eq!(
+            payload.kvl_actions[1].on_true_action.as_deref(),
+            Some("SetVariable:score:1"),
+            "une action objet doit être aplatie en action KVL"
+        );
+        assert_eq!(
+            payload.kvl_actions[2].on_true_action.as_deref(),
+            Some("SetVariable:health:0")
+        );
+        // `action` était absente dans le JSON du modèle : elle est dérivée de la branche VRAI.
+        assert_eq!(payload.kvl_actions[1].action, "SetVariable:score:1");
+        assert_eq!(payload.kvl_actions[2].action, "SetVariable:health:0");
     }
 }
 

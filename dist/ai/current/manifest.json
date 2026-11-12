@@ -25,7 +25,7 @@
     "playbooks/3d-scene.md": "c753c197cb11aa96",
     "schemas/graph.schema.json": "088e9ca2dce0a6e9",
     "schemas/intent.schema.json": "532860c470bea6b6",
-    "schemas/level.schema.json": "ac845fc11f886711",
+    "schemas/level.schema.json": "3cadea4a138a0b0f",
     "schemas/ops.schema.json": "5b55ad8148868c5e",
     "schemas/plan.schema.json": "7c44af805eb3c4cf"
   }
