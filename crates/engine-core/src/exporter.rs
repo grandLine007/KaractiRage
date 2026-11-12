@@ -1,6 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use crate::entity::{Entity, ShapeKind};
 use crate::game::GameState;
+use crate::scene::SceneData;
 use kvl_core::{Graph, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -381,7 +382,17 @@ pub struct KaractiGamePackage {
     pub scene_objective: Option<String>,
     /// Liste complète des entités avec leurs composants ECS
     pub entities: Vec<Entity>,
-    /// Table de tous les graphes KVL associés aux entités
+    /// Niveaux embarqués du projet, dans l'ordre de jeu (`scenes[0]` = niveau 1).
+    ///
+    /// `entities`/`scene_name` restent la **scène courante** au moment de
+    /// l'export (compatibilité des lecteurs historiques) ; `scenes` transporte
+    /// l'intégralité du projet pour que le HTML contienne tous les niveaux.
+    ///
+    /// `#[serde(default)]` : un ancien paquet sans ce champ reste lisible, son
+    /// `scenes` est vide et l'import conserve alors le comportement mono-scène.
+    #[serde(default)]
+    pub scenes: Vec<SceneData>,
+    /// Table de tous les graphes KVL associés aux entités (tous niveaux confondus)
     pub kvl_graphs: HashMap<String, Graph>,
     /// Variables globales initiales de contexte
     pub initial_variables: HashMap<String, Value>,
@@ -539,6 +550,97 @@ impl PreflightReport {
     }
 }
 
+/// Itère sur toutes les entités que l'export doit couvrir : celles de la scène
+/// courante, puis celles de chaque niveau embarqué (`GameState::levels`).
+///
+/// Les deux ensembles se recoupent souvent (`levels[0]` reflète la scène
+/// courante) : les tables d'assets sont des `HashMap` indexées par identifiant
+/// et le pré-vol déduplique par référence, donc aucun doublon n'est produit.
+fn entites_exportees(game: &GameState) -> impl Iterator<Item = std::borrow::Cow<'_, Entity>> {
+    let courantes = game.entities.iter().map(std::borrow::Cow::Borrowed);
+    // `to_entities` matérialise aussi les scènes au format historique
+    // (`player`/`coins`/`doors`/`enemies` sans tableau `entities`) : leurs
+    // scripts et sprites doivent voyager comme ceux des scènes modernes.
+    let niveaux = game.levels.iter().flat_map(|scene| {
+        scene
+            .to_entities()
+            .into_iter()
+            .map(std::borrow::Cow::Owned)
+            .collect::<Vec<_>>()
+            .into_iter()
+    });
+    courantes.chain(niveaux)
+}
+
+/// Lit le JSON d'un script KVL référencé par une entité.
+///
+/// Même ordre de résolution que `GameState::import_scripts` : chemin courant,
+/// puis `../../` (tests exécutés depuis `crates/engine-core`), puis racine du
+/// dépôt. Aucune lecture réseau. Un script introuvable renvoie `None` : c'est
+/// le pré-vol qui le signale comme bloquant, pas la sérialisation.
+fn lire_script_kvl(chemin: &str) -> Option<String> {
+    let candidats = [
+        PathBuf::from(chemin),
+        PathBuf::from(format!("../../{chemin}")),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(chemin),
+    ];
+    candidats
+        .iter()
+        .find_map(|candidat| std::fs::read_to_string(candidat).ok())
+}
+
+/// Union des graphes KVL du paquet : graphes déjà chargés dans l'état, puis
+/// tous les scripts référencés par les entités des niveaux embarqués.
+///
+/// Un paquet multi-niveaux doit transporter la logique de **toutes** ses
+/// scènes : sans cette union, seul le niveau courant garderait ses graphes et
+/// les portes des niveaux suivants resteraient muettes. La clé est le
+/// `script_path` exact de l'entité (celle qu'utilise le runtime pour résoudre
+/// le graphe).
+fn collecter_graphes_kvl(game: &GameState) -> HashMap<String, Graph> {
+    let mut graphes = game.kvl_graphs.clone();
+    for entite in entites_exportees(game) {
+        let Some(script) = &entite.script else { continue };
+        let chemin = script.script_path.as_str();
+        if chemin.trim().is_empty() || graphes.contains_key(chemin) {
+            continue;
+        }
+        if let Some(contenu) = lire_script_kvl(chemin) {
+            if let Ok(graphe) = Graph::from_json(&contenu) {
+                graphes.insert(chemin.to_string(), graphe);
+            }
+        }
+    }
+    graphes
+}
+
+/// Décode les assets embarqués d'un paquet (`id -> octets` / `id -> (png, json)`).
+///
+/// Un base64 corrompu est ignoré silencieusement : le rendu retombe alors sur
+/// le repli visuel, comme pour un asset absent du disque.
+fn decoder_assets_embarques(
+    package: &KaractiGamePackage,
+) -> (
+    HashMap<String, Vec<u8>>,
+    HashMap<String, (Vec<u8>, String)>,
+) {
+    let mut sprites = HashMap::new();
+    for (id, b64) in &package.sprite_assets {
+        if let Ok(bytes) = STANDARD.decode(b64) {
+            sprites.insert(id.clone(), bytes);
+        }
+    }
+    let mut sheets = HashMap::new();
+    for (id, sheet) in &package.sheet_assets {
+        if let Ok(png) = STANDARD.decode(&sheet.png) {
+            sheets.insert(id.clone(), (png, sheet.json.clone()));
+        }
+    }
+    (sprites, sheets)
+}
+
 /// Packageur et exportateur autonome de jeu KaractiRage
 pub struct StandaloneExporter;
 
@@ -573,11 +675,17 @@ impl StandaloneExporter {
             initial_vars.insert("keys".to_string(), keys.clone());
         }
 
+        // Niveaux embarqués du projet : exporter « le jeu », pas seulement la
+        // scène courante. Un état construit par `load_from_scene` (hors projet)
+        // a `levels` vide : le paquet reste alors mono-scène, comme avant.
+        let scenes = game.levels.clone();
+
         // Collecte des assets pixel-art référencés (sprites + spritesheets/anims)
         // pour rendre le package autonome (pas de dépendance au système de fichiers).
+        // Tous les niveaux sont couverts : un sprite du niveau 3 doit voyager aussi.
         let mut sprite_assets = HashMap::new();
         let mut sheet_assets = HashMap::new();
-        for ent in &game.entities {
+        for ent in entites_exportees(game) {
             if let Some(rend) = &ent.renderable {
                 match &rend.shape {
                     ShapeKind::ImageRef { asset } => {
@@ -598,12 +706,16 @@ impl StandaloneExporter {
             }
         }
 
+        // Union des graphes : scène courante + scripts des niveaux 2/3.
+        let kvl_graphs = collecter_graphes_kvl(game);
+
         KaractiGamePackage {
             metadata,
             scene_name: game.scene_name.clone(),
             scene_objective: game.scene_objective.clone(),
             entities: game.entities.clone(),
-            kvl_graphs: game.kvl_graphs.clone(),
+            scenes,
+            kvl_graphs,
             initial_variables: initial_vars,
             sprite_assets,
             sheet_assets,
@@ -641,6 +753,11 @@ impl StandaloneExporter {
 
     /// Pré-vol d'export : vérifie que chaque script et chaque asset référencés
     /// sont résolvables, puis signale les budgets de performance dépassés.
+    ///
+    /// Le contrôle couvre **tous les niveaux embarqués** (`game.levels`) et pas
+    /// seulement la scène courante : un sprite manquant au niveau 2 bloque donc
+    /// l'export, comme un asset manquant au niveau 1. Un projet multi-niveaux
+    /// reçoit en plus l'avertissement informatif `"niveaux-exportes"`.
     ///
     /// Un script est considéré présent s'il figure dans `game.kvl_graphs` (graphe
     /// déjà chargé) ou si son fichier existe sur disque. Un asset de rendu est
@@ -686,7 +803,7 @@ impl StandaloneExporter {
         // référence (cas fréquent : un script de collectible sur 20 pièces).
         let mut deja_signales: HashSet<String> = HashSet::new();
 
-        for ent in &game.entities {
+        for ent in entites_exportees(game) {
             // --- Scripts KVL -------------------------------------------------
             if let Some(script) = &ent.script {
                 let chemin = script.script_path.trim();
@@ -769,6 +886,20 @@ impl StandaloneExporter {
             issues.push(PreflightIssue::warning(
                 "manifeste-absent",
                 "des entités référencent des scripts ou des assets de rendu, mais le projet ne déclare aucun manifeste d'assets : leur provenance et leur intégrité ne sont pas vérifiées. Ajoute un manifeste au projet.".to_string(),
+            ));
+        }
+
+        // --- Niveaux embarqués (avertissement informatif) ---------------------
+        // Depuis l'export multi-niveaux, le HTML contient toutes les scènes du
+        // projet. Le créateur doit le savoir : la taille et le contenu du
+        // fichier ne correspondent plus à la seule scène courante.
+        if game.levels.len() > 1 {
+            issues.push(PreflightIssue::warning(
+                "niveaux-exportes",
+                format!(
+                    "{} niveaux seront embarqués dans le HTML (toutes les scènes du projet, pas seulement la scène courante)",
+                    game.levels.len()
+                ),
             ));
         }
 
@@ -872,9 +1003,67 @@ impl StandaloneExporter {
         package.to_json_pretty()
     }
 
-    /// Importe et applique un package de jeu dans l'état du jeu
+    /// Importe et applique un package de jeu dans l'état du jeu.
+    ///
+    /// **Paquet multi-niveaux** (`scenes` non vide) : reconstruit un jeu complet
+    /// à partir du niveau 1 (`scenes[0]`), installe tous les niveaux, l'union
+    /// des graphes KVL, les variables initiales et les assets embarqués, puis
+    /// place le joueur sur l'écran `Menu` (il lance la partie avec `Entrée`).
+    ///
+    /// **Ancien paquet** (`scenes` vide, champ absent) : comportement historique
+    /// inchangé — la scène du paquet remplace l'état courant et l'éditeur passe
+    /// en mode Jeu, sans forcer d'écran.
     #[allow(dead_code)]
     pub fn import_package(game: &mut GameState, package: &KaractiGamePackage) {
+        // --- Format multi-niveaux ------------------------------------------
+        if let Some(premiere) = package.scenes.first() {
+            if let Ok(mut nouveau) =
+                GameState::from_scene_data(premiere.clone(), "paquet:niveau_1")
+            {
+                nouveau.levels = package.scenes.clone();
+                nouveau.level_index = 0;
+                nouveau.scene_name = premiere.name.clone();
+                nouveau.scene_objective = premiere.objective.clone();
+                // Union calculée à l'export : elle couvre aussi les niveaux que
+                // le disque local ne peut pas résoudre (cas wasm/navigateur).
+                nouveau.kvl_graphs = package.kvl_graphs.clone();
+                for (k, v) in &package.initial_variables {
+                    nouveau.kvl_context.set_var(k.clone(), v.clone());
+                }
+
+                let (sprites, sheets) = decoder_assets_embarques(package);
+                nouveau.apply_embedded_assets(sprites, sheets);
+
+                // Réinitialise la caméra et la sélection du Studio.
+                nouveau.editor.selected = crate::editor::SelectedEntity::None;
+                nouveau.editor.mode = crate::editor::EditorMode::Play;
+
+                // Le joueur voit le menu, puis `Entrée` démarre le niveau 1.
+                nouveau.screen = crate::screens::GameScreen::Menu;
+                nouveau.sync_screen_variables();
+
+                // L'audio et le replay sont des ressources de session : on garde
+                // le même périphérique et la même session qu'avant l'import.
+                std::mem::swap(&mut nouveau.audio, &mut game.audio);
+                std::mem::swap(&mut nouveau.replay, &mut game.replay);
+
+                let total_entites: usize =
+                    package.scenes.iter().map(|scene| scene.entities.len()).sum();
+                *game = nouveau;
+                game.set_status(format!(
+                    "🎮 Jeu '{}' chargé avec succès ! ({} niveaux, {} entités, {} graphes KVL)",
+                    package.metadata.title,
+                    package.scenes.len(),
+                    total_entites,
+                    package.kvl_graphs.len()
+                ));
+                return;
+            }
+            // Reconstruction impossible (scène invalide) : on retombe sur le
+            // comportement historique plutôt que de laisser l'état à moitié importé.
+        }
+
+        // --- Ancien format mono-scène (scenes vide) --------------------------
         game.scene_name = package.scene_name.clone();
         game.scene_objective = package.scene_objective.clone();
         game.entities = package.entities.clone();
@@ -885,18 +1074,7 @@ impl StandaloneExporter {
         }
 
         // Décodage des assets embarqués + re-résolution des sprites/spritesheets.
-        let mut sprites = HashMap::new();
-        for (id, b64) in &package.sprite_assets {
-            if let Ok(bytes) = STANDARD.decode(b64) {
-                sprites.insert(id.clone(), bytes);
-            }
-        }
-        let mut sheets = HashMap::new();
-        for (id, s) in &package.sheet_assets {
-            if let Ok(png) = STANDARD.decode(&s.png) {
-                sheets.insert(id.clone(), (png, s.json.clone()));
-            }
-        }
+        let (sprites, sheets) = decoder_assets_embarques(package);
         game.apply_embedded_assets(sprites, sheets);
 
         // Réinitialise la caméra et la sélection du Studio
@@ -951,7 +1129,7 @@ fn racine_du_manifeste(manifeste: &crate::assets_manifest::AssetsManifest) -> Pa
 /// externe (SVG, PNG, spritesheet, animation) : c'est le cas où l'absence de
 /// manifeste mérite un avertissement de pré-vol.
 fn entites_referencent_des_assets(game: &GameState) -> bool {
-    game.entities.iter().any(|entite| {
+    entites_exportees(game).any(|entite| {
         entite
             .script
             .as_ref()
@@ -1031,6 +1209,7 @@ mod tests {
             scene_name: "Donjon Oublié".to_string(),
             scene_objective: Some("Trouver la clé et vaincre le gardien".to_string()),
             entities: Vec::new(),
+            scenes: Vec::new(),
             kvl_graphs: graphs,
             initial_variables: HashMap::new(),
             sprite_assets: HashMap::new(),
@@ -1062,6 +1241,7 @@ mod tests {
             scene_name: "Niveau 1".to_string(),
             scene_objective: None,
             entities: Vec::new(),
+            scenes: Vec::new(),
             kvl_graphs: HashMap::new(),
             initial_variables: HashMap::new(),
             sprite_assets: HashMap::new(),
@@ -1090,6 +1270,200 @@ mod tests {
             }
         }
         panic!("scène de référence introuvable : assets/scenes/ref_niveau_1.scene.json");
+    }
+
+    /// Charge le projet de référence P1 (3 niveaux) dans un `GameState`.
+    fn jeu_reference_projet() -> GameState {
+        let candidats = [
+            "assets/projects/jeu_reference.karacti",
+            "../../assets/projects/jeu_reference.karacti",
+        ];
+        for chemin in candidats {
+            if Path::new(chemin).is_file() {
+                let projet = crate::project::KaractiProject::load_from_file(chemin)
+                    .expect("le projet de référence doit être lisible");
+                let mut jeu = jeu_reference();
+                jeu.load_project(projet);
+                return jeu;
+            }
+        }
+        panic!("projet de référence introuvable : assets/projects/jeu_reference.karacti");
+    }
+
+    /// Scripts référencés par les trois niveaux du jeu de référence.
+    const SCRIPTS_REFERENCE: [&str; 4] = [
+        "assets/scripts/coin_pickup.kvl.json",
+        "assets/scripts/ref_porte_niveau.kvl.json",
+        "assets/scripts/ref_boss_verrou.kvl.json",
+        "assets/scripts/ref_porte_boss.kvl.json",
+    ];
+
+    #[test]
+    fn test_paquet_jeu_reference_contient_les_trois_niveaux() {
+        let jeu = jeu_reference_projet();
+        assert_eq!(jeu.levels.len(), 3, "le projet de référence déclare 3 scènes");
+
+        let package = StandaloneExporter::create_package(&jeu, "Référence", "Testeur");
+        assert_eq!(package.scenes.len(), 3, "les 3 niveaux sont sérialisés");
+        assert_eq!(package.scenes[0].name, jeu.levels[0].name);
+        assert_eq!(package.scenes[2].name, jeu.levels[2].name);
+        // Compatibilité : entities/scene_name restent la scène courante.
+        assert_eq!(package.scene_name, jeu.scene_name);
+        assert_eq!(package.entities.len(), jeu.entities.len());
+
+        // Union des graphes des niveaux 1, 2 et 3.
+        for script in SCRIPTS_REFERENCE {
+            assert!(
+                package.kvl_graphs.contains_key(script),
+                "graphe « {script} » absent de l'union : {:?}",
+                package.kvl_graphs.keys().collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(package.kvl_graphs.len(), SCRIPTS_REFERENCE.len());
+
+        // Le JSON conserve les niveaux et reste relisible.
+        let relu = KaractiGamePackage::from_json(&package.to_json().expect("sérialisation"))
+            .expect("désérialisation");
+        assert_eq!(relu.scenes.len(), 3, "scenes traverse le JSON");
+        assert_eq!(relu.kvl_graphs.len(), SCRIPTS_REFERENCE.len());
+    }
+
+    #[test]
+    fn test_paquet_sans_scenes_reste_importable_et_garde_l_ancien_comportement() {
+        let jeu = jeu_reference();
+        let package = StandaloneExporter::create_package(&jeu, "Ancien format", "Testeur");
+        assert!(package.scenes.is_empty(), "scène isolée : aucun niveau embarqué");
+
+        // Simule un ancien paquet : le champ `scenes` est totalement absent.
+        let mut valeur = serde_json::to_value(&package).expect("package en JSON");
+        let objet = valeur.as_object_mut().expect("objet JSON");
+        assert!(objet.remove("scenes").is_some(), "champ scenes présent avant retrait");
+        let json_ancien = serde_json::to_string(&valeur).expect("JSON compact");
+        assert!(!json_ancien.contains("\"scenes\""), "vieux format sans scenes");
+
+        let ancien = KaractiGamePackage::from_json(&json_ancien)
+            .expect("un ancien paquet reste importable");
+        assert!(ancien.scenes.is_empty(), "#[serde(default)] remplit avec un Vec vide");
+
+        // Import dans un état neuf : comportement historique (mono-scène, mode Jeu).
+        let mut cible = jeu_reference();
+        cible.levels.clear();
+        cible.screen = crate::screens::GameScreen::Playing;
+        StandaloneExporter::import_package(&mut cible, &ancien);
+        assert_eq!(cible.entities.len(), package.entities.len());
+        assert_eq!(cible.scene_name, package.scene_name);
+        assert_eq!(cible.kvl_graphs.len(), package.kvl_graphs.len());
+        assert_eq!(cible.editor.mode, crate::editor::EditorMode::Play);
+        assert_eq!(
+            cible.screen,
+            crate::screens::GameScreen::Playing,
+            "l'ancien format ne force pas l'écran Menu"
+        );
+    }
+
+    #[test]
+    fn test_import_paquet_jeu_reference_reconstruit_trois_niveaux() {
+        let source = jeu_reference_projet();
+        let package = StandaloneExporter::create_package(&source, "Référence", "Testeur");
+
+        // Instance neuve, comme au démarrage du runtime wasm.
+        let mut neuf = jeu_reference();
+        assert!(neuf.levels.is_empty());
+
+        StandaloneExporter::import_package(&mut neuf, &package);
+
+        assert_eq!(neuf.levels.len(), 3, "les 3 niveaux sont installés");
+        assert_eq!(neuf.level_index, 0);
+        assert_eq!(neuf.scene_name, package.scenes[0].name);
+        assert_eq!(
+            neuf.entities.len(),
+            package.scenes[0].to_entities().len(),
+            "le niveau 1 est instancié"
+        );
+        assert_eq!(
+            neuf.kvl_graphs.len(),
+            package.kvl_graphs.len(),
+            "l'union des graphes du paquet est installée"
+        );
+        assert_eq!(neuf.screen, crate::screens::GameScreen::Menu);
+        assert_eq!(neuf.editor.mode, crate::editor::EditorMode::Play);
+
+        // `Entrée` sur le menu → niveau 1 en jeu.
+        neuf.start_game();
+        assert_eq!(neuf.screen, crate::screens::GameScreen::Playing);
+        assert_eq!(neuf.level_index, 0);
+        assert_eq!(neuf.scene_name, "Niveau 1 : Salle des Émeraudes");
+
+        // Les niveaux suivants restent disponibles (le jeu est complet).
+        assert!(neuf.next_level(), "passage au niveau 2");
+        assert_eq!(neuf.level_index, 1);
+        assert!(neuf.next_level(), "passage au niveau 3");
+        assert_eq!(neuf.level_index, 2);
+        assert_eq!(neuf.scene_name, "Niveau 3 : Arène du Titan");
+        assert!(!neuf.next_level(), "dernier niveau : plus de suivant");
+    }
+
+    #[test]
+    fn test_export_html_projet_multi_niveaux_est_deterministe() {
+        let jeu = jeu_reference_projet();
+        let premier =
+            StandaloneExporter::export_html_with_runtime(&jeu, "Trois niveaux", "Testeur", None);
+        let second =
+            StandaloneExporter::export_html_with_runtime(&jeu, "Trois niveaux", "Testeur", None);
+        assert_eq!(premier, second, "même projet = même fichier");
+        assert_eq!(
+            StandaloneExporter::export_fingerprint(&premier),
+            StandaloneExporter::export_fingerprint(&second)
+        );
+        // Diagnostic lu par export-smoke.mjs --expect-levels.
+        assert!(premier.contains("__karacti_levels"));
+    }
+
+    #[test]
+    fn test_preflight_projet_multi_niveaux_signale_les_niveaux_sans_bloquer() {
+        let jeu = jeu_reference_projet();
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
+        assert!(report.ok, "pré-vol : {}", report.summary());
+        assert_eq!(report.blocking_count(), 0, "rapport : {}", report.summary());
+        let issue = report
+            .warnings()
+            .into_iter()
+            .find(|issue| issue.code == "niveaux-exportes")
+            .expect("avertissement niveaux-exportes attendu");
+        assert!(issue.message.contains('3'), "message : {}", issue.message);
+    }
+
+    #[test]
+    fn test_preflight_bloque_un_asset_manquant_dans_un_niveau_ulterieur() {
+        let mut jeu = jeu_reference_projet();
+        let entite = jeu.levels[1].entities.get_mut(0).expect("niveau 2 non vide");
+        entite.renderable = Some(crate::entity::Renderable2D::image_ref(
+            "assets/sprites/asset_fantome_niveau_2.png",
+            1,
+        ));
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
+        assert!(!report.ok, "un asset manquant au niveau 2 doit bloquer");
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.code == "asset-manquant"));
+    }
+
+    #[test]
+    fn test_preflight_bloque_un_script_manquant_dans_un_niveau_ulterieur() {
+        let mut jeu = jeu_reference_projet();
+        let entite = jeu.levels[2].entities.get_mut(0).expect("niveau 3 non vide");
+        entite.script = Some(crate::entity::KVLScriptComponent::new(
+            "assets/scripts/script_fantome_niveau_3.kvl.json",
+        ));
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
+        assert!(!report.ok, "un script manquant au niveau 3 doit bloquer");
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.code == "script-manquant"));
     }
 
     #[test]

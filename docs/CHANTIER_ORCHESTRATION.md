@@ -105,7 +105,7 @@ azure.archive.ubuntu.com`) sur les runs `116e120`/`aa660aa`/`d3aefcf`. Le job St
 passé à chaque fois ; les jobs Rust échouent dans `apt-get`, avant toute compilation.
 Correctifs appliqués : timeouts d'étape, retries, et chemin rapide `dpkg`.
 
-## 3septies. Vague 7 — en cours (le boss devient un obstacle)
+## 3septies. Vague 7 — terminée (le boss combat) + vague 8 en cours
 
 | Agent | Tâche | Périmètre | Critère de sortie |
 |---|---|---|---|
@@ -115,7 +115,21 @@ Correctifs appliqués : timeouts d'étape, retries, et chemin rapide `dpkg`.
 savait déjà tirer, infliger des dégâts et gérer des phases de boss : le manque était
 **de contenu**, pas de système.
 
+**Résultat** : porte verrouillée tant que le Titan vit, victoire par le combat seul,
+et un **bug moteur** corrigé — les projectiles du boss s'annulaient dans la grille
+spatiale, il ne pouvait presque jamais toucher le joueur.
+
 **CI** : verte sur `7c8e938` et `c051ffb` (la panne réseau des runners est passée).
+
+## 3octies. Vague 8 — terminée (l'export contient les 3 niveaux)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| « export multi-niveaux » | Embarquer `game.levels` dans le paquet et reconstruire un `GameState` multi-niveaux à l'import | ✅ **3 scènes, 24 entités, 4 graphes**, `niveaux=3/3` au smoke |
+| meneur | Résumé du CLI (comptait l'état courant) + version 0.3.6 | ✅ « 3 niveau(x), 24 entités, 4 graphes KVL » |
+
+**Défaut visé** : l'export ne sérialisait que la scène courante — le fichier partagé
+contenait 9 entités (niveau 1) alors que le jeu en compte 3.
 
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 

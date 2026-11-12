@@ -97,10 +97,20 @@ fn main() -> ExitCode {
     } else {
         "absent".to_string()
     };
+    // Le paquet peut contenir plusieurs scènes : compter sur lui, pas sur l'état
+    // courant (sinon le résumé annonçait « 9 entités » pour un jeu à 3 niveaux).
+    let package = StandaloneExporter::create_package(&game, &title, &author);
+    let niveaux = package.scenes.len().max(1);
+    let entites: usize = if package.scenes.is_empty() {
+        package.entities.len()
+    } else {
+        package.scenes.iter().map(|scene| scene.entities.len()).sum()
+    };
     println!(
-        "export OK — {} entités, {} graphes KVL, {} Ko, runtime {}, empreinte {}",
-        game.entities.len(),
-        game.kvl_graphs.len(),
+        "export OK — {} niveau(x), {} entités, {} graphes KVL, {} Ko, runtime {}, empreinte {}",
+        niveaux,
+        entites,
+        package.kvl_graphs.len(),
         html.len() / 1024,
         details_runtime,
         StandaloneExporter::export_fingerprint(&html)

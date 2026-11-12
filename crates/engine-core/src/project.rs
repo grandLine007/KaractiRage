@@ -343,6 +343,9 @@ impl KaractiProject {
             scene_name: self.scene.name.clone(),
             scene_objective: self.scene.objective.clone(),
             entities: self.scene.entities.clone(),
+            // Tous les niveaux voyagent dans le paquet : l'export HTML ne se
+            // limite plus à `scene`, qui reste la scène courante éditable.
+            scenes: self.scenes.clone(),
             kvl_graphs: self.kvl_graphs.clone(),
             initial_variables: self.kvl_variables.clone(),
             sprite_assets: std::collections::HashMap::new(),

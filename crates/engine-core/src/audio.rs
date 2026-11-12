@@ -412,13 +412,112 @@ struct SharedAudioState {
     sample_rate: usize,
 }
 
+/// Remplit un tampon de sortie à partir de l'état audio partagé.
+///
+/// Extrait du callback pour être réutilisé tel quel par le moteur natif et par
+/// le singleton WebAudio (wasm) : une seule boucle de mixage, donc un seul
+/// comportement sonore entre le Studio et l'export HTML5.
+fn remplir_tampon(st: &mut SharedAudioState, data: &mut [f32]) {
+    if st.is_muted || st.voices.is_empty() {
+        data.fill(0.0);
+        return;
+    }
+
+    let s_rate = st.sample_rate as f32;
+    let m_vol = st.master_volume;
+
+    for sample in data.iter_mut() {
+        let mut mix = 0.0f32;
+        for voice in st.voices.iter_mut() {
+            mix += voice.sample(s_rate);
+        }
+        *sample = (mix * m_vol).clamp(-1.0, 1.0);
+    }
+
+    // Supprimer les voix terminées
+    st.voices.retain(|v| !v.is_finished());
+}
+
 pub struct AudioEngine {
     state: Arc<Mutex<SharedAudioState>>,
     _output_device: Option<tinyaudio::OutputDevice>,
     pub is_available: bool,
 }
 
+/// Singleton audio des exports HTML5 (wasm).
+///
+/// `tinyaudio` ferme son `AudioContext` quand l'appareil est détruit. Or chaque
+/// `GameState::from_scene_data` crée un `AudioEngine` : au changement de niveau
+/// ou à l'import d'un paquet multi-niveaux, l'ancien moteur est détruit alors
+/// que ses callbacks `setTimeout` sont encore programmés. Le navigateur lève
+/// alors « AudioContext is closed. », ce qui casse le test de fumée de l'export
+/// alors que le jeu tourne.
+///
+/// En wasm, tous les `AudioEngine` partagent donc **un seul** appareil et un
+/// seul état, conservé pour la vie de la page : détruire un `AudioEngine` ne
+/// ferme plus le contexte, et le mixer reste unique (aucune multiplication de
+/// contextes au fil des niveaux, donc pas de limite navigateur atteinte).
+#[cfg(target_arch = "wasm32")]
+mod audio_partage_wasm {
+    use super::*;
+    use std::sync::OnceLock;
+
+    pub struct AudioPartage {
+        pub state: Arc<Mutex<SharedAudioState>>,
+        pub is_available: bool,
+        /// Conservé jusqu'à la fin de la page : jamais détruit, jamais fermé.
+        pub _appareil: Option<tinyaudio::OutputDevice>,
+    }
+
+    static PARTAGE: OnceLock<Mutex<AudioPartage>> = OnceLock::new();
+
+    pub fn partage() -> &'static Mutex<AudioPartage> {
+        PARTAGE.get_or_init(|| {
+            let sample_rate = 44100;
+            let state = Arc::new(Mutex::new(SharedAudioState {
+                voices: Vec::new(),
+                is_muted: false,
+                master_volume: 0.5,
+                sample_rate,
+            }));
+            let params = OutputDeviceParameters {
+                channels_count: 1,
+                sample_rate,
+                channel_sample_count: 441, // ~10 ms buffer
+            };
+            let state_clone = Arc::clone(&state);
+            let appareil = run_output_device(params, move |data: &mut [f32]| {
+                match state_clone.lock() {
+                    Ok(mut st) => remplir_tampon(&mut st, data),
+                    Err(_) => data.fill(0.0),
+                }
+            });
+            let is_available = appareil.is_ok();
+            Mutex::new(AudioPartage {
+                state,
+                is_available,
+                _appareil: appareil.ok(),
+            })
+        })
+    }
+}
+
 impl AudioEngine {
+    /// Moteur audio wasm : état et appareil **partagés** par tout le document.
+    #[cfg(target_arch = "wasm32")]
+    pub fn new() -> Self {
+        let partage = audio_partage_wasm::partage()
+            .lock()
+            .unwrap_or_else(|empoisonne| empoisonne.into_inner());
+        Self {
+            state: Arc::clone(&partage.state),
+            _output_device: None,
+            is_available: partage.is_available,
+        }
+    }
+
+    /// Moteur audio natif : un appareil de sortie par `AudioEngine`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new() -> Self {
         let sample_rate = 44100;
         let state = Arc::new(Mutex::new(SharedAudioState {
@@ -427,40 +526,17 @@ impl AudioEngine {
             master_volume: 0.5,
             sample_rate,
         }));
-
         let params = OutputDeviceParameters {
             channels_count: 1,
             sample_rate,
             channel_sample_count: 441, // ~10 ms buffer
         };
-
         let state_clone = Arc::clone(&state);
         let output_device = run_output_device(params, move |data: &mut [f32]| {
             if let Ok(mut st) = state_clone.lock() {
-                if st.is_muted || st.voices.is_empty() {
-                    for sample in data.iter_mut() {
-                        *sample = 0.0;
-                    }
-                    return;
-                }
-
-                let s_rate = st.sample_rate as f32;
-                let m_vol = st.master_volume;
-
-                for sample in data.iter_mut() {
-                    let mut mix = 0.0f32;
-                    for voice in st.voices.iter_mut() {
-                        mix += voice.sample(s_rate);
-                    }
-                    *sample = (mix * m_vol).clamp(-1.0, 1.0);
-                }
-
-                // Supprimer les voix terminées
-                st.voices.retain(|v| !v.is_finished());
+                remplir_tampon(&mut st, data);
             } else {
-                for sample in data.iter_mut() {
-                    *sample = 0.0;
-                }
+                data.fill(0.0);
             }
         });
 

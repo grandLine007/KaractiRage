@@ -28,30 +28,37 @@
  *
  * Avec `--expect-input`, le test prouve que le jeu est réellement JOUABLE :
  *
- *   - après `runtime=running`, capture l'image complète du canvas ;
+ *   - après `runtime=running`, valide le menu par `Entrée` (sans effet sur un
+ *     export mono-scène déjà en jeu), puis capture le canvas ;
  *   - envoie `ArrowRight` (`keydown` sur `window`, maintenu ~800 ms) ;
  *   - attend ~1 s après le `keyup`, recapture, et exige une variation
  *     significative (> 2000 pixels modifiés) : le joueur a bougé.
  *   L'option implique `--expect-runtime` ; sans runtime, l'échec est propre.
  *
+ * Avec `--expect-levels <n>`, le test vérifie que l'export embarque exactement
+ * `n` niveaux (`window.__karacti_levels`, posé par le template après l'import
+ * du paquet). L'option implique `--expect-runtime`.
+ *
  * Usage :
  *   node scripts/export-smoke.mjs <chemin-vers-html> [--json] [--timeout <ms>]
  *                                 [--expect-runtime] [--expect-input]
+ *                                 [--expect-levels <n>]
  *   node scripts/export-smoke.mjs --help
  *
  * Options :
  *   --json           sort un objet JSON machine (rien d'autre sur stdout) :
  *                    { ok, entities, consoleErrors, pageErrors,
- *                      networkRequests, runtime, expectedRuntime,
- *                      nonBlackPixels, canvasColors, expectedInput,
- *                      inputDelta, inputPixelsBefore, inputPixelsAfter,
- *                      problems }
+ *                      networkRequests, runtime, expectedRuntime, levels,
+ *                      expectedLevels, nonBlackPixels, canvasColors,
+ *                      expectedInput, inputDelta, inputPixelsBefore,
+ *                      inputPixelsAfter, problems }
  *   --timeout <ms>   délai global (défaut : 30 000 ms), pour ne jamais
  *                    suspendre un CI.
  *   --expect-runtime exige que le runtime WASM embarqué démarre et rende des
  *                    pixels (sinon échec propre, sans crash).
  *   --expect-input   exige que le clavier pilote le moteur : variation de
  *                    pixels > 2000 après un appui simulé sur `ArrowRight`.
+ *   --expect-levels <n> exige que l'export embarque exactement `n` niveaux.
  *   -h, --help       affiche cette aide.
  *
  * Codes de sortie :
@@ -86,6 +93,9 @@ const INPUT_DIFF_MIN_PIXELS = 2000;
 /** Durée d'appui simulée sur `ArrowRight` (ms). */
 const INPUT_KEY_HOLD_MS = 800;
 
+/** Attente après `Entrée` (menu → jeu) avant la capture initiale (ms). */
+const INPUT_MENU_SETTLE_MS = 500;
+
 /** Délai après le relâchement avant la recapture (ms). */
 const INPUT_SETTLE_MS = 1000;
 
@@ -100,14 +110,16 @@ erreur console, avec un paquet embarqué valide et un canvas.
 
 Options :
   --json           sortie JSON machine { ok, entities, consoleErrors, pageErrors,
-                   networkRequests, runtime, expectedRuntime, nonBlackPixels,
-                   canvasColors, expectedInput, inputDelta, inputPixelsBefore,
-                   inputPixelsAfter, problems }
+                   networkRequests, runtime, expectedRuntime, levels,
+                   expectedLevels, nonBlackPixels, canvasColors, expectedInput,
+                   inputDelta, inputPixelsBefore, inputPixelsAfter, problems }
   --timeout <ms>   délai global en millisecondes (défaut : ${DEFAULT_TIMEOUT_MS})
   --expect-runtime exige que le runtime WASM embarqué démarre (runtime=running)
                    et rende des pixels dans le canvas
   --expect-input   exige que le clavier pilote le moteur : appuie sur ArrowRight
                    et vérifie que plus de ${INPUT_DIFF_MIN_PIXELS} pixels changent
+  --expect-levels <n> exige que l'export embarque exactement n niveaux
+                   (window.__karacti_levels) ; implique --expect-runtime
   -h, --help       affiche cette aide
 
 Codes de sortie :
@@ -119,6 +131,7 @@ Exemples :
   npm run export:smoke -- ./jeu-standalone.html
   node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime
   node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime --expect-input
+  node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime --expect-levels 3
   node scripts/export-smoke.mjs ./jeu-standalone.html --json
 `;
 
@@ -133,6 +146,7 @@ function parseArgs(args) {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     expectRuntime: false,
     expectInput: false,
+    expectLevels: null,
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -142,6 +156,20 @@ function parseArgs(args) {
       opts.expectRuntime = true;
     } else if (arg === '--expect-input') {
       opts.expectInput = true;
+    } else if (arg === '--expect-levels') {
+      const raw = args[++i];
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 1) {
+        return { error: `valeur invalide pour --expect-levels : ${raw ?? '(absente)'} (entier >= 1 attendu)` };
+      }
+      opts.expectLevels = n;
+    } else if (arg.startsWith('--expect-levels=')) {
+      const raw = arg.slice('--expect-levels='.length);
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 1) {
+        return { error: `valeur invalide pour --expect-levels : ${raw} (entier >= 1 attendu)` };
+      }
+      opts.expectLevels = n;
     } else if (arg === '-h' || arg === '--help') {
       opts.help = true;
     } else if (arg === '--timeout') {
@@ -176,12 +204,13 @@ function isLocalUrl(url) {
 }
 
 /** Sortie d'erreur d'usage / d'environnement : message clair + exit 2. */
-function usageError(message, json, expectRuntime = false, expectInput = false) {
+function usageError(message, json, expectRuntime = false, expectInput = false, expectLevels = null) {
   if (json) {
     const payload = {
       ...emptyResult(),
       expectedRuntime: expectRuntime,
       expectedInput: expectInput,
+      expectedLevels: expectLevels,
       problems: [message],
     };
     process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
@@ -209,6 +238,8 @@ function emptyResult() {
     networkRequests: [],
     runtime: null,
     expectedRuntime: false,
+    levels: null,
+    expectedLevels: null,
     nonBlackPixels: null,
     canvasColors: null,
     expectedInput: false,
@@ -245,6 +276,16 @@ async function launchBrowser() {
 async function readRuntimeState(page) {
   return await page.evaluate(() =>
     typeof window.__karacti_runtime === 'string' ? window.__karacti_runtime : null,
+  );
+}
+
+/**
+ * Lit `window.__karacti_levels` (nombre de scènes embarquées), posé par le
+ * template après un import de paquet réussi. `null` si absent ou invalide.
+ */
+async function readLevels(page) {
+  return await page.evaluate(() =>
+    Number.isInteger(window.__karacti_levels) ? window.__karacti_levels : null,
   );
 }
 
@@ -358,6 +399,33 @@ async function captureInputSnapshot(page) {
 }
 
 /**
+ * Envoie `Entrée` (`keydown` puis `keyup`) : sur un export multi-niveaux, le
+ * joueur démarre au menu et cette touche lance le niveau 1. Sur un export
+ * mono-scène, le jeu est déjà en cours et `Entrée` est sans effet d'écran.
+ */
+async function pressEnter(page) {
+  return await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    if (canvas && typeof canvas.focus === 'function') canvas.focus();
+    const down = new KeyboardEvent('keydown', {
+      code: 'Enter',
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(down);
+    const up = new KeyboardEvent('keyup', {
+      code: 'Enter',
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(up);
+    return { defaultPrevented: down.defaultPrevented };
+  });
+}
+
+/**
  * Focus le canvas puis envoie un `keydown` `ArrowRight` sur `window`, comme le
  * ferait un vrai clavier. `defaultPrevented` permet de constater que le
  * template bloque bien le défilement de la page.
@@ -445,6 +513,16 @@ async function runInputProbe(page, startedAt, timeoutMs) {
     return { problems, delta: null, beforeNonBlack: null, afterNonBlack: null, defaultPrevented: null };
   }
 
+  // Quitte l'écran Menu avant de mesurer le déplacement : un export
+  // multi-niveaux démarre sur le menu, où le monde est figé. Sans `Entrée`,
+  // ArrowRight ne prouverait rien. Sur un export mono-scène, c'est un no-op.
+  try {
+    await pressEnter(page);
+  } catch (err) {
+    problems.push(`--expect-input : envoi de Entrée impossible — ${String(err?.message ?? err).split('\n')[0]}`);
+  }
+  await page.waitForTimeout(INPUT_MENU_SETTLE_MS);
+
   const before = await captureInputSnapshot(page);
   if (!before.ok) {
     problems.push(`--expect-input : capture initiale impossible — ${before.reason}`);
@@ -498,10 +576,11 @@ async function runInputProbe(page, startedAt, timeoutMs) {
 }
 
 /** Exécute le test de fumée. Renvoie l'objet résultat + un code de sortie. */
-async function runSmoke(filePath, timeoutMs, expectRuntime = false, expectInput = false) {
+async function runSmoke(filePath, timeoutMs, expectRuntime = false, expectInput = false, expectLevels = null) {
   const result = emptyResult();
   result.expectedRuntime = expectRuntime;
   result.expectedInput = expectInput;
+  result.expectedLevels = expectLevels;
   const url = pathToFileURL(filePath).href;
   const startedAt = Date.now();
   let browser = null;
@@ -633,6 +712,25 @@ async function runSmoke(filePath, timeoutMs, expectRuntime = false, expectInput 
           }
           result.problems.push(`runtime attendu "running" mais ${constat}`);
         } else {
+          // --- Niveaux embarqués (contrat du template multi-niveaux) -------
+          // Le template pose `window.__karacti_levels` après un import réussi.
+          // `--expect-runtime` exige au moins 1 niveau ; `--expect-levels <n>`
+          // exige la valeur exacte (3 pour le jeu de référence).
+          const levels = await readLevels(page).catch(() => null);
+          result.levels = levels;
+          if (levels === null) {
+            result.problems.push(
+              'window.__karacti_levels jamais défini après un import réussi ' +
+                '(HTML produit par un ancien moteur ?)',
+            );
+          } else if (levels < 1) {
+            result.problems.push(`window.__karacti_levels = ${levels} : au moins 1 niveau attendu`);
+          } else if (expectLevels !== null && levels !== expectLevels) {
+            result.problems.push(
+              `--expect-levels : ${levels} niveau(x) embarqué(s), ${expectLevels} attendu(s)`,
+            );
+          }
+
           const budgetPixels = Math.max(
             2_000,
             Math.min(5_000, timeoutMs - (Date.now() - startedAt) - 1_000),
@@ -714,6 +812,12 @@ function printReport(filePath, result) {
   // Le détail runtime n'apparaît qu'en mode --expect-runtime : sans l'option,
   // la sortie humaine historique reste strictement inchangée.
   const runtimeSuffix = result.expectedRuntime ? `, runtime=${result.runtime ?? 'indéfini'}` : '';
+  const levelsSuffix =
+    result.expectedLevels !== null
+      ? `, niveaux=${result.levels ?? 'indéfini'}/${result.expectedLevels}`
+      : result.expectedRuntime
+        ? `, niveaux=${result.levels ?? 'indéfini'}`
+        : '';
   const pixelsSuffix =
     result.expectedRuntime && result.nonBlackPixels !== null
       ? `, ${result.nonBlackPixels} pixels non noirs (${result.canvasColors} couleurs)`
@@ -729,7 +833,7 @@ function printReport(filePath, result) {
     const plural = result.entities === 1 ? '' : 's';
     console.log(
       `[export-smoke] OK — ${result.entities} entité${plural}, 0 erreur, 0 requête réseau` +
-        `${runtimeSuffix}${pixelsSuffix}${inputSuffix}`,
+        `${runtimeSuffix}${levelsSuffix}${pixelsSuffix}${inputSuffix}`,
     );
     return;
   }
@@ -738,7 +842,7 @@ function printReport(filePath, result) {
   console.error(
     `[export-smoke] résumé : ${result.entities ?? 0} entité(s), ` +
       `${errors} erreur(s) console/page, ${result.networkRequests.length} requête(s) réseau non-file://` +
-      runtimeSuffix + inputSuffix,
+      runtimeSuffix + levelsSuffix + inputSuffix,
   );
 }
 
@@ -748,24 +852,26 @@ const JSON_OUTPUT = Boolean(parsed.json);
 
 async function main() {
   const expectInput = Boolean(parsed.expectInput);
-  // Prouver l'entrée suppose un moteur qui tourne : --expect-input implique
-  // --expect-runtime (un fichier sans runtime échoue proprement, sans crash).
-  const expectRuntime = Boolean(parsed.expectRuntime || expectInput);
-  if (parsed.error) usageError(parsed.error, JSON_OUTPUT, expectRuntime, expectInput);
+  const expectLevels = parsed.expectLevels ?? null;
+  // Prouver l'entrée ou le nombre de niveaux suppose un moteur qui tourne :
+  // --expect-input et --expect-levels impliquent --expect-runtime (un fichier
+  // sans runtime échoue proprement, sans crash).
+  const expectRuntime = Boolean(parsed.expectRuntime || expectInput || expectLevels !== null);
+  if (parsed.error) usageError(parsed.error, JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
   if (parsed.help) {
     // L'aide documente l'usage ; code 2 (aucun test exécuté).
     process.stdout.write(USAGE);
     process.exit(2);
   }
-  if (!parsed.file) usageError('chemin du fichier HTML manquant', JSON_OUTPUT, expectRuntime, expectInput);
+  if (!parsed.file) usageError('chemin du fichier HTML manquant', JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
 
   const filePath = path.resolve(process.cwd(), parsed.file);
-  if (!existsSync(filePath)) usageError(`fichier introuvable : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput);
-  if (!statSync(filePath).isFile()) usageError(`ce n'est pas un fichier : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput);
+  if (!existsSync(filePath)) usageError(`fichier introuvable : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
+  if (!statSync(filePath).isFile()) usageError(`ce n'est pas un fichier : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
 
   let result;
   try {
-    result = await runSmoke(filePath, parsed.timeoutMs, expectRuntime, expectInput);
+    result = await runSmoke(filePath, parsed.timeoutMs, expectRuntime, expectInput, expectLevels);
   } catch (err) {
     // Erreur d'environnement (navigateur indisponible, sandbox…) : exit 2.
     const message = String(err?.message ?? err).split('\n')[0];
@@ -774,6 +880,7 @@ async function main() {
         ...emptyResult(),
         expectedRuntime: expectRuntime,
         expectedInput: expectInput,
+        expectedLevels: expectLevels,
         problems: [message],
       };
       process.stdout.write(JSON.stringify(failed, null, 2) + '\n');
