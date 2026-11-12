@@ -129,12 +129,19 @@ impl FrameInputSnapshot {
 pub enum ReplayDirective {
     /// Téléporte le joueur à portée d'interaction (< 80 px) de la porte courante.
     TeleportToDoor,
+    /// Place le joueur sous le boss et tire un projectile réel.
+    ///
+    /// Le niveau 3 exige désormais la chute du Titan avant d'ouvrir la porte :
+    /// cette directive rejoue le combat avec le pipeline de dégâts du moteur
+    /// (`fire_player_projectile` + collision), sans le court-circuiter.
+    ShootBoss,
 }
 
 impl ReplayDirective {
     fn apply(self, state: &mut GameState) -> Result<(), String> {
         match self {
             Self::TeleportToDoor => teleport_player_to_door(state),
+            Self::ShootBoss => shoot_boss(state),
         }
     }
 }
@@ -524,6 +531,49 @@ fn teleport_player_to_door(state: &mut GameState) -> Result<(), String> {
     Ok(())
 }
 
+/// Aligne le joueur sous le boss et tire un projectile vers le haut.
+///
+/// En mode `TopDown`, `fire_player_projectile` tire verticalement : le joueur est
+/// donc replacé sous le centre du Titan à chaque tir. Les dégâts, les phases et
+/// `boss_defeated` restent produits par le moteur, comme en jeu réel.
+fn shoot_boss(state: &mut GameState) -> Result<(), String> {
+    let player = state
+        .player_index()
+        .ok_or_else(|| "Aucun joueur contrôlable dans la scène courante".to_string())?;
+    let (bx, by, bw, bh) = state
+        .entities
+        .iter()
+        .find(|entity| entity.boss.is_some())
+        .map(|boss| {
+            (
+                boss.transform.x,
+                boss.transform.y,
+                boss.transform.w,
+                boss.transform.h,
+            )
+        })
+        .ok_or_else(|| "Aucun boss dans la scène courante".to_string())?;
+
+    let x = bx + bw * 0.5 - state.entities[player].transform.w * 0.5;
+    let y = by + bh + 10.0;
+    let transform = &mut state.entities[player].transform;
+    transform.x = x;
+    transform.y = y;
+    transform.prev_x = x;
+    transform.prev_y = y;
+    if let Some(movement) = state.entities[player].movement.as_mut() {
+        movement.vx = 0.0;
+        movement.vy = 0.0;
+    }
+    state.rebuild_static_spatial_grid();
+
+    if state.fire_player_projectile() {
+        Ok(())
+    } else {
+        Err("Le joueur n'a pas pu tirer sur le boss".to_string())
+    }
+}
+
 /// Score KVL courant (0 si absent ou d'un autre type).
 fn current_score(state: &GameState) -> i64 {
     match state.kvl_context.get_var("score") {
@@ -548,10 +598,13 @@ fn record_and_step(state: &mut GameState, recorder: &mut ReplayManager, input: &
 
 /// Rejoue le scénario de référence : menu → 3 portes → victoire.
 ///
-/// Chaque porte est franchie par une **vraie** interaction (`E`), donc par le graphe
-/// KVL `OnDoorInteract` qui pose `level_complete` ; le moteur enchaîne ensuite les
-/// niveaux puis affiche la victoire. Une frame neutre relâche `E` entre deux portes
-/// afin que la relecture produise bien un nouveau front montant à chaque porte.
+/// Les portes sont franchie par une **vraie** interaction (`E`), donc par le
+/// graphe KVL `OnDoorInteract` qui pose `level_complete` ; le moteur enchaîne
+/// ensuite les niveaux puis affiche la victoire. Le niveau 3 exige en plus la
+/// chute du Titan : des directives `ShootBoss` rejouent le combat avec les
+/// projectiles réels avant de toucher à la porte. Une frame neutre relâche `E`
+/// entre deux portes afin que la relecture produise bien un nouveau front
+/// montant à chaque porte.
 fn run_reference_scenario(
     state: &mut GameState,
     recorder: &mut ReplayManager,
@@ -577,6 +630,32 @@ fn run_reference_scenario(
 
     // 2. Trois portes : une interaction réelle par niveau.
     for level in 0..3 {
+        // Niveau 3 : le Titan garde la porte. On le terrasse avec de vrais tirs
+        // (pipeline de collision du moteur) avant toute interaction.
+        if level == 2 {
+            let mut defeated = false;
+            for _ in 0..16 {
+                recorder.record_scenario_action(ReplayDirective::ShootBoss);
+                // En enregistrement, la directive est appliquée ici ; en relecture,
+                // `replay_frames` l'applique avant la frame correspondante.
+                shoot_boss(state)?;
+                record_and_step(state, recorder, &mut input);
+                if state.kvl_context.get_var("boss_defeated")
+                    == Some(&kvl_core::Value::Bool(true))
+                {
+                    defeated = true;
+                    break;
+                }
+            }
+            // Laisse le dernier projectile atterrir et la porte se synchroniser.
+            for _ in 0..3 {
+                record_and_step(state, recorder, &mut input);
+            }
+            if !defeated {
+                return Err("Le Titan n'a pas été terrassé par les tirs scénarisés".to_string());
+            }
+        }
+
         recorder.record_scenario_action(ReplayDirective::TeleportToDoor);
         teleport_player_to_door(state)?;
 
@@ -834,7 +913,19 @@ mod tests {
             .active_session
             .as_ref()
             .expect("session de replay présente");
-        assert_eq!(session.scenario_actions.len(), 3, "une téléportation par porte");
+        let teleports = session
+            .scenario_actions
+            .iter()
+            .filter(|(_, directive)| *directive == ReplayDirective::TeleportToDoor)
+            .count();
+        assert_eq!(teleports, 3, "une téléportation par porte");
+        assert!(
+            session
+                .scenario_actions
+                .iter()
+                .any(|(_, directive)| *directive == ReplayDirective::ShootBoss),
+            "le scénario doit inclure le combat de boss du niveau 3"
+        );
         assert!(!session.frames.is_empty(), "le replay contient des frames");
         assert_eq!(recorded.mode, ReplayMode::Idle);
     }

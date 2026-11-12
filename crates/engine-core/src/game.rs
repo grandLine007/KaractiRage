@@ -303,6 +303,12 @@ fn resolve_script_content(script_path: &str) -> Option<String> {
         Some(include_str!("../../../assets/scripts/door_interaction.kvl.json").to_string())
     } else if script_path.contains("guard_alert") {
         Some(include_str!("../../../assets/scripts/guard_alert.kvl.json").to_string())
+    } else if script_path.contains("ref_porte_niveau") {
+        Some(include_str!("../../../assets/scripts/ref_porte_niveau.kvl.json").to_string())
+    } else if script_path.contains("ref_porte_boss") {
+        Some(include_str!("../../../assets/scripts/ref_porte_boss.kvl.json").to_string())
+    } else if script_path.contains("ref_boss_verrou") {
+        Some(include_str!("../../../assets/scripts/ref_boss_verrou.kvl.json").to_string())
     } else {
         None
     }
@@ -2089,6 +2095,10 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         }
 
         // Passage de niveau : `level_complete` (posé par `SetVar:level_complete:1`).
+        // Le verrou du boss du niveau 3 est **déclaratif** : son graphe de porte
+        // (`ref_porte_boss.kvl.json`) exige `IsBossDefeated` avant de poser le
+        // drapeau. Aucune règle « dernier niveau = boss » n'est codée ici : le
+        // même chemin sert aux portes des niveaux 1/2 et à la victoire finale.
         // Sur le dernier niveau — ou dans un projet mono-scène — c'est une victoire.
         let level_done = matches!(
             self.kvl_context.get_var("level_complete"),
@@ -4277,6 +4287,13 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             if !ent.is_active {
                 continue;
             }
+            // Les projectiles ne sont pas des cibles : les insérer dans la grille
+            // les faisait s'annuler entre eux (une nova radiale apparaît au même
+            // point), ce qui neutralisait les attaques du boss. Ils restent
+            // détectés via `query_aabb` face aux vraies cibles.
+            if ent.projectile.is_some() {
+                continue;
+            }
             if let Some(ref col) = ent.collider {
                 // Les murs et plateformes fixes sont déjà conservés dans static_buckets
                 let is_static = ent.movement.is_none() && (col.is_solid || col.is_one_way) && !col.is_pushable;
@@ -4807,7 +4824,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                             self.audio.play(SoundType::QuestSuccess);
                             self.camera.add_shake(25.0);
                             self.spawn_particles(bcx, bcy, 80, 0x00FDE047);
-                            self.status_message = "TRIOMPHE TOTAL ! Le Titan KVL-MK3 a été terrassé ! Victoire !".into();
+                            self.status_message = "TITAN TERRASSÉ ! La porte du sanctuaire s'ouvre : franchissez-la (E).".into();
                             if let Some(ref script) = self.entities[target_idx].script.clone() {
                                 if let Some(graph) = self.kvl_graphs.get(&script.script_path) {
                                     let _ = Interpreter::trigger_event_with(graph, &mut self.kvl_context, "OnBossDefeated", self.plugins.handlers());
@@ -12251,6 +12268,117 @@ mod tests {
         state.rebuild_static_spatial_grid();
     }
 
+    /// Index de la porte du niveau courant.
+    fn door_index(state: &GameState) -> usize {
+        state
+            .entities
+            .iter()
+            .position(|entity| entity.tag == "door")
+            .expect("porte dans la scène")
+    }
+
+    /// Index du boss du niveau courant.
+    fn boss_index(state: &GameState) -> usize {
+        state
+            .entities
+            .iter()
+            .position(|entity| entity.boss.is_some())
+            .expect("boss dans la scène")
+    }
+
+    /// PV courants du boss (0 s'il est déjà tombé).
+    fn boss_health(state: &GameState) -> f32 {
+        state.entities[boss_index(state)]
+            .health
+            .as_ref()
+            .map_or(0.0, |health| health.current)
+    }
+
+    /// Vrai si le drapeau `level_complete` est armé (entier non nul ou booléen vrai).
+    fn level_complete_is_armed(state: &GameState) -> bool {
+        matches!(
+            state.kvl_context.get_var("level_complete"),
+            Some(Value::Int(value)) if *value != 0
+        ) || state.kvl_context.get_var("level_complete") == Some(&Value::Bool(true))
+    }
+
+    /// Charge le projet de référence et se place **directement** sur le niveau 3.
+    ///
+    /// Les niveaux 1 et 2 sont traversés par `next_level` : ce point d'entrée
+    /// isole l'arène du Titan de la logique des portes précédentes, déjà couverte
+    /// par `reference_game_completes_three_levels_through_real_door_interactions`.
+    fn reference_state_on_level_three() -> GameState {
+        use crate::screens::GameScreen;
+
+        let project = crate::project::KaractiProject::load_from_file(reference_project_path())
+            .expect("projet de référence lisible");
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
+        state.load_project(project);
+
+        let mut enter = InputState::new();
+        enter.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut enter, 1);
+        assert_eq!(state.screen, GameScreen::Playing, "menu → partie");
+
+        assert!(state.next_level(), "niveau 2 disponible");
+        assert!(state.next_level(), "niveau 3 disponible");
+        assert_eq!(state.level_index, 2);
+        assert_eq!(state.screen, GameScreen::Playing);
+        state
+    }
+
+    /// Téléporte le joueur juste sous le boss, aligné sur son centre.
+    ///
+    /// En mode `TopDown`, `fire_player_projectile` tire vers le haut : sans cet
+    /// alignement le tir part à côté du Titan et le test ne prouverait rien.
+    fn teleport_player_under_boss(state: &mut GameState) {
+        let player = state.player_index().expect("joueur");
+        let b_idx = boss_index(state);
+        let (bx, by, bw, bh) = {
+            let boss = &state.entities[b_idx];
+            (
+                boss.transform.x,
+                boss.transform.y,
+                boss.transform.w,
+                boss.transform.h,
+            )
+        };
+        let x = bx + bw * 0.5 - state.entities[player].transform.w * 0.5;
+        let y = by + bh + 10.0;
+        let transform = &mut state.entities[player].transform;
+        transform.x = x;
+        transform.y = y;
+        transform.prev_x = x;
+        transform.prev_y = y;
+        if let Some(movement) = state.entities[player].movement.as_mut() {
+            movement.vx = 0.0;
+            movement.vy = 0.0;
+        }
+        state.rebuild_static_spatial_grid();
+    }
+
+    /// Tire réellement (`fire_player_projectile` + frames) jusqu'à la mort du Titan.
+    ///
+    /// Le joueur est replacé sous le boss avant chaque tir : les projectiles du
+    /// boss peuvent le terrasser et le faire réapparaître au point de départ, ce
+    /// qui décalerait le tir vertical et rendrait le test dépendant de la chance.
+    fn defeat_reference_boss_with_real_shots(state: &mut GameState) -> usize {
+        const MAX_FRAMES: usize = 2400;
+        let mut frames = 0;
+        while boss_health(state) > 0.0 && frames < MAX_FRAMES {
+            teleport_player_under_boss(state);
+            assert!(
+                state.fire_player_projectile(),
+                "le joueur doit pouvoir tirer un projectile"
+            );
+            state.update(1.0 / 60.0, &InputState::new());
+            frames += 1;
+        }
+        assert_eq!(boss_health(state), 0.0, "le Titan doit tomber sous les tirs");
+        assert!(frames < MAX_FRAMES, "le combat doit se terminer en moins de 40 s");
+        frames
+    }
+
     #[test]
     fn reference_game_completes_three_levels_through_real_door_interactions() {
         use crate::screens::GameScreen;
@@ -12290,7 +12418,33 @@ mod tests {
             "le dernier niveau contient le boss"
         );
 
-        // Dernier niveau : la porte déclare la victoire.
+        // Dernier niveau : le Titan est un obstacle réel. On le terrasse avec de
+        // vrais tirs avant de toucher à la porte — aucune interaction préalable.
+        let combat_frames = defeat_reference_boss_with_real_shots(&mut state);
+        assert!(
+            combat_frames > 0,
+            "le boss doit encaisser au moins un tir avant de tomber"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("boss_defeated"),
+            Some(&Value::Bool(true)),
+            "la mort du Titan doit être actée par le moteur"
+        );
+        assert_eq!(
+            state.screen,
+            GameScreen::Playing,
+            "le combat seul ne déclare pas la victoire : la porte reste la sortie"
+        );
+        assert!(
+            !state.entities[door_index(&state)]
+                .collider
+                .as_ref()
+                .expect("collider de porte")
+                .is_solid,
+            "la porte doit s'ouvrir à la mort du Titan"
+        );
+
+        // Une fois le boss vaincu, la porte déclare la victoire.
         teleport_player_to_door(&mut state);
         let mut interact = InputState::new();
         interact.on_key_down(KeyCode::KeyE);
@@ -12300,6 +12454,178 @@ mod tests {
             GameScreen::Victory,
             "victoire atteinte par interaction réelle (écran : {:?})",
             state.screen
+        );
+    }
+
+    /// Verrou de porte piloté par le boss, contenu déclaratif :
+    /// `assets/scripts/ref_porte_boss.kvl.json` teste `IsBossDefeated` avant de
+    /// poser `level_complete`. Tant que le Titan vit, la porte reste solide et
+    /// aucune victoire n'est déclarée.
+    #[test]
+    fn reference_level_three_door_refuses_to_open_while_the_titan_lives() {
+        use crate::screens::GameScreen;
+
+        let mut state = reference_state_on_level_three();
+        let door = door_index(&state);
+        let boss = boss_index(&state);
+        assert!(
+            state.entities[boss]
+                .health
+                .as_ref()
+                .is_some_and(|health| health.current > 0.0),
+            "le Titan doit être vivant au début du niveau"
+        );
+        assert!(
+            state.entities[door]
+                .collider
+                .as_ref()
+                .expect("collider de porte")
+                .is_solid,
+            "la porte naît solide"
+        );
+
+        teleport_player_to_door(&mut state);
+        let mut interact = InputState::new();
+        interact.on_key_down(KeyCode::KeyE);
+        step(&mut state, &mut interact, 2);
+
+        assert_eq!(
+            state.screen,
+            GameScreen::Playing,
+            "la porte verrouillée ne doit pas déclarer la victoire"
+        );
+        assert!(
+            !level_complete_is_armed(&state),
+            "aucun level_complete ne doit être posé tant que le boss vit"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("door_is_open"),
+            Some(&Value::Bool(false)),
+            "le graphe de porte doit maintenir le verrou fermé"
+        );
+        assert!(
+            state.entities[door]
+                .collider
+                .as_ref()
+                .expect("collider de porte")
+                .is_solid,
+            "la porte doit rester solide après le refus"
+        );
+        assert!(
+            state.status_message.contains("fermée"),
+            "message de verrou attendu, obtenu : {:?}",
+            state.status_message
+        );
+    }
+
+    /// Cœur de la correction : charger le niveau 3, tuer le Titan avec de vrais
+    /// projectiles (`fire_player_projectile` + frames), constater le
+    /// déverrouillage de la porte, puis seulement interagir avec elle pour gagner.
+    #[test]
+    fn reference_level_three_titan_defeat_unlocks_the_door_then_victory() {
+        use crate::screens::GameScreen;
+
+        let mut state = reference_state_on_level_three();
+        let door = door_index(&state);
+        let boss = boss_index(&state);
+
+        // Aucune interaction avec la porte avant la mort du boss.
+        let combat_frames = defeat_reference_boss_with_real_shots(&mut state);
+        assert!(combat_frames > 0);
+
+        assert_eq!(
+            state.entities[boss].boss.as_ref().map(|boss| boss.phase),
+            Some(BossPhase::Defeated),
+            "le Titan doit passer en phase Defeated"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("boss_defeated"),
+            Some(&Value::Bool(true)),
+            "boss_defeated doit être posé par la mort du boss"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("door_is_open"),
+            Some(&Value::Bool(true)),
+            "le graphe OnBossDefeated doit ouvrir la porte"
+        );
+        assert!(
+            !state.entities[door]
+                .collider
+                .as_ref()
+                .expect("collider de porte")
+                .is_solid,
+            "la porte doit être franchissable une fois le Titan vaincu"
+        );
+        assert_eq!(
+            state.screen,
+            GameScreen::Playing,
+            "la victoire exige encore de franchir la porte"
+        );
+
+        // La porte déverrouillée est maintenant la sortie du niveau.
+        teleport_player_to_door(&mut state);
+        let mut interact = InputState::new();
+        interact.on_key_down(KeyCode::KeyE);
+        step(&mut state, &mut interact, 2);
+        assert_eq!(
+            state.screen,
+            GameScreen::Victory,
+            "la porte du sanctuaire déclare la victoire après la chute du Titan"
+        );
+    }
+
+    /// Le Titan attaque réellement : ses projectiles et ses ondes blessent le
+    /// joueur, jusqu'à le terrasser. Le moteur applique alors sa politique de
+    /// réapparition (voir `test_player_hazard_damage_and_respawn`).
+    #[test]
+    fn reference_level_three_titan_attacks_and_can_defeat_the_player() {
+        let mut state = reference_state_on_level_three();
+        let player = state.player_index().expect("joueur");
+        let b_idx = boss_index(&state);
+        let (bx, by, bw, bh) = {
+            let boss = &state.entities[b_idx];
+            (
+                boss.transform.x,
+                boss.transform.y,
+                boss.transform.w,
+                boss.transform.h,
+            )
+        };
+
+        // À portée des novae radiales et des tirs ciblés du boss.
+        state.entities[player].transform.x = bx + bw * 0.5 - state.entities[player].transform.w * 0.5;
+        state.entities[player].transform.y = by + bh + 70.0;
+        state.rebuild_static_spatial_grid();
+        if let Some(health) = state.entities[player].health.as_mut() {
+            health.current = health.max;
+            health.is_dead = false;
+            health.invulnerability_timer = 0.0;
+        }
+
+        let input = InputState::new();
+        let mut min_hp = f32::MAX;
+        let mut saw_hit_message = false;
+        let mut saw_death_message = false;
+        for _ in 0..900 {
+            state.update(1.0 / 60.0, &input);
+            if let Some(health) = state.entities[player].health.as_ref() {
+                min_hp = min_hp.min(health.current);
+            }
+            if state.status_message.contains("TOUCHÉ") || state.status_message.contains("OUCH") {
+                saw_hit_message = true;
+            }
+            if state.status_message.contains("PÉRI") || state.status_message.contains("ÉCRASÉ") {
+                saw_death_message = true;
+            }
+        }
+
+        assert!(
+            saw_hit_message || min_hp < 3.0,
+            "le Titan doit infliger des dégâts au joueur (PV min : {min_hp})"
+        );
+        assert!(
+            saw_death_message,
+            "le joueur doit pouvoir être terrassé par les attaques du Titan"
         );
     }
 

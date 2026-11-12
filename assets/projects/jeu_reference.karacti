@@ -1483,8 +1483,8 @@
     },
     {
       "name": "Niveau 3 : Arène du Titan",
-      "description": "Dernier niveau de référence : l'arène du gardien scelle la victoire.",
-      "objective": "TRAVERSEZ L'ARÈNE DU TITAN ET FRANCHISSEZ LA PORTE (E)",
+      "description": "Dernier niveau de référence : terrasser le TITAN GARDIEN ouvre la porte du sanctuaire, qui seule déclare la victoire.",
+      "objective": "TERRASSEZ LE TITAN GARDIEN (F) PUIS FRANCHISSEZ LA PORTE (E)",
       "entities": [
         {
           "id": 1,
@@ -1585,7 +1585,12 @@
           },
           "movement": null,
           "vision": null,
-          "script": null,
+          "script": {
+            "script_path": "assets/scripts/ref_boss_verrou.kvl.json",
+            "on_overlap_event": null,
+            "on_interact_event": null,
+            "on_seen_event": null
+          },
           "emitter": null,
           "projectile": null,
           "health": {
@@ -1652,7 +1657,7 @@
           "movement": null,
           "vision": null,
           "script": {
-            "script_path": "assets/scripts/ref_porte_niveau.kvl.json",
+            "script_path": "assets/scripts/ref_porte_boss.kvl.json",
             "on_overlap_event": null,
             "on_interact_event": "OnDoorInteract",
             "on_seen_event": null
@@ -1879,13 +1884,13 @@
   ],
   "kvl_graphs": {},
   "kvl_variables": {
-    "score": {
-      "type": "Int",
-      "value": 0
-    },
     "game_won": {
       "type": "Bool",
       "value": false
+    },
+    "score": {
+      "type": "Int",
+      "value": 0
     },
     "menu_active": {
       "type": "Bool",
@@ -1970,5 +1975,6 @@
     "niveau_1",
     "niveau_2",
     "niveau_3"
-  ]
+  ],
+  "assets": null
 }

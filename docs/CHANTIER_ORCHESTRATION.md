@@ -105,6 +105,18 @@ azure.archive.ubuntu.com`) sur les runs `116e120`/`aa660aa`/`d3aefcf`. Le job St
 passé à chaque fois ; les jobs Rust échouent dans `apt-get`, avant toute compilation.
 Correctifs appliqués : timeouts d'étape, retries, et chemin rapide `dpkg`.
 
+## 3septies. Vague 7 — en cours (le boss devient un obstacle)
+
+| Agent | Tâche | Périmètre | Critère de sortie |
+|---|---|---|---|
+| « combat de boss » | Le TITAN GARDIEN du niveau 3 doit être vaincu pour finir | `ref_niveau_3.scene.json`, scripts KVL, `game.rs` | test : la porte refuse tant que le boss vit ; tirer jusqu'à sa mort déclenche la victoire |
+
+**Écart visé** : le rapport v0.3.0 assumait « boss gardien, sans combat ». Le moteur
+savait déjà tirer, infliger des dégâts et gérer des phases de boss : le manque était
+**de contenu**, pas de système.
+
+**CI** : verte sur `7c8e938` et `c051ffb` (la panne réseau des runners est passée).
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |

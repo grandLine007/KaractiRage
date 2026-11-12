@@ -1,0 +1,161 @@
+{
+  "id": "graph_ref_boss_verrou",
+  "name": "Logique : Titan gardien (déverrouillage)",
+  "description": "À sa mort, le TITAN GARDIEN ouvre la porte du sanctuaire (door_is_open) et met à jour l'objectif. Le verrou lui-même est évalué par ref_porte_boss.kvl.json via boss_defeated.",
+  "version": 1,
+  "variables": {
+    "boss_defeated": {
+      "name": "boss_defeated",
+      "data_type": "Bool",
+      "initial_value": {
+        "type": "Bool",
+        "value": false
+      }
+    }
+  },
+  "nodes": {
+    "evt_boss_defeat": {
+      "id": "evt_boss_defeat",
+      "name": "Titan terrassé",
+      "category": "Interactions",
+      "description": "Déclenché par le moteur quand le boss tombe à 0 PV (boss_defeated posé avant l'événement).",
+      "kind": {
+        "Event": {
+          "event_type": "OnBossDefeated"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_open_door": {
+      "id": "act_open_door",
+      "name": "Ouvrir la porte du sanctuaire",
+      "category": "World",
+      "description": "Passe door_is_open à true : le moteur rend la porte franchissable et la colore en vert.",
+      "kind": {
+        "Action": {
+          "action_type": "OpenDoor"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 220.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_victory_objective": {
+      "id": "act_victory_objective",
+      "name": "Objectif : franchir la porte",
+      "category": "Progression",
+      "description": "Indique au joueur que la voie est libre et que la porte reste la sortie du niveau.",
+      "kind": {
+        "Action": {
+          "action_type": "SetObjective:OBJECTIF : FRANCHISSEZ LA PORTE DU SANCTUAIRE (E)"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 440.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_door_sound": {
+      "id": "act_door_sound",
+      "name": "Son d'ouverture",
+      "category": "Audio",
+      "description": "Joue le son de porte qui s'ouvre.",
+      "kind": {
+        "Action": {
+          "action_type": "PlaySound:door_open"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 660.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    }
+  },
+  "connections": [
+    {
+      "id": "conn_defeat_to_open",
+      "from_node": "evt_boss_defeat",
+      "from_pin": "out_trigger",
+      "to_node": "act_open_door",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_open_to_objective",
+      "from_node": "act_open_door",
+      "from_pin": "out_trigger",
+      "to_node": "act_victory_objective",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_objective_to_sound",
+      "from_node": "act_victory_objective",
+      "from_pin": "out_trigger",
+      "to_node": "act_door_sound",
+      "to_pin": "in_trigger"
+    }
+  ]
+}
