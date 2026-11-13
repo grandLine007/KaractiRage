@@ -142,6 +142,15 @@ contenait 9 entités (niveau 1) alors que le jeu en compte 3.
 l'union du paquet. Le jeu de référence n'est pas touché, mais un jeu exporté avec des
 sprites importés perd ses images au niveau 2.
 
+## 3decies. Vague 10 — en cours (le jeu exporté a une interface)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| « écrans exportés » | Embarquer `ui_screens` et afficher le niveau courant | à l'import, le menu est **visible** ; « NIVEAU X/N » dans le HUD ; smoke `--expect-screens` |
+
+**Dette visée** (rapport v0.3.7 §5.1) : l'import force `screen = Menu` mais `ui_screens`
+est vide — le monde est figé sans surcouche de départ.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
