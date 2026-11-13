@@ -706,6 +706,22 @@ impl StandaloneExporter {
             }
         }
 
+        // Un état importé porte des images qui ne sont pas forcément sur disque
+        // (jeu exporté puis ré-exporté) : on les ré-embarque pour ne pas les perdre.
+        for (id, bytes) in &game.embedded_sprites {
+            sprite_assets
+                .entry(id.clone())
+                .or_insert_with(|| STANDARD.encode(bytes));
+        }
+        for (id, (png, json)) in &game.embedded_sheets {
+            sheet_assets
+                .entry(id.clone())
+                .or_insert_with(|| SheetAssetExport {
+                    png: STANDARD.encode(png),
+                    json: json.clone(),
+                });
+        }
+
         // Union des graphes : scène courante + scripts des niveaux 2/3.
         let kvl_graphs = collecter_graphes_kvl(game);
 
@@ -1031,7 +1047,15 @@ impl StandaloneExporter {
                     nouveau.kvl_context.set_var(k.clone(), v.clone());
                 }
 
+                // Mémoire du paquet : graphes, variables initiales et assets
+                // bruts doivent survivre aux reconstructions de `start_game`,
+                // `next_level` et `reload` (qui repartent d'une scène nue).
+                nouveau.exported_kvl_graphs = package.kvl_graphs.clone();
+                nouveau.exported_initial_variables = package.initial_variables.clone();
+
                 let (sprites, sheets) = decoder_assets_embarques(package);
+                nouveau.embedded_sprites = sprites.clone();
+                nouveau.embedded_sheets = sheets.clone();
                 nouveau.apply_embedded_assets(sprites, sheets);
 
                 // Réinitialise la caméra et la sélection du Studio.
@@ -1073,8 +1097,15 @@ impl StandaloneExporter {
             game.kvl_context.set_var(k.clone(), v.clone());
         }
 
+        // Même mémoire de paquet que le format multi-niveaux : un futur
+        // `start_game`/`reload` ne doit pas perdre les assets déjà installés.
+        game.exported_kvl_graphs = package.kvl_graphs.clone();
+        game.exported_initial_variables = package.initial_variables.clone();
+
         // Décodage des assets embarqués + re-résolution des sprites/spritesheets.
         let (sprites, sheets) = decoder_assets_embarques(package);
+        game.embedded_sprites = sprites.clone();
+        game.embedded_sheets = sheets.clone();
         game.apply_embedded_assets(sprites, sheets);
 
         // Réinitialise la caméra et la sélection du Studio
@@ -1401,6 +1432,285 @@ mod tests {
         assert_eq!(neuf.level_index, 2);
         assert_eq!(neuf.scene_name, "Niveau 3 : Arène du Titan");
         assert!(!neuf.next_level(), "dernier niveau : plus de suivant");
+    }
+
+    /// Script volontairement absent du disque : seul le paquet le fournit.
+    const SCRIPT_PAQUET: &str = "assets/scripts/script_du_paquet_absent_du_disque.kvl.json";
+    /// Script réellement présent sur disque : sa version doit gagner.
+    const SCRIPT_DISQUE: &str = "assets/scripts/coin_pickup.kvl.json";
+    const SPRITE_PAQUET: &str = "sprite_du_paquet";
+    const SHEET_PAQUET: &str = "sheet_du_paquet";
+
+    /// PNG RGBA 1×1 valide : les caches ne retiennent que les assets décodables.
+    fn png_un_pixel() -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, 1, 1);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut writer = enc.write_header().expect("en-tête PNG");
+            writer.write_image_data(&[11, 22, 33, 255]).expect("données PNG");
+        }
+        out
+    }
+
+    /// Scène de test : un script fourni par le paquet (absent du disque), un
+    /// sprite et une spritesheet embarqués, et un script résolu sur disque.
+    fn scene_du_paquet(nom: &str) -> SceneData {
+        use crate::entity::{Entity, KVLScriptComponent, Renderable2D, Transform2D};
+
+        SceneData {
+            name: nom.to_string(),
+            description: String::new(),
+            objective: Some("Vérifier la réinjection du paquet".to_string()),
+            entities: vec![
+                Entity::new(
+                    1,
+                    "Porte du paquet",
+                    "door",
+                    Transform2D::new(64.0, 64.0, 32.0, 32.0),
+                )
+                .with_renderable(Renderable2D::image_ref(SPRITE_PAQUET, 1))
+                .with_script(KVLScriptComponent::new(SCRIPT_PAQUET).with_interact("OnDoorInteract")),
+                Entity::new(
+                    2,
+                    "Sprite animé du paquet",
+                    "decor",
+                    Transform2D::new(96.0, 64.0, 16.0, 16.0),
+                )
+                .with_renderable(Renderable2D::sheet_ref(SHEET_PAQUET, "idle", 2)),
+                Entity::new(
+                    3,
+                    "Pièce sur disque",
+                    "collectible",
+                    Transform2D::new(128.0, 64.0, 16.0, 16.0),
+                )
+                .with_script(KVLScriptComponent::new(SCRIPT_DISQUE).with_overlap("OnPlayerOverlap")),
+            ],
+            player: None,
+            coins: Vec::new(),
+            doors: Vec::new(),
+            walls: Vec::new(),
+            enemies: Vec::new(),
+        }
+    }
+
+    /// Paquet multi-niveaux minimal, construit « depuis une scène de test ».
+    fn paquet_de_test() -> KaractiGamePackage {
+        let scenes = vec![
+            scene_du_paquet("NIVEAU PAQUET 1"),
+            scene_du_paquet("NIVEAU PAQUET 2"),
+        ];
+
+        let mut kvl_graphs = HashMap::new();
+        let mut graphe = Graph::new(
+            "graphe_paquet",
+            "Graphe du paquet",
+            "Logique embarquée dans le paquet",
+        );
+        graphe.add_variable("variable_graphe_paquet", Value::Int(7));
+        kvl_graphs.insert(SCRIPT_PAQUET.to_string(), graphe);
+
+        // Version « paquet » du script présent sur disque : elle ne doit jamais
+        // écraser la version résolue localement.
+        let mut graphe_disque = Graph::new(
+            "version_paquet",
+            "Version paquet",
+            "Ne doit pas écraser le disque",
+        );
+        graphe_disque.add_variable("variable_ecrasee_par_le_paquet", Value::Int(123));
+        kvl_graphs.insert(SCRIPT_DISQUE.to_string(), graphe_disque);
+
+        let mut sprite_assets = HashMap::new();
+        sprite_assets.insert(SPRITE_PAQUET.to_string(), STANDARD.encode(png_un_pixel()));
+        let mut sheet_assets = HashMap::new();
+        sheet_assets.insert(
+            SHEET_PAQUET.to_string(),
+            SheetAssetExport {
+                png: STANDARD.encode(png_un_pixel()),
+                json: r#"{"frames":{"idle":{"frame":{"x":0,"y":0,"w":1,"h":1}}}}"#
+                    .to_string(),
+            },
+        );
+        let mut initial_variables = HashMap::new();
+        initial_variables.insert("variable_initiale_paquet".to_string(), Value::Int(99));
+
+        KaractiGamePackage {
+            metadata: PackageMetadata {
+                title: "Paquet de test".to_string(),
+                ..PackageMetadata::default()
+            },
+            scene_name: scenes[0].name.clone(),
+            scene_objective: scenes[0].objective.clone(),
+            entities: scenes[0].to_entities(),
+            scenes,
+            kvl_graphs,
+            initial_variables,
+            sprite_assets,
+            sheet_assets,
+        }
+    }
+
+    #[test]
+    fn test_scene_native_ne_porte_aucune_memoire_de_paquet() {
+        let jeu = GameState::from_scene_data(scene_du_paquet("NATIF"), "test:natif")
+            .expect("scène de test");
+
+        assert!(jeu.exported_kvl_graphs.is_empty());
+        assert!(jeu.exported_initial_variables.is_empty());
+        assert!(jeu.embedded_sprites.is_empty());
+        assert!(jeu.embedded_sheets.is_empty());
+    }
+
+    #[test]
+    fn test_import_package_reinjecte_graphes_variables_et_assets_a_travers_les_niveaux() {
+        use crate::screens::GameScreen;
+
+        let package = paquet_de_test();
+        let mut jeu = GameState::from_scene_data(scene_du_paquet("NEUF"), "test:neuf")
+            .expect("état de test");
+        assert!(jeu.levels.is_empty());
+
+        StandaloneExporter::import_package(&mut jeu, &package);
+        assert_eq!(jeu.screen, GameScreen::Menu);
+        assert_eq!(jeu.exported_kvl_graphs.len(), package.kvl_graphs.len());
+        assert_eq!(jeu.embedded_sprites.len(), 1);
+        assert_eq!(jeu.embedded_sheets.len(), 1);
+
+        // `Entrée` (start_game) : niveau 1 reconstruit, mémoire réinjectée.
+        jeu.start_game();
+        assert_eq!(jeu.screen, GameScreen::Playing);
+        assert!(
+            jeu.kvl_graphs.contains_key(SCRIPT_PAQUET),
+            "graphe du paquet présent après start_game : {:?}",
+            jeu.kvl_graphs.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            jeu.sprite_cache.get(SPRITE_PAQUET).is_some(),
+            "sprite embarqué installé après start_game"
+        );
+        assert!(
+            jeu.sheet_cache.get(SHEET_PAQUET).is_some(),
+            "spritesheet embarquée installée après start_game"
+        );
+        assert_eq!(
+            jeu.kvl_context.get_var("variable_graphe_paquet"),
+            Some(&Value::Int(7)),
+            "variables initiales du graphe du paquet"
+        );
+        assert_eq!(
+            jeu.kvl_context.get_var("variable_initiale_paquet"),
+            Some(&Value::Int(99)),
+            "variables initiales du paquet"
+        );
+
+        // `next_level` : la scène du niveau 2 est reconstruite à son tour.
+        assert!(jeu.next_level(), "passage au niveau 2");
+        assert!(
+            jeu.kvl_graphs.contains_key(SCRIPT_PAQUET),
+            "graphe du paquet présent après next_level"
+        );
+        assert!(
+            jeu.sprite_cache.get(SPRITE_PAQUET).is_some(),
+            "sprite embarqué toujours installé après next_level"
+        );
+        assert!(
+            jeu.sheet_cache.get(SHEET_PAQUET).is_some(),
+            "spritesheet embarquée toujours installée après next_level"
+        );
+        assert_eq!(
+            jeu.kvl_context.get_var("variable_initiale_paquet"),
+            Some(&Value::Int(99)),
+            "variables du paquet après next_level"
+        );
+        assert!(
+            !jeu.exported_kvl_graphs.is_empty(),
+            "la mémoire du paquet survit à la reconstruction"
+        );
+
+        // `reload` : même scène, même exigence.
+        jeu.reload();
+        assert!(
+            jeu.kvl_graphs.contains_key(SCRIPT_PAQUET),
+            "graphe du paquet présent après reload"
+        );
+        assert!(
+            jeu.sprite_cache.get(SPRITE_PAQUET).is_some(),
+            "sprite embarqué toujours installé après reload"
+        );
+        assert!(
+            jeu.sheet_cache.get(SHEET_PAQUET).is_some(),
+            "spritesheet embarquée toujours installée après reload"
+        );
+        assert_eq!(
+            jeu.kvl_context.get_var("variable_graphe_paquet"),
+            Some(&Value::Int(7)),
+            "variables du graphe du paquet après reload"
+        );
+        assert_eq!(
+            jeu.kvl_context.get_var("variable_initiale_paquet"),
+            Some(&Value::Int(99)),
+            "variables initiales du paquet après reload"
+        );
+    }
+
+    #[test]
+    fn test_graphe_resolu_sur_disque_n_est_pas_ecrase_par_le_paquet() {
+        let package = paquet_de_test();
+        let mut jeu = GameState::from_scene_data(scene_du_paquet("NEUF"), "test:neuf")
+            .expect("état de test");
+        StandaloneExporter::import_package(&mut jeu, &package);
+        jeu.start_game();
+
+        // Version réellement résolue depuis le disque pour le même chemin.
+        let disque = GameState::from_scene_data(jeu.levels[0].clone(), "test:reference")
+            .expect("scène fraîche")
+            .kvl_graphs
+            .get(SCRIPT_DISQUE)
+            .cloned()
+            .expect("coin_pickup doit être résolu sur disque");
+
+        assert_eq!(
+            jeu.kvl_graphs.get(SCRIPT_DISQUE),
+            Some(&disque),
+            "le graphe du disque garde la priorité après reconstruction"
+        );
+        assert_ne!(
+            jeu.kvl_graphs[SCRIPT_DISQUE].id, "version_paquet",
+            "la version du paquet n'a pas écrasé le disque"
+        );
+        assert!(
+            jeu.kvl_context
+                .get_var("variable_ecrasee_par_le_paquet")
+                .is_none(),
+            "les variables du graphe écarté ne sont pas appliquées"
+        );
+    }
+
+    #[test]
+    fn test_paquet_sans_graphes_ni_assets_ne_casse_pas_les_reconstructions() {
+        let mut package = paquet_de_test();
+        package.kvl_graphs.clear();
+        package.initial_variables.clear();
+        package.sprite_assets.clear();
+        package.sheet_assets.clear();
+
+        let mut jeu = GameState::from_scene_data(scene_du_paquet("NEUF"), "test:neuf")
+            .expect("état de test");
+        StandaloneExporter::import_package(&mut jeu, &package);
+        assert!(jeu.exported_kvl_graphs.is_empty());
+        assert!(jeu.exported_initial_variables.is_empty());
+        assert!(jeu.embedded_sprites.is_empty());
+        assert!(jeu.embedded_sheets.is_empty());
+
+        jeu.start_game();
+        assert!(!jeu.kvl_graphs.contains_key(SCRIPT_PAQUET));
+        assert!(jeu.sprite_cache.get(SPRITE_PAQUET).is_none());
+        assert!(jeu.sheet_cache.get(SHEET_PAQUET).is_none());
+        assert!(jeu.next_level(), "les niveaux du paquet restent jouables");
+        jeu.reload();
+        assert_eq!(jeu.levels.len(), 2, "aucun niveau n'a été perdu");
+        assert_eq!(jeu.level_index, 1, "le niveau courant est conservé");
     }
 
     #[test]
@@ -2115,5 +2425,28 @@ mod tests {
             Some(dir.as_path()),
         );
         assert_eq!(html, second, "la méta doit rester déterministe");
+    }
+
+    #[test]
+    fn reexport_conserve_les_images_embarquees() {
+        // Un jeu exporté puis ré-importé n'a plus ses images sur disque : un ré-export
+        // doit les reprendre depuis la mémoire du paquet, sinon elles disparaissent.
+        let mut game = jeu_reference();
+        game.embedded_sprites
+            .insert("sprite_importe".to_string(), vec![0x89, 0x50, 0x4E, 0x47]);
+        game.embedded_sheets.insert(
+            "atlas_importe".to_string(),
+            (vec![0x89, 0x50, 0x4E, 0x47], "{}".to_string()),
+        );
+
+        let package = StandaloneExporter::create_package(&game, "Test", "Auteur");
+        assert!(
+            package.sprite_assets.contains_key("sprite_importe"),
+            "le sprite embarqué doit être ré-exporté"
+        );
+        assert!(
+            package.sheet_assets.contains_key("atlas_importe"),
+            "l'atlas embarqué doit être ré-exporté"
+        );
     }
 }

@@ -1014,7 +1014,7 @@ checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
 
 [[package]]
 name = "engine-core"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "base64 0.22.1",
  "fontdue",
@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "engine-wasm"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "engine-core",
  "wasm-bindgen",
@@ -2097,7 +2097,7 @@ dependencies = [
 
 [[package]]
 name = "karactirage-studio"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "engine-core",
  "kvl-core",
@@ -2134,7 +2134,7 @@ dependencies = [
 
 [[package]]
 name = "kvl-cli"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "kvl-core",
  "kvl-runtime",
@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "kvl-core"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "schemars 1.2.3",
  "serde",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "kvl-runtime"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "kvl-core",
  "serde",

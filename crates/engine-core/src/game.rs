@@ -249,6 +249,24 @@ pub struct GameState {
     /// `None` quand le projet n'en déclare pas : le pré-vol d'export reste alors
     /// silencieux, sauf si des entités référencent des scripts ou des assets.
     pub assets_manifest: Option<crate::assets_manifest::AssetsManifest>,
+    /// Union des graphes KVL transportée par un paquet importé (tous niveaux).
+    ///
+    /// Vide hors import de paquet : le Studio natif reconstruit sa logique depuis
+    /// le disque et les replis `include_str!`, comportement inchangé. Réinjectée
+    /// par [`Self::inherit_exported_package`] après chaque reconstruction
+    /// (`start_game`, `next_level`, `reload`) car ces dernières partent d'une
+    /// scène nue. Un graphe déjà résolu sur disque garde la priorité.
+    pub exported_kvl_graphs: HashMap<String, Graph>,
+    /// Variables initiales du paquet importé.
+    ///
+    /// Réappliquées uniquement si absentes du contexte reconstruit : elles ne
+    /// doivent jamais écraser une valeur posée par la scène ou par le jeu.
+    pub exported_initial_variables: HashMap<String, Value>,
+    /// Assets sprite embarqués du paquet (`id -> PNG brut`), conservés pour être
+    /// réinstallés après une reconstruction, sans système de fichiers.
+    pub embedded_sprites: HashMap<String, Vec<u8>>,
+    /// Assets spritesheet embarqués du paquet (`id -> (PNG brut, JSON)`), idem.
+    pub embedded_sheets: HashMap<String, (Vec<u8>, String)>,
     /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
     pub camera3d: Option<crate::subsystems::Camera3DData>,
     /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
@@ -1169,6 +1187,10 @@ impl GameState {
             level_index: 0,
             project_id: String::new(),
             assets_manifest: None,
+            exported_kvl_graphs: HashMap::new(),
+            exported_initial_variables: HashMap::new(),
+            embedded_sprites: HashMap::new(),
+            embedded_sheets: HashMap::new(),
             camera3d: None,
             lights: Vec::new(),
             save_config: crate::subsystems::SaveConfig::default(),
@@ -1227,6 +1249,65 @@ impl GameState {
                 }
             }
         }
+    }
+
+    /// Réinjecte la mémoire d'un paquet importé dans un état reconstruit.
+    ///
+    /// `start_game`, `next_level` et `reload` repartent d'une scène nue via
+    /// [`Self::from_scene_data`] : sans cette étape, les scripts dont le chemin
+    /// n'existe pas sur disque (fournis par le paquet) et les assets embarqués
+    /// disparaîtraient au premier changement de niveau, et les sprites
+    /// retomberaient en rectangles colorés.
+    ///
+    /// Ordre exact, imposé par la priorité au disque et à la scène :
+    /// 1. assets embarqués (caches + re-résolution des entités de la scène) ;
+    /// 2. graphes du paquet absents de l'état frais, puis leurs variables
+    ///    initiales — un graphe résolu sur disque n'est jamais écrasé ;
+    /// 3. variables initiales du paquet, uniquement si encore absentes.
+    ///
+    /// Hors import de paquet, les quatre sources sont vides : aucun effet, donc
+    /// le comportement natif du Studio reste strictement inchangé.
+    fn restore_exported_package(&mut self) {
+        if !self.embedded_sprites.is_empty() || !self.embedded_sheets.is_empty() {
+            // `apply_embedded_assets` prend les maps par valeur : on clone la
+            // mémoire du paquet pour pouvoir la réinstaller au niveau suivant.
+            let sprites = self.embedded_sprites.clone();
+            let sheets = self.embedded_sheets.clone();
+            self.apply_embedded_assets(sprites, sheets);
+        }
+
+        for (path, graph) in &self.exported_kvl_graphs {
+            if self.kvl_graphs.contains_key(path) {
+                // Script résolu sur disque (ou déjà chargé) : sa version gagne.
+                continue;
+            }
+            for (key, variable) in &graph.variables {
+                if self.kvl_context.get_var(key).is_none() {
+                    self.kvl_context
+                        .set_var(key.clone(), variable.initial_value.clone());
+                }
+            }
+            self.kvl_graphs.insert(path.clone(), graph.clone());
+        }
+
+        for (key, value) in &self.exported_initial_variables {
+            if self.kvl_context.get_var(key).is_none() {
+                self.kvl_context.set_var(key.clone(), value.clone());
+            }
+        }
+    }
+
+    /// Transfère la mémoire du paquet depuis `source` vers cet état reconstruit,
+    /// puis la réinjecte aussitôt (voir [`Self::restore_exported_package`]).
+    ///
+    /// Les champs doivent être recopiés avant `*self = fresh` : sans cela, la
+    /// première reconstruction les viderait définitivement.
+    fn inherit_exported_package(&mut self, source: &GameState) {
+        self.exported_kvl_graphs = source.exported_kvl_graphs.clone();
+        self.exported_initial_variables = source.exported_initial_variables.clone();
+        self.embedded_sprites = source.embedded_sprites.clone();
+        self.embedded_sheets = source.embedded_sheets.clone();
+        self.restore_exported_package();
     }
 
     /// Reconstruit les seaux statiques persistants du partitionnement spatial (murs, obstacles fixes, plateformes)
@@ -1307,6 +1388,9 @@ impl GameState {
             // Même périphérique audio et mêmes réglages après un hot-reload.
             std::mem::swap(&mut new_state.audio, &mut self.audio);
             std::mem::swap(&mut new_state.replay, &mut self.replay);
+            // Graphes/variables/assets du paquet : la scène reconstruite est nue,
+            // on lui rend la mémoire de l'import avant de remplacer `self`.
+            new_state.inherit_exported_package(self);
             new_state.screen = crate::screens::GameScreen::initial(
                 new_state.ui_screens.iter().any(|s| s.kind == crate::subsystems::UiScreenKind::Menu),
                 new_state.kvl_context.get_var("menu_active") == Some(&Value::Bool(true)),
@@ -1347,6 +1431,9 @@ impl GameState {
         fresh.inventory = inventory;
         fresh.screen = crate::screens::GameScreen::Playing;
         fresh.editor.mode = EditorMode::Play;
+        // Graphes/variables/assets du paquet : ils ne vivent pas dans la scène
+        // du niveau suivant, il faut donc les réinjecter dans l'état frais.
+        fresh.inherit_exported_package(self);
         // L'audio n'est pas clonable : on garde le même périphérique et les mêmes réglages
         // (volume/mute) à travers le changement de niveau.
         std::mem::swap(&mut fresh.audio, &mut self.audio);
@@ -2018,6 +2105,9 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             fresh.level_index = 0;
             fresh.project_id = project_id;
             fresh.assets_manifest = assets_manifest;
+            // Une nouvelle partie reconstruit le niveau 1 depuis la scène : les
+            // graphes et assets venus du paquet doivent y être réinjectés.
+            fresh.inherit_exported_package(self);
             fresh.editor.mode = EditorMode::Play;
             std::mem::swap(&mut fresh.audio, &mut self.audio);
             std::mem::swap(&mut fresh.replay, &mut self.replay);

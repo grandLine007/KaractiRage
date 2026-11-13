@@ -131,6 +131,17 @@ spatiale, il ne pouvait presque jamais toucher le joueur.
 **Défaut visé** : l'export ne sérialisait que la scène courante — le fichier partagé
 contenait 9 entités (niveau 1) alors que le jeu en compte 3.
 
+## 3nonies. Vague 9 — terminée (n'importe quel jeu s'exporte)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| « réinjection » | Faire survivre graphes KVL et assets embarqués aux changements de niveau | ✅ script absent du disque + PNG + spritesheet survivent à `start_game`/`next_level`/`reload` |
+| meneur | Ré-export des images embarquées | ✅ ferme la boucle export → import → export |
+
+**Dette visée** (rapport v0.3.6 §6.1) : `from_scene_data` reconstruit l'état et perd
+l'union du paquet. Le jeu de référence n'est pas touché, mais un jeu exporté avec des
+sprites importés perd ses images au niveau 2.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
