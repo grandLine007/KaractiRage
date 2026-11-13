@@ -203,6 +203,15 @@ pub struct SvgCache {
     /// [`PngCache::install_embedded`] : sous wasm, aucune lecture de fichier
     /// n'est possible et c'est le seul chemin qui fournit encore un sprite.
     embedded: HashMap<String, String>,
+    /// Clips d'animation embarqués (export autonome / import de paquet) :
+    /// id du sprite -> contenu brut du `.anim.json`.
+    ///
+    /// Sans cette mémoire, `load_clips` retombait sur les clips générés
+    /// (`idle`/`walk`) : sous wasm, `assets/sprites/{id}.anim.json` est
+    /// illisible, donc les clips personnalisés de l'auteur disparaissaient.
+    /// Ces contenus sont prioritaires sur le disque **et** sur la génération
+    /// par défaut.
+    embedded_clips: HashMap<String, String>,
 }
 
 impl SvgCache {
@@ -213,6 +222,12 @@ impl SvgCache {
     /// Installe des sources SVG embarquées, prioritaires sur le disque.
     pub fn install_embedded(&mut self, sources: HashMap<String, String>) {
         self.embedded = sources;
+    }
+
+    /// Installe des clips d'animation embarqués, prioritaires sur le disque et
+    /// sur les clips générés par défaut.
+    pub fn install_embedded_clips(&mut self, clips: HashMap<String, String>) {
+        self.embedded_clips = clips;
     }
 
     /// Récupère un asset déjà rastérisé, ou le charge/rasterise à la demande
@@ -228,7 +243,7 @@ impl SvgCache {
         let tree = parse_svg(&src)?;
         let image = rasterize_tree(&tree, None)?;
         let rig = extract_rig(&tree).map(|mut r| {
-            r.clips = load_clips(id, &r.parts);
+            r.clips = self.load_clips(id, &r.parts);
             Arc::new(r)
         });
         let loaded = LoadedSvg {
@@ -240,6 +255,37 @@ impl SvgCache {
         let arc = Arc::new(loaded);
         self.assets.insert(id.to_string(), arc.clone());
         Ok(arc)
+    }
+
+    /// Charge les clips d'un rig, par ordre de priorité :
+    /// 1. mémoire embarquée du paquet (seul chemin disponible sous wasm) ;
+    /// 2. `assets/sprites/{id}.anim.json` sur disque (Studio natif) ;
+    /// 3. clips générés par défaut (`idle`/`walk`).
+    ///
+    /// Un contenu embarqué illisible ou vide (clips sans piste correspondant au
+    /// rig) ne bloque pas : on retombe sur le disque puis sur les clips par
+    /// défaut, jamais sur un rig sans animation.
+    fn load_clips(&self, id: &str, parts: &[RigPart]) -> Vec<AnimClip> {
+        let rel = id.trim_end_matches(".svg");
+        if let Some(content) = self
+            .embedded_clips
+            .get(id)
+            .or_else(|| self.embedded_clips.get(rel))
+        {
+            if let Ok(clips) = clips_from_json(content, parts) {
+                if !clips.is_empty() {
+                    return clips;
+                }
+            }
+        }
+        if let Some(content) = read_anim_source(id) {
+            if let Ok(clips) = clips_from_json(&content, parts) {
+                if !clips.is_empty() {
+                    return clips;
+                }
+            }
+        }
+        default_clips(parts)
     }
 }
 
@@ -401,20 +447,40 @@ fn rasterize_part(node: &usvg::Node) -> Option<RigPart> {
     })
 }
 
-/// Charge les clips depuis `assets/sprites/{id}.anim.json`, sinon génère des clips par défaut.
-fn load_clips(id: &str, parts: &[RigPart]) -> Vec<AnimClip> {
-    let rel = id.trim_end_matches(".svg");
-    let json_path = format!("assets/sprites/{rel}.anim.json");
-    for path in [json_path.as_str(), &format!("../../{json_path}")] {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(clips) = clips_from_json(&content, parts) {
-                if !clips.is_empty() {
-                    return clips;
-                }
-            }
+/// Chemin disque du `.anim.json` d'un sprite.
+///
+/// Même convention que [`load_svg_source`] : un identifiant simple est cherché
+/// sous `assets/sprites/`, tandis qu'un chemin explicite (absolu ou contenant
+/// `/`) est utilisé tel quel, suffixe `.svg` retiré.
+fn chemin_anim(id: &str) -> String {
+    if id.contains('/') {
+        format!("{}.anim.json", id.trim_end_matches(".svg"))
+    } else {
+        format!("assets/sprites/{}.anim.json", id.trim_end_matches(".svg"))
+    }
+}
+
+/// Lit le contenu brut du `.anim.json` d'un sprite (`None` si introuvable).
+///
+/// Résolution identique à [`load_svg_source`] : disque (cwd), puis `../../`
+/// (tests lancés depuis `crates/engine-core`), puis la racine du dépôt
+/// (indépendante du cwd). Public : l'export s'en sert pour embarquer les clips
+/// personnalisés sans dépendre du répertoire courant.
+pub fn read_anim_source(id: &str) -> Option<String> {
+    let chemin = chemin_anim(id);
+    if let Ok(content) = std::fs::read_to_string(&chemin) {
+        return Some(content);
+    }
+    if !std::path::Path::new(&chemin).is_absolute() {
+        if let Ok(content) = std::fs::read_to_string(format!("../../{chemin}")) {
+            return Some(content);
+        }
+        let abs = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+        if let Ok(content) = std::fs::read_to_string(format!("{abs}/{chemin}")) {
+            return Some(content);
         }
     }
-    default_clips(parts)
+    None
 }
 
 fn clips_from_json(content: &str, parts: &[RigPart]) -> Result<Vec<AnimClip>, SvgError> {
@@ -726,6 +792,79 @@ mod tests {
         let loaded = cache.get_or_load(id).expect("source embarquée rastérisée");
         assert_eq!((loaded.width, loaded.height), (16, 16));
         assert_eq!(loaded.image.pixels[(8 * 16 + 8) as usize], 0xFFFF0000);
+    }
+
+    /// Sprite riggé minimal : quatre groupes nommés comme les membres attendus
+    /// par [`default_clips`], pour que l'absence de `.anim.json` produise bien
+    /// `idle`/`walk`.
+    const RIG_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <g id="arm_l"><rect x="0" y="0" width="8" height="8" fill="#ff0000"/></g>
+  <g id="arm_r"><rect x="16" y="0" width="8" height="8" fill="#00ff00"/></g>
+  <g id="leg_l"><rect x="32" y="0" width="8" height="8" fill="#0000ff"/></g>
+  <g id="leg_r"><rect x="48" y="0" width="8" height="8" fill="#ffff00"/></g>
+</svg>"##;
+
+    /// Clips volontairement absents des valeurs générées (noms et durées).
+    const RIG_CLIPS: &str = r##"{
+  "version": 1,
+  "clips": {
+    "danse": { "loop": true, "tracks": { "arm_l": [ { "t": 0.0, "rot": 0.0 }, { "t": 2.0, "rot": 90.0 } ] } },
+    "saut": { "loop": false, "tracks": { "leg_l": [ { "t": 0.0, "rot": 0.0 }, { "t": 0.5, "rot": -40.0 } ] } }
+  }
+}"##;
+
+    #[test]
+    fn clips_embarques_prioritaires_sur_le_disque_et_les_defauts() {
+        let id = "svg_clips_embarques_test_unitaire";
+        assert!(read_anim_source(id).is_none(), "aucun `.anim.json` sur disque");
+
+        let mut cache = SvgCache::new();
+        cache.install_embedded(HashMap::from([(id.to_string(), RIG_SVG.to_string())]));
+        cache.install_embedded_clips(HashMap::from([(id.to_string(), RIG_CLIPS.to_string())]));
+
+        let loaded = cache.get_or_load(id).expect("rig embarqué rastérisé");
+        let rig = loaded.rig.as_ref().expect("rig extrait du SVG");
+        let danse = rig.clip("danse").expect("clip « danse » du fichier embarqué");
+        assert_eq!(danse.duration, 2.0);
+        assert!(danse.looped);
+        assert!(rig.clip("walk").is_none(), "les clips générés ne doivent pas gagner");
+    }
+
+    #[test]
+    fn sans_clips_embarques_ni_disque_les_clips_par_defaut_sont_generes() {
+        let id = "svg_sans_clips_test_unitaire";
+        assert!(read_anim_source(id).is_none());
+
+        let mut cache = SvgCache::new();
+        cache.install_embedded(HashMap::from([(id.to_string(), RIG_SVG.to_string())]));
+
+        let loaded = cache.get_or_load(id).expect("rig embarqué rastérisé");
+        let rig = loaded.rig.as_ref().expect("rig extrait du SVG");
+        assert_eq!(rig.clip("idle").map(|c| c.duration), Some(1.0));
+        assert_eq!(rig.clip("walk").map(|c| c.duration), Some(0.8));
+        assert!(rig.clip("danse").is_none());
+    }
+
+    #[test]
+    fn clips_du_disque_utilises_sans_memoire_embarquee() {
+        // `assets/sprites/hero.anim.json` existe dans le dépôt : sans clips
+        // embarqués, `load_clips` doit le lire (comportement Studio natif).
+        let mut cache = SvgCache::new();
+        let loaded = cache.get_or_load("hero").expect("héros du dépôt");
+        let rig = loaded.rig.as_ref().expect("rig extrait de hero.svg");
+        let arm_l = rig
+            .parts
+            .iter()
+            .position(|p| p.id == "arm_l")
+            .expect("membre arm_l");
+        let idle = rig.clip("idle").expect("clip idle du fichier");
+        let piste = idle
+            .tracks
+            .iter()
+            .find(|t| t.part == arm_l)
+            .expect("piste arm_l");
+        // -8° vient du fichier ; les clips générés utilisent -6°.
+        assert_eq!(piste.keys[0].rot, -8.0);
     }
 
     #[test]

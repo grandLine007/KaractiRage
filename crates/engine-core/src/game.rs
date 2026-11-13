@@ -275,6 +275,15 @@ pub struct GameState {
     /// Conservées pour être réinstallées après `start_game`, `next_level` et
     /// `reload`, qui repartent tous d'une scène nue.
     pub embedded_svg_assets: HashMap<String, String>,
+    /// Clips d'animation embarqués du paquet (`id du sprite -> contenu du
+    /// fichier `.anim.json`).
+    ///
+    /// Même rôle que [`Self::embedded_svg_assets`] pour les animations : sous
+    /// wasm, `assets/sprites/{id}.anim.json` est illisible et `load_clips`
+    /// retombait sur les clips générés (`idle`/`walk`). Ces contenus sont
+    /// prioritaires dans [`crate::vector::SvgCache`] et réinstallés avec les
+    /// sources aux reconstructions (`start_game`, `next_level`, `reload`).
+    pub embedded_svg_anims: HashMap<String, String>,
     /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
     pub camera3d: Option<crate::subsystems::Camera3DData>,
     /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
@@ -1223,6 +1232,7 @@ impl GameState {
             embedded_sprites: HashMap::new(),
             embedded_sheets: HashMap::new(),
             embedded_svg_assets: HashMap::new(),
+            embedded_svg_anims: HashMap::new(),
             camera3d: None,
             lights: Vec::new(),
             save_config: crate::subsystems::SaveConfig::default(),
@@ -1286,19 +1296,36 @@ impl GameState {
     /// Installe les sources SVG embarquées d'un paquet, puis re-résout les
     /// `ShapeKind::SvgRef` des entités courantes.
     ///
-    /// Prioritaire sur le disque (voir [`crate::vector::SvgCache::install_embedded`]) :
-    /// c'est le seul chemin qui fournit encore un sprite vectoriel sous wasm. Le
-    /// cache n'est pas conservé sur l'état (comme à l'import d'une scène) : le
-    /// rendu lit `Entity::vector_sprite`, déjà rastérisé.
+    /// Conserve les clips d'animation déjà mémorisés : un appelant qui ne
+    /// transporte que des sources (compatibilité) ne perd pas les clips.
     pub fn apply_embedded_svg(&mut self, sources: HashMap<String, String>) {
-        self.embedded_svg_assets = sources.clone();
-        if sources.is_empty() {
+        let clips = self.embedded_svg_anims.clone();
+        self.apply_embedded_svg_package(sources, clips);
+    }
+
+    /// Installe sources SVG **et** clips d'animation embarqués en une seule
+    /// passe de résolution (import de paquet).
+    ///
+    /// Prioritaire sur le disque (voir [`crate::vector::SvgCache::install_embedded`]
+    /// et [`crate::vector::SvgCache::install_embedded_clips`]) : c'est le seul
+    /// chemin qui fournit encore un sprite vectoriel animé sous wasm. Le cache
+    /// n'est pas conservé sur l'état (comme à l'import d'une scène) : le rendu
+    /// lit `Entity::vector_sprite`, déjà rastérisé et animé.
+    pub fn apply_embedded_svg_package(
+        &mut self,
+        sources: HashMap<String, String>,
+        clips: HashMap<String, String>,
+    ) {
+        self.embedded_svg_assets = sources;
+        self.embedded_svg_anims = clips;
+        if self.embedded_svg_assets.is_empty() && self.embedded_svg_anims.is_empty() {
             // Paquet historique : ne rien réinitialiser, un sprite déjà résolu
             // sur disque (Studio natif) doit rester en place.
             return;
         }
         let mut svg_cache = crate::vector::SvgCache::new();
-        svg_cache.install_embedded(sources);
+        svg_cache.install_embedded(self.embedded_svg_assets.clone());
+        svg_cache.install_embedded_clips(self.embedded_svg_anims.clone());
         for ent in self.entities.iter_mut() {
             resoudre_sprite_vectoriel(ent, &mut svg_cache);
         }
@@ -1325,17 +1352,20 @@ impl GameState {
         if !self.embedded_sprites.is_empty()
             || !self.embedded_sheets.is_empty()
             || !self.embedded_svg_assets.is_empty()
+            || !self.embedded_svg_anims.is_empty()
         {
             // `apply_embedded_assets` prend les maps par valeur : on clone la
             // mémoire du paquet pour pouvoir la réinstaller au niveau suivant.
             let sprites = self.embedded_sprites.clone();
             let sheets = self.embedded_sheets.clone();
             let sources_svg = self.embedded_svg_assets.clone();
+            let clips_svg = self.embedded_svg_anims.clone();
             self.apply_embedded_assets(sprites, sheets);
             // Les SVG sont re-résolus après les PNG/spritesheets : les deux
             // caches sont indépendants, l'ordre n'a d'incidence que sur le
-            // moment où `vector_sprite` est renseigné.
-            self.apply_embedded_svg(sources_svg);
+            // moment où `vector_sprite` est renseigné. Les clips `.anim.json`
+            // partent dans la même passe que les sources.
+            self.apply_embedded_svg_package(sources_svg, clips_svg);
         }
 
         for (path, graph) in &self.exported_kvl_graphs {
@@ -1370,6 +1400,7 @@ impl GameState {
         self.embedded_sprites = source.embedded_sprites.clone();
         self.embedded_sheets = source.embedded_sheets.clone();
         self.embedded_svg_assets = source.embedded_svg_assets.clone();
+        self.embedded_svg_anims = source.embedded_svg_anims.clone();
         self.restore_exported_package();
     }
 

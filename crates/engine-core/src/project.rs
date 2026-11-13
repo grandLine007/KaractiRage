@@ -352,6 +352,7 @@ impl KaractiProject {
             sprite_assets: std::collections::HashMap::new(),
             sheet_assets: std::collections::HashMap::new(),
             svg_assets: std::collections::HashMap::new(),
+            svg_anim_assets: std::collections::HashMap::new(),
         }
     }
 

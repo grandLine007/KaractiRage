@@ -229,6 +229,58 @@
     const gamePackage = JSON.parse(rawData);
     console.log("🎮 KaractiRage Standalone:", gamePackage.metadata.title, gamePackage);
 
+    // -----------------------------------------------------------------------
+    // Télémétrie de performance, lue par `export-smoke.mjs --expect-fps`.
+    //
+    // Le temps mesuré est le coût CPU d'une frame : de l'entrée dans
+    // `drawFrame` jusqu'à la fin de `putImageData` (rendu wasm + recopie du
+    // framebuffer + transfert vers le canvas). La moyenne est glissante sur
+    // les FENETRE_FPS dernières frames réellement rendues.
+    //
+    //   window.__karacti_frame_ms : moyenne glissante en ms (null si aucune
+    //                               frame mesurée) ;
+    //   window.__karacti_fps      : 1000 / moyenne (null si non mesuré) ;
+    //   window.__karacti_frames   : nombre de frames rendues (0 au départ).
+    //
+    // Les trois clés sont posées dès l'évaluation du module, y compris quand
+    // aucun runtime n'est embarqué (états 'absent'/'error') : le harnais n'a
+    // jamais à distinguer « clé absente » de « valeur nulle ». Aucune de ces
+    // affectations ne peut lever d'exception.
+    // -----------------------------------------------------------------------
+    const FENETRE_FPS = 120;
+    const dureesFrame = new Float64Array(FENETRE_FPS);
+    let curseurFrame = 0;
+    let echantillonsFrame = 0;
+    let framesRendues = 0;
+
+    window.__karacti_frame_ms = null;
+    window.__karacti_fps = null;
+    window.__karacti_frames = 0;
+
+    // Repli inoffensif : `performance.now()` manque aux moteurs très anciens.
+    function maintenant() {
+      return typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
+    }
+
+    function enregistrerFrame(dureeMs) {
+      // Tampon circulaire : une fois plein, les FENETRE_FPS emplacements sont
+      // tous valides, donc sommer 0..echantillonsFrame-1 reste juste quel que
+      // soit le point de départ du curseur.
+      dureesFrame[curseurFrame] = dureeMs;
+      curseurFrame = (curseurFrame + 1) % FENETRE_FPS;
+      if (echantillonsFrame < FENETRE_FPS) echantillonsFrame++;
+      framesRendues++;
+
+      let somme = 0;
+      for (let i = 0; i < echantillonsFrame; i++) somme += dureesFrame[i];
+      const moyenne = somme / echantillonsFrame;
+      window.__karacti_frame_ms = moyenne;
+      window.__karacti_fps = moyenne > 0 ? 1000 / moyenne : null;
+      window.__karacti_frames = framesRendues;
+    }
+
     const canvas = document.getElementById('game-canvas');
     const ctx = canvas.getContext('2d', { alpha: false });
     const overlayStart = document.getElementById('overlay-start');
@@ -552,6 +604,7 @@
         let framesSansFramebuffer = 0;
 
         function drawFrame(now) {
+          const debutFrame = maintenant();
           const dt = Math.min((now - lastTime) / 1000.0, 0.1);
           lastTime = now;
           wasmModule.wasm_render_frame(dt);
@@ -569,6 +622,9 @@
             const pixels = new Uint8ClampedArray(memory.buffer, ptr, width * height * 4);
             image.data.set(pixels);
             ctx.putImageData(image, 0, 0);
+            // Seules les frames effectivement présentées entrent dans la
+            // moyenne : une frame sans framebuffer n'a rien coûté à l'écran.
+            enregistrerFrame(maintenant() - debutFrame);
             if (premiereFrame) {
               premiereFrame = false;
               setRuntimeState('running');

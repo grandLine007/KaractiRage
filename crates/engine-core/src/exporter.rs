@@ -420,6 +420,17 @@ pub struct KaractiGamePackage {
     /// `#[serde(default)]` garde lisibles les paquets produits avant ce champ.
     #[serde(default)]
     pub svg_assets: HashMap<String, String>,
+    /// Clips d'animation personnalisés embarqués (id du sprite -> contenu brut
+    /// du fichier `.anim.json`), pour l'export autonome.
+    ///
+    /// `SvgCache::load_clips` lisait `assets/sprites/{id}.anim.json` sur disque :
+    /// sous wasm cette lecture échoue et le rig retombait sur les clips générés
+    /// (`idle`/`walk`), donc un auteur perdait ses propres clips dans le jeu
+    /// exporté. Ces contenus sont prioritaires sur le disque et sur la
+    /// génération par défaut. `#[serde(default)]` garde lisibles les paquets
+    /// produits avant ce champ.
+    #[serde(default)]
+    pub svg_anim_assets: HashMap<String, String>,
 }
 
 impl KaractiGamePackage {
@@ -704,6 +715,7 @@ impl StandaloneExporter {
         let mut sprite_assets = HashMap::new();
         let mut sheet_assets = HashMap::new();
         let mut svg_assets: HashMap<String, String> = HashMap::new();
+        let mut svg_anim_assets: HashMap<String, String> = HashMap::new();
         for ent in entites_exportees(game) {
             if let Some(rend) = &ent.renderable {
                 match &rend.shape {
@@ -726,6 +738,12 @@ impl StandaloneExporter {
                         // que le runtime wasm puisse la rastériser sans disque.
                         if let Some(source) = crate::vector::read_svg_source(asset) {
                             svg_assets.entry(asset.clone()).or_insert(source);
+                        }
+                        // Le `.anim.json` voisin suit la même résolution : sans
+                        // lui, `load_clips` générerait des clips par défaut et
+                        // perdrait les animations de l'auteur sous wasm.
+                        if let Some(anim) = crate::vector::read_anim_source(asset) {
+                            svg_anim_assets.entry(asset.clone()).or_insert(anim);
                         }
                     }
                     _ => {}
@@ -753,6 +771,14 @@ impl StandaloneExporter {
         for (id, source) in &game.embedded_svg_assets {
             svg_assets.entry(id.clone()).or_insert_with(|| source.clone());
         }
+        // Idem pour les clips d'animation d'un état importé : `create_package`
+        // les retrouve sur disque seulement s'ils y sont encore, un ré-export
+        // doit les reprendre depuis la mémoire du paquet.
+        for (id, anim) in &game.embedded_svg_anims {
+            svg_anim_assets
+                .entry(id.clone())
+                .or_insert_with(|| anim.clone());
+        }
 
         // Union des graphes : scène courante + scripts des niveaux 2/3.
         let kvl_graphs = collecter_graphes_kvl(game);
@@ -773,6 +799,7 @@ impl StandaloneExporter {
             sprite_assets,
             sheet_assets,
             svg_assets,
+            svg_anim_assets,
         }
     }
 
@@ -1108,7 +1135,12 @@ impl StandaloneExporter {
                 // Sources SVG : `from_scene_data` les a cherchées sur disque
                 // (échec garanti sous wasm) ; on les réinstalle depuis le
                 // paquet pour que les `SvgRef` soient rastérisés malgré tout.
-                nouveau.apply_embedded_svg(package.svg_assets.clone());
+                // Les clips `.anim.json` voyagent dans la même passe : sans
+                // eux, le rig importé retomberait sur `idle`/`walk` générés.
+                nouveau.apply_embedded_svg_package(
+                    package.svg_assets.clone(),
+                    package.svg_anim_assets.clone(),
+                );
 
                 // Réinitialise la caméra et la sélection du Studio.
                 nouveau.editor.selected = crate::editor::SelectedEntity::None;
@@ -1170,10 +1202,14 @@ impl StandaloneExporter {
         game.embedded_sprites = sprites.clone();
         game.embedded_sheets = sheets.clone();
         game.apply_embedded_assets(sprites, sheets);
-        // Même installation des sources SVG que le format multi-niveaux : un
-        // ancien paquet sans `svg_assets` laisse simplement la mémoire vide et
-        // les sprites déjà résolus sur disque intacts.
-        game.apply_embedded_svg(package.svg_assets.clone());
+        // Même installation des sources SVG et des clips d'animation que le
+        // format multi-niveaux : un ancien paquet sans ces champs laisse
+        // simplement la mémoire vide et les sprites déjà résolus sur disque
+        // intacts.
+        game.apply_embedded_svg_package(
+            package.svg_assets.clone(),
+            package.svg_anim_assets.clone(),
+        );
 
         // Réinitialise la caméra et la sélection du Studio
         game.editor.selected = crate::editor::SelectedEntity::None;
@@ -1314,6 +1350,7 @@ mod tests {
             sprite_assets: HashMap::new(),
             sheet_assets: HashMap::new(),
             svg_assets: HashMap::new(),
+            svg_anim_assets: HashMap::new(),
         };
 
         let json = package.to_json_pretty().expect("Sérialisation package");
@@ -1348,6 +1385,7 @@ mod tests {
             sprite_assets: HashMap::new(),
             sheet_assets: HashMap::new(),
             svg_assets: HashMap::new(),
+            svg_anim_assets: HashMap::new(),
         };
 
         let html = package.generate_standalone_html();
@@ -1778,6 +1816,7 @@ mod tests {
             sprite_assets,
             sheet_assets,
             svg_assets: HashMap::new(),
+            svg_anim_assets: HashMap::new(),
         }
     }
 
@@ -1791,6 +1830,7 @@ mod tests {
         assert!(jeu.embedded_sprites.is_empty());
         assert!(jeu.embedded_sheets.is_empty());
         assert!(jeu.embedded_svg_assets.is_empty());
+        assert!(jeu.embedded_svg_anims.is_empty());
     }
 
     #[test]
@@ -1934,6 +1974,7 @@ mod tests {
         assert!(jeu.embedded_sprites.is_empty());
         assert!(jeu.embedded_sheets.is_empty());
         assert!(jeu.embedded_svg_assets.is_empty());
+        assert!(jeu.embedded_svg_anims.is_empty());
 
         jeu.start_game();
         assert!(!jeu.kvl_graphs.contains_key(SCRIPT_PAQUET));
@@ -2757,6 +2798,7 @@ mod tests {
             sprite_assets: HashMap::new(),
             sheet_assets: HashMap::new(),
             svg_assets,
+            svg_anim_assets: HashMap::new(),
         }
     }
 
@@ -2954,5 +2996,312 @@ mod tests {
             .as_ref()
             .expect("le vector_sprite de la scène ne doit pas être détruit");
         assert_eq!(sprite.asset, SVG_PREUVE);
+    }
+
+    // -----------------------------------------------------------------------
+    // Clips `.anim.json` embarqués : l'auteur retrouve ses animations dans le
+    // jeu exporté, y compris sous wasm où le disque est illisible.
+    // -----------------------------------------------------------------------
+
+    /// Sprite riggé minimal : quatre groupes nommés comme les membres attendus
+    /// par `default_clips`, pour que l'absence de `.anim.json` produise bien
+    /// `idle`/`walk` (et pas un rig sans clip).
+    const SVG_RIG_ANIM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <g id="arm_l"><rect x="0" y="0" width="8" height="8" fill="#ff0000"/></g>
+  <g id="arm_r"><rect x="16" y="0" width="8" height="8" fill="#00ff00"/></g>
+  <g id="leg_l"><rect x="32" y="0" width="8" height="8" fill="#0000ff"/></g>
+  <g id="leg_r"><rect x="48" y="0" width="8" height="8" fill="#ffff00"/></g>
+</svg>"##;
+
+    /// Clips dont les noms et les durées diffèrent volontairement des clips
+    /// générés : `idle` (1,0 s) et `walk` (0,8 s).
+    const ANIM_RIG_ANIM: &str = r##"{
+  "version": 1,
+  "clips": {
+    "danse": { "loop": true, "tracks": { "arm_l": [ { "t": 0.0, "rot": 0.0 }, { "t": 2.0, "rot": 90.0 } ] } },
+    "saut": { "loop": false, "tracks": { "leg_l": [ { "t": 0.0, "rot": 0.0 }, { "t": 0.5, "rot": -40.0 } ] } }
+  }
+}"##;
+
+    /// Écrit un SVG riggé (et, si demandé, son `.anim.json` voisin) dans un
+    /// répertoire temporaire ; renvoie le chemin **absolu** du SVG.
+    ///
+    /// Aucun fichier n'est créé dans `assets/` : un identifiant absolu est
+    /// résolu tel quel par `read_svg_source`/`read_anim_source`, ce qui permet
+    /// de tester « fichier présent » puis « fichier absent » sur le même projet.
+    fn ecrire_sprite_rigge(dir: &Path, nom: &str, anim: Option<&str>) -> String {
+        let svg = dir.join(format!("{nom}.svg"));
+        std::fs::write(&svg, SVG_RIG_ANIM).expect("SVG temporaire écrit");
+        if let Some(anim) = anim {
+            std::fs::write(dir.join(format!("{nom}.anim.json")), anim)
+                .expect("anim.json temporaire écrit");
+        }
+        svg.to_string_lossy().into_owned()
+    }
+
+    /// Scène minimale à une entité `SvgRef` pointant un chemin absolu.
+    fn scene_svg_absolu(nom: &str, asset: &str) -> SceneData {
+        use crate::entity::{Entity, Renderable2D, Transform2D};
+
+        let mut rendu = Renderable2D::svg_ref(asset, 10);
+        rendu.color = COULEUR_REPLI;
+        SceneData {
+            name: nom.to_string(),
+            description: String::new(),
+            objective: None,
+            entities: vec![
+                Entity::new(
+                    1,
+                    "Joueur animé",
+                    "player",
+                    Transform2D::new(100.0, 100.0, 64.0, 64.0),
+                )
+                .with_renderable(rendu),
+            ],
+            player: None,
+            coins: Vec::new(),
+            doors: Vec::new(),
+            walls: Vec::new(),
+            enemies: Vec::new(),
+        }
+    }
+
+    /// Projet à deux niveaux pointant tous deux le même sprite temporaire.
+    fn jeu_clips_temp(asset: &str) -> GameState {
+        let niveau_1 = scene_svg_absolu("NIVEAU ANIM 1", asset);
+        let niveau_2 = scene_svg_absolu("NIVEAU ANIM 2", asset);
+        let mut jeu = GameState::from_scene_data(niveau_1.clone(), "test:anim:niveau_1")
+            .expect("état de preuve clips");
+        jeu.levels = vec![niveau_1, niveau_2];
+        jeu
+    }
+
+    /// Premier clip de ce nom visible sur un sprite vectoriel résolu.
+    fn clip_du_sprite<'a>(
+        jeu: &'a GameState,
+        nom: &str,
+    ) -> Option<&'a crate::vector::AnimClip> {
+        jeu.entities
+            .iter()
+            .filter_map(|e| e.vector_sprite.as_ref())
+            .filter_map(|s| s.rig.as_ref())
+            .find_map(|rig| rig.clip(nom))
+    }
+
+    /// Vérifie que seuls les clips générés sont présents.
+    fn assert_clips_par_defaut(jeu: &GameState) {
+        assert!(
+            clip_du_sprite(jeu, "idle").is_some(),
+            "clip « idle » généré attendu"
+        );
+        assert!(
+            clip_du_sprite(jeu, "walk").is_some(),
+            "clip « walk » généré attendu"
+        );
+        assert!(
+            clip_du_sprite(jeu, "danse").is_none(),
+            "aucun clip du fichier ne doit apparaître"
+        );
+    }
+
+    /// (a) Le `.anim.json` voisin d'un SVG du projet part dans le paquet, à
+    /// l'octet près.
+    #[test]
+    fn test_paquet_embarque_le_anim_json_present_sur_disque() {
+        let dossier = repertoire_temporaire("anim_present");
+        let asset = ecrire_sprite_rigge(&dossier, "heros_rigge", Some(ANIM_RIG_ANIM));
+        let jeu = jeu_clips_temp(&asset);
+
+        let package = StandaloneExporter::create_package(&jeu, "Preuve clips", "Testeur");
+        assert_eq!(
+            package.svg_anim_assets.get(&asset).map(String::as_str),
+            Some(ANIM_RIG_ANIM),
+            "le contenu exact du `.anim.json` doit voyager"
+        );
+        assert!(
+            package.svg_assets.contains_key(&asset),
+            "la source SVG voyage aussi"
+        );
+    }
+
+    /// Le projet de démonstration SVG embarque aussi le `.anim.json` réel de
+    /// « hero », à l'octet près (fichier présent dans le dépôt, pas en temp).
+    #[test]
+    fn test_paquet_embarque_le_anim_json_reel_de_hero() {
+        let package =
+            StandaloneExporter::create_package(&jeu_preuve_svg(), "Preuve SVG", "Testeur");
+        let attendu = crate::vector::read_anim_source("hero")
+            .expect("assets/sprites/hero.anim.json doit exister dans le dépôt");
+        assert!(attendu.contains("\"clips\""));
+        assert_eq!(
+            package.svg_anim_assets.get("hero").map(String::as_str),
+            Some(attendu.as_str()),
+            "le contenu du fichier réel doit être embarqué tel quel"
+        );
+    }
+
+    /// (b) Import : `load_clips` renvoie les clips du fichier, pas les clips
+    /// générés. Le SVG et son `.anim.json` sont supprimés après l'export :
+    /// c'est le cas wasm, où seul le paquet peut encore fournir le sprite et
+    /// son animation.
+    #[test]
+    fn test_import_utilise_les_clips_du_fichier_pas_les_defauts() {
+        let dossier = repertoire_temporaire("anim_import");
+        let asset = ecrire_sprite_rigge(&dossier, "heros_rigge", Some(ANIM_RIG_ANIM));
+        let package =
+            StandaloneExporter::create_package(&jeu_clips_temp(&asset), "Preuve clips", "Testeur");
+        assert!(package.svg_anim_assets.contains_key(&asset));
+
+        // Le `.anim.json` disparaît après l'export : l'état neuf ne peut plus
+        // résoudre que les clips générés.
+        std::fs::remove_file(dossier.join("heros_rigge.anim.json"))
+            .expect("anim.json retiré après l'export");
+        let mut neuf = GameState::from_scene_data(scene_svg_absolu("NEUF", &asset), "test:neuf")
+            .expect("état neuf");
+        assert_clips_par_defaut(&neuf);
+
+        // Le SVG disparaît à son tour : c'est la situation wasm. Ni le SVG ni
+        // son `.anim.json` ne sont lisibles sur disque ; seuls `svg_assets` et
+        // `svg_anim_assets` peuvent encore les fournir.
+        std::fs::remove_file(dossier.join("heros_rigge.svg"))
+            .expect("SVG retiré après l'export");
+
+        StandaloneExporter::import_package(&mut neuf, &package);
+        let danse = clip_du_sprite(&neuf, "danse").expect("clip « danse » du fichier importé");
+        assert_eq!(danse.duration, 2.0, "durée du fichier, pas celle d'un clip généré");
+        assert!(danse.looped);
+        let saut = clip_du_sprite(&neuf, "saut").expect("clip « saut » du fichier importé");
+        assert_eq!(saut.duration, 0.5);
+        assert!(!saut.looped);
+        assert!(
+            clip_du_sprite(&neuf, "walk").is_none(),
+            "les clips générés ne doivent jamais gagner"
+        );
+        assert!(
+            !neuf.embedded_svg_anims.is_empty(),
+            "les clips sont mémorisés pour les reconstructions"
+        );
+    }
+
+    /// (c) `start_game`, `next_level` et `reload` repartent d'une scène nue :
+    /// les clips embarqués doivent être réinstallés à chaque fois.
+    #[test]
+    fn test_clips_importes_survivent_aux_reconstructions() {
+        let dossier = repertoire_temporaire("anim_reconstructions");
+        let asset = ecrire_sprite_rigge(&dossier, "heros_rigge", Some(ANIM_RIG_ANIM));
+        let package =
+            StandaloneExporter::create_package(&jeu_clips_temp(&asset), "Preuve clips", "Testeur");
+        std::fs::remove_file(dossier.join("heros_rigge.anim.json"))
+            .expect("anim.json retiré après l'export");
+        std::fs::remove_file(dossier.join("heros_rigge.svg"))
+            .expect("SVG retiré après l'export");
+
+        let mut neuf = GameState::from_scene_data(scene_svg_absolu("NEUF", &asset), "test:neuf")
+            .expect("état neuf");
+        StandaloneExporter::import_package(&mut neuf, &package);
+
+        neuf.start_game();
+        assert_eq!(
+            clip_du_sprite(&neuf, "danse").map(|c| c.duration),
+            Some(2.0),
+            "start_game réinstalle les clips"
+        );
+
+        assert!(neuf.next_level(), "le niveau 2 est disponible");
+        assert_eq!(
+            clip_du_sprite(&neuf, "danse").map(|c| c.duration),
+            Some(2.0),
+            "next_level réinstalle les clips"
+        );
+
+        neuf.reload();
+        assert_eq!(
+            clip_du_sprite(&neuf, "danse").map(|c| c.duration),
+            Some(2.0),
+            "reload réinstalle les clips"
+        );
+        assert!(clip_du_sprite(&neuf, "walk").is_none());
+    }
+
+    /// (d) Ancien paquet sans `svg_anim_assets` : lisible, inoffensif, clips
+    /// par défaut, aucun panic au rendu.
+    #[test]
+    fn test_ancien_paquet_sans_svg_anim_assets_donne_les_clips_par_defaut() {
+        let dossier = repertoire_temporaire("anim_ancien");
+        let asset = ecrire_sprite_rigge(&dossier, "heros_rigge", Some(ANIM_RIG_ANIM));
+        let package =
+            StandaloneExporter::create_package(&jeu_clips_temp(&asset), "Preuve clips", "Testeur");
+        std::fs::remove_file(dossier.join("heros_rigge.anim.json"))
+            .expect("anim.json retiré après l'export");
+
+        let mut valeur = serde_json::to_value(&package).expect("paquet JSON");
+        valeur
+            .as_object_mut()
+            .expect("objet JSON")
+            .remove("svg_anim_assets")
+            .expect("champ svg_anim_assets présent avant retrait");
+        let ancien = KaractiGamePackage::from_json(&serde_json::to_string(&valeur).expect("JSON"))
+            .expect("un ancien paquet sans svg_anim_assets reste lisible");
+        assert!(ancien.svg_anim_assets.is_empty());
+
+        let mut neuf = GameState::from_scene_data(scene_svg_absolu("NEUF", &asset), "test:neuf")
+            .expect("état neuf");
+        StandaloneExporter::import_package(&mut neuf, &ancien);
+        assert_clips_par_defaut(&neuf);
+        assert!(
+            neuf.embedded_svg_anims.is_empty(),
+            "aucun clip inventé pour un ancien paquet"
+        );
+
+        neuf.start_game();
+        let mut canvas = crate::renderer::Canvas::new(1200, 800);
+        neuf.render(&mut canvas);
+    }
+
+    /// (e) `.anim.json` absent du disque **et** du paquet : clips par défaut.
+    #[test]
+    fn test_anim_absent_du_disque_et_du_paquet_donne_les_clips_par_defaut() {
+        let dossier = repertoire_temporaire("anim_absent");
+        let asset = ecrire_sprite_rigge(&dossier, "heros_sans_anim", None);
+        assert!(
+            crate::vector::read_anim_source(&asset).is_none(),
+            "le fichier ne doit pas exister sur disque"
+        );
+
+        let jeu = jeu_clips_temp(&asset);
+        assert_clips_par_defaut(&jeu);
+        let package = StandaloneExporter::create_package(&jeu, "Sans clips", "Testeur");
+        assert!(
+            !package.svg_anim_assets.contains_key(&asset),
+            "aucun clip ne doit être inventé à l'export"
+        );
+
+        let mut neuf = GameState::from_scene_data(scene_svg_absolu("NEUF", &asset), "test:neuf")
+            .expect("état neuf");
+        StandaloneExporter::import_package(&mut neuf, &package);
+        assert_clips_par_defaut(&neuf);
+    }
+
+    /// Export → import → ré-export : les clips mémorisés par l'import sont
+    /// ré-embarqués même quand leur fichier n'existe plus sur disque.
+    #[test]
+    fn reexport_conserve_les_clips_embarques() {
+        let dossier = repertoire_temporaire("anim_reexport");
+        let asset = ecrire_sprite_rigge(&dossier, "heros_rigge", Some(ANIM_RIG_ANIM));
+        let package =
+            StandaloneExporter::create_package(&jeu_clips_temp(&asset), "Preuve clips", "Testeur");
+        std::fs::remove_file(dossier.join("heros_rigge.anim.json"))
+            .expect("anim.json retiré après l'export");
+
+        let mut neuf = GameState::from_scene_data(scene_svg_absolu("NEUF", &asset), "test:neuf")
+            .expect("état neuf");
+        StandaloneExporter::import_package(&mut neuf, &package);
+
+        let reexport = StandaloneExporter::create_package(&neuf, "Preuve clips", "Testeur");
+        assert_eq!(
+            reexport.svg_anim_assets.get(&asset).map(String::as_str),
+            Some(ANIM_RIG_ANIM),
+            "le ré-export doit reprendre les clips de la mémoire du paquet"
+        );
     }
 }

@@ -161,7 +161,7 @@ est vide — le monde est figé sans surcouche de départ.
 rectangles colorés. `from_scene_data` résout `SvgRef` sur disque, échoue en wasm, et met
 `vector_sprite = None`. Le paquet n'embarque aucune source SVG.
 
-## 3duodecies. Vague 12 — en cours (finitions export + performance)
+## 3duodecies. Vague 12 — terminée (finitions export + performance)
 
 | Agent | Tâche | Périmètre | Critère de sortie |
 |---|---|---|---|
