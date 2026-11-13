@@ -151,6 +151,16 @@ sprites importés perd ses images au niveau 2.
 **Dette visée** (rapport v0.3.7 §5.1) : l'import force `screen = Menu` mais `ui_screens`
 est vide — le monde est figé sans surcouche de départ.
 
+## 3undecies. Vague 11 — en cours (les sprites arrivent dans l'export)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| « SVG exportés » | Embarquer les sources SVG et ne plus écraser un sprite déjà résolu | le joueur n'est plus un rectangle dans le HTML exporté ; capture avant/après |
+
+**Défaut visuel constaté** : dans le jeu exporté, le joueur et le décor sont des
+rectangles colorés. `from_scene_data` résout `SvgRef` sur disque, échoue en wasm, et met
+`vector_sprite = None`. Le paquet n'embarque aucune source SVG.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
