@@ -1,0 +1,250 @@
+{
+  "id": "graph_ref_porte_boss",
+  "name": "Logique : Porte du sanctuaire (verrou de boss)",
+  "description": "La porte du dernier niveau reste verrouillée tant que le TITAN GARDIEN n'est pas terrassé (boss_defeated). Une fois le boss vaincu, l'interaction pose level_complete : le moteur enchaîne ou déclare la victoire.",
+  "version": 1,
+  "variables": {
+    "boss_defeated": {
+      "name": "boss_defeated",
+      "data_type": "Bool",
+      "initial_value": {
+        "type": "Bool",
+        "value": false
+      }
+    },
+    "door_is_open": {
+      "name": "door_is_open",
+      "data_type": "Bool",
+      "initial_value": {
+        "type": "Bool",
+        "value": false
+      }
+    }
+  },
+  "nodes": {
+    "evt_door": {
+      "id": "evt_door",
+      "name": "Interaction Porte",
+      "category": "Interactions",
+      "description": "Déclenché quand le joueur interagit avec la porte du sanctuaire (touche E).",
+      "kind": {
+        "Event": {
+          "event_type": "OnDoorInteract"
+        }
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 0.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "cond_boss_defeated": {
+      "id": "cond_boss_defeated",
+      "name": "Condition : Titan terrassé ?",
+      "category": "MathLogic",
+      "description": "Vérifie le drapeau boss_defeated posé par le moteur à la mort du boss.",
+      "kind": {
+        "Condition": {
+          "operator": "IsBossDefeated"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_true",
+          "name": "Vrai [boss vaincu]",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        },
+        {
+          "id": "out_false",
+          "name": "Faux [boss vivant]",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 200.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_complete": {
+      "id": "act_complete",
+      "name": "Niveau terminé",
+      "category": "Progression",
+      "description": "Fixe level_complete : le moteur passe au niveau suivant, ou déclare la victoire sur le dernier niveau.",
+      "kind": {
+        "Action": {
+          "action_type": "SetVariable:level_complete:true"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 440.0,
+        "position_y": 0.0,
+        "color_tag": null
+      }
+    },
+    "act_lock_door": {
+      "id": "act_lock_door",
+      "name": "Verrouiller la porte",
+      "category": "World",
+      "description": "Maintient la porte fermée et solide tant que le boss est en vie.",
+      "kind": {
+        "Action": {
+          "action_type": "SetVariable:door_is_open:false"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 440.0,
+        "position_y": 100.0,
+        "color_tag": null
+      }
+    },
+    "act_lock_objective": {
+      "id": "act_lock_objective",
+      "name": "Objectif : terrasser le Titan",
+      "category": "Progression",
+      "description": "Rappelle au joueur que le combat de boss est la condition d'ouverture.",
+      "kind": {
+        "Action": {
+          "action_type": "SetObjective:OBJECTIF : TERRASSEZ LE TITAN GARDIEN (F) PUIS FRANCHISSEZ LA PORTE (E)"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_trigger",
+          "name": "Exécution",
+          "direction": "Output",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "ui": {
+        "position_x": 660.0,
+        "position_y": 100.0,
+        "color_tag": null
+      }
+    },
+    "act_lock_sound": {
+      "id": "act_lock_sound",
+      "name": "Son de refus",
+      "category": "Audio",
+      "description": "Joue le son d'accès refusé lorsque la porte est verrouillée.",
+      "kind": {
+        "Action": {
+          "action_type": "PlaySound:access_denied"
+        }
+      },
+      "inputs": [
+        {
+          "id": "in_trigger",
+          "name": "Exécution",
+          "direction": "Input",
+          "data_type": "Trigger",
+          "default_value": null
+        }
+      ],
+      "outputs": [],
+      "ui": {
+        "position_x": 880.0,
+        "position_y": 100.0,
+        "color_tag": null
+      }
+    }
+  },
+  "connections": [
+    {
+      "id": "conn_door_to_boss_check",
+      "from_node": "evt_door",
+      "from_pin": "out_trigger",
+      "to_node": "cond_boss_defeated",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_boss_true",
+      "from_node": "cond_boss_defeated",
+      "from_pin": "out_true",
+      "to_node": "act_complete",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_boss_false_lock",
+      "from_node": "cond_boss_defeated",
+      "from_pin": "out_false",
+      "to_node": "act_lock_door",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_lock_objective",
+      "from_node": "act_lock_door",
+      "from_pin": "out_trigger",
+      "to_node": "act_lock_objective",
+      "to_pin": "in_trigger"
+    },
+    {
+      "id": "conn_lock_sound",
+      "from_node": "act_lock_objective",
+      "from_pin": "out_trigger",
+      "to_node": "act_lock_sound",
+      "to_pin": "in_trigger"
+    }
+  ]
+}

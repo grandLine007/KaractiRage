@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlayerSpawn {
     pub x: f32,
     pub y: f32,
@@ -10,7 +10,7 @@ pub struct PlayerSpawn {
     pub size: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoinEntity {
     pub id: String,
     pub x: f32,
@@ -19,7 +19,7 @@ pub struct CoinEntity {
     pub script_path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DoorEntity {
     pub id: String,
     pub x: f32,
@@ -29,7 +29,7 @@ pub struct DoorEntity {
     pub script_path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WallEntity {
     pub id: String,
     pub x: f32,
@@ -38,7 +38,7 @@ pub struct WallEntity {
     pub h: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnemyEntity {
     pub id: String,
     pub x: f32,
@@ -66,7 +66,7 @@ fn default_vision_range() -> f32 {
 
 use crate::entity::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SceneData {
     pub name: String,
     #[serde(default)]

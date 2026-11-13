@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{TITLE}} — Jeu Autonome KaractiRage</title>
   <meta name="description" content="{{TITLE}} par {{AUTHOR}} — Moteur KaractiRage 2D & Logique KVL 60 FPS">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Outfit:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+{{RUNTIME_META}}
+  <!-- Aucune ressource externe : le jeu doit fonctionner hors ligne (K4 / AC3).
+       Les polices sont des piles système, pas des requêtes réseau. -->
   <style>
     :root {
       --bg-deep: #060913;
@@ -23,7 +23,7 @@
     body {
       background: var(--bg-deep);
       color: var(--text-main);
-      font-family: 'Outfit', -apple-system, sans-serif;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
@@ -50,7 +50,7 @@
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
     }
     .title-group h1 {
-      font-family: 'Space Grotesk', sans-serif;
+      font-family: ui-rounded, 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
       font-size: 20px;
       font-weight: 700;
       letter-spacing: 0.5px;
@@ -67,7 +67,7 @@
       align-items: center;
     }
     .badge {
-      font-family: 'Fira Code', monospace;
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
       font-size: 11px;
       font-weight: 600;
       padding: 4px 10px;
@@ -85,7 +85,7 @@
       padding: 6px 14px;
       border-radius: 4px;
       cursor: pointer;
-      font-family: 'Space Grotesk', sans-serif;
+      font-family: ui-rounded, 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
       font-size: 12px;
       font-weight: 600;
       transition: all 0.15s ease;
@@ -139,7 +139,7 @@
     .start-btn {
       background: #0284C7;
       color: #FFF;
-      font-family: 'Space Grotesk', sans-serif;
+      font-family: ui-rounded, 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
       font-size: 16px;
       font-weight: 700;
       padding: 12px 28px;
@@ -166,7 +166,7 @@
       color: #E2E8F0;
       padding: 2px 6px;
       border-radius: 3px;
-      font-family: 'Fira Code', monospace;
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
       font-size: 11px;
       border: 1px solid #334155;
     }
@@ -181,13 +181,15 @@
       </div>
       <div class="header-badges">
         <span class="badge badge-genre">{{GENRE}}</span>
-        <span class="badge badge-wasm">WASM • 60 FPS</span>
+        <span class="badge badge-wasm" id="badge-runtime">WASM • 60 FPS</span>
         <button id="btn-fullscreen" class="btn-fullscreen">⛶ PLEIN ÉCRAN</button>
       </div>
     </header>
 
     <div class="viewport-container" id="viewport-box">
-      <canvas id="game-canvas" width="1200" height="800"></canvas>
+      <!-- tabindex="0" : le canvas peut recevoir le focus clavier après le clic
+           sur « LANCER LE JEU » ; les raccourcis restent écoutés sur window. -->
+      <canvas id="game-canvas" width="1200" height="800" tabindex="0"></canvas>
 
       <div class="overlay-start" id="overlay-start">
         <div class="start-card">
@@ -214,8 +216,15 @@
 {{EMBEDDED_JSON}}
   </script>
 
+  <!-- Runtime embarqué : l'exportateur insère ici, juste avant la fermeture du
+       body, deux balises non exécutées — la glue wasm-bindgen en
+       type="text/plain" et le binaire en type="application/base64". Comme un
+       script module est différé, le module ci-dessous les trouve dans le DOM
+       même s'il apparaît avant elles dans le source. -->
   <script type="module">
-    // Données du jeu embarquées dans le HTML
+    // -----------------------------------------------------------------------
+    // Données du jeu embarquées dans le HTML (toujours présentes).
+    // -----------------------------------------------------------------------
     const rawData = document.getElementById('embedded-package').textContent;
     const gamePackage = JSON.parse(rawData);
     console.log("🎮 KaractiRage Standalone:", gamePackage.metadata.title, gamePackage);
@@ -226,6 +235,7 @@
     const startBtn = document.getElementById('start-btn');
     const btnFullscreen = document.getElementById('btn-fullscreen');
     const viewportBox = document.getElementById('viewport-box');
+    const runtimeBadge = document.getElementById('badge-runtime');
 
     let gameStarted = false;
 
@@ -238,7 +248,8 @@
       }
     });
 
-    // Démarrage du jeu
+    // Démarrage du jeu : le runtime tourne déjà, ce bouton lève simplement
+    // l'écran d'accueil pour laisser voir et piloter le canvas.
     function launchGame() {
       if (gameStarted) return;
       gameStarted = true;
@@ -249,45 +260,315 @@
     overlayStart.addEventListener('click', launchGame);
     startBtn.addEventListener('click', launchGame);
 
-    // Initialisation du runtime WASM avec fallback gracieux
-    async function initRuntime() {
-      try {
-        const wasmModule = await import('./pkg/engine_wasm.js');
-        await wasmModule.default();
-        wasmModule.wasm_init_engine();
+    // -----------------------------------------------------------------------
+    // Entrées clavier et souris.
+    //
+    // KEY_MAP est recopiée à l'identique de
+    // `apps/studio/src/components/GameViewport.tsx` : mêmes `event.code`,
+    // mêmes codes WebKey. Une divergence rendrait l'export moins jouable que
+    // l'aperçu du Studio.
+    // -----------------------------------------------------------------------
+    const KEY_MAP = {
+      'ArrowLeft': 0,
+      'ArrowRight': 1,
+      'ArrowUp': 2,
+      'ArrowDown': 3,
+      'KeyW': 4,
+      'KeyA': 5,
+      'KeyS': 6,
+      'KeyD': 7,
+      'KeyZ': 8,
+      'KeyQ': 9,
+      'KeyE': 10,
+      'Space': 11,
+      'Tab': 12,
+      'KeyN': 13,
+      'KeyG': 14,
+      'KeyM': 15,
+      'F1': 16,
+      'F2': 17,
+      'F3': 18,
+      'KeyR': 19,
+      'Escape': 20,
+      'ControlLeft': 21,
+      'ControlRight': 21,
+      'MetaLeft': 21,
+      'MetaRight': 21,
+      'KeyV': 22,
+      'KeyB': 23,
+      'KeyX': 24,
+      'KeyT': 25,
+      'KeyP': 26,
+      'KeyH': 27,
+      'KeyU': 28,
+      'Digit1': 30,
+      'Digit2': 31,
+      'Digit3': 32,
+      'Digit4': 33,
+      'Digit5': 34,
+      'KeyI': 35,
+      'Enter': 36,
+      'NumpadEnter': 36,
+      'Delete': 37,
+      'Backspace': 38,
+      'KeyC': 39,
+      'KeyY': 40
+    };
 
-        if (typeof wasmModule.wasm_import_game_package === 'function') {
-          wasmModule.wasm_import_game_package(JSON.stringify(gamePackage));
+    // Module wasm chargé par initRuntime (null avant) : les écouteurs restent
+    // inertes tant que le moteur n'est pas prêt.
+    let wasmRuntime = null;
+
+    // Touches dont le comportement navigateur par défaut gênerait le jeu :
+    // défilement de la page (Espace, flèches) et retour arrière (Backspace).
+    const TOUCHES_SCROLL = new Set([
+      'Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Backspace'
+    ]);
+
+    function estChampDeSaisie(cible) {
+      return Boolean(
+        cible && cible.tagName &&
+        (cible.tagName === 'INPUT' || cible.tagName === 'TEXTAREA')
+      );
+    }
+
+    function envoyerTouche(nomFonction, code) {
+      if (!wasmRuntime || typeof wasmRuntime[nomFonction] !== 'function') return;
+      wasmRuntime[nomFonction](code);
+    }
+
+    // Écoute sur window (et non sur le canvas seul) : le jeu répond même sans
+    // clic préalable, comme un jeu de bureau.
+    window.addEventListener('keydown', (event) => {
+      // Runtime absent (export de données) : aucune touche n'est interceptée,
+      // le comportement historique de la page reste intact.
+      if (!wasmRuntime || estChampDeSaisie(event.target)) return;
+      const code = KEY_MAP[event.code];
+      if (code === undefined) return;
+      if (TOUCHES_SCROLL.has(event.code)) event.preventDefault();
+      envoyerTouche('wasm_on_key_down', code);
+    });
+
+    window.addEventListener('keyup', (event) => {
+      if (!wasmRuntime || estChampDeSaisie(event.target)) return;
+      const code = KEY_MAP[event.code];
+      if (code === undefined) return;
+      envoyerTouche('wasm_on_key_up', code);
+    });
+
+    // Alt-tab ou changement d'onglet pendant qu'une touche est maintenue : sans ce
+    // relâchement, le moteur croirait la touche encore enfoncée au retour.
+    function relacherToutesLesTouches() {
+      if (!wasmRuntime || typeof wasmRuntime.wasm_on_key_up !== 'function') return;
+      for (const code of Object.values(KEY_MAP)) {
+        wasmRuntime.wasm_on_key_up(code);
+      }
+    }
+    window.addEventListener('blur', relacherToutesLesTouches);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) relacherToutesLesTouches();
+    });
+
+    // Souris : le canvas est rendu en 1200×800 mais peut être mis à l'échelle
+    // par le CSS ; on repasse toujours en coordonnées internes du moteur.
+    canvas.addEventListener('mousemove', (event) => {
+      if (!wasmRuntime || typeof wasmRuntime.wasm_on_mouse_move !== 'function') return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      const x = ((event.clientX - rect.left) * canvas.width) / rect.width;
+      const y = ((event.clientY - rect.top) * canvas.height) / rect.height;
+      wasmRuntime.wasm_on_mouse_move(x, y);
+    });
+
+    // Certains navigateurs ne donnent le focus clavier au canvas qu'après un
+    // clic. Les raccourcis fonctionnent déjà via window, mais on reprend le
+    // focus pour que le canvas reste la cible naturelle des futures entrées.
+    canvas.addEventListener('click', () => canvas.focus());
+
+    // -----------------------------------------------------------------------
+    // État du runtime, lisible par les outils (export-smoke.mjs) :
+    //   'running'      moteur embarqué démarré, frames rendues
+    //   'absent'       pas de runtime dans ce fichier (export de données)
+    //   'error:<msg>'  runtime présent mais démarrage impossible
+    // -----------------------------------------------------------------------
+    function setRuntimeState(state) {
+      window.__karacti_runtime = state;
+    }
+
+    // Version du runtime embarqué (balise meta), pour les diagnostics d'export.
+    window.__karacti_runtime_version = (document.querySelector('meta[name="karacti-runtime"]')?.content.match(/version=([^;]+)/) || [])[1] || null;
+
+    // Carte d'identification ou d'erreur : ce que contient l'export, sans
+    // prétendre le jouer. Le texte est découpé pour ne pas sortir du canvas.
+    function wrapLines(text, maxWidth) {
+      const words = String(text).split(/\s+/).filter(Boolean);
+      const lines = [];
+      let current = '';
+      for (const word of words) {
+        const candidate = current ? current + ' ' + word : word;
+        if (current && ctx.measureText(candidate).width > maxWidth) {
+          lines.push(current);
+          current = word;
+        } else {
+          current = candidate;
         }
+      }
+      if (current) lines.push(current);
+      return lines;
+    }
+
+    function renderStaticCard(message) {
+      ctx.fillStyle = "#0D1322";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#38BDF8";
+      ctx.font = "bold 24px sans-serif";
+      ctx.fillText(gamePackage.metadata.title, 80, 120);
+      ctx.fillStyle = "#94A3B8";
+      ctx.font = "16px sans-serif";
+      ctx.fillText(
+        "Entités : " + gamePackage.entities.length + " | Graphes KVL : " + Object.keys(gamePackage.kvl_graphs).length,
+        80,
+        160
+      );
+      ctx.fillStyle = "#F59E0B";
+      ctx.font = "bold 15px sans-serif";
+      let y = 210;
+      for (const line of wrapLines(message, canvas.width - 160)) {
+        if (y > canvas.height - 40) break;
+        ctx.fillText(line, 80, y);
+        y += 24;
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Runtime WASM embarqué.
+    //
+    // Choix assumé : plus AUCUN repli `import('./pkg/engine_wasm.js')`.
+    //   • en file://, un import de module voisin est bloqué (CORS) : c'était
+    //     exactement la cause de la carte d'identification ;
+    //   • même servi en http(s), ce repli transformerait le « fichier unique »
+    //     en fichier dépendant d'un dossier pkg/ externe (donc de requêtes).
+    // Désormais : soit la glue + le binaire sont embarqués dans cette page (et
+    // le jeu tourne), soit on affiche une carte explicite. Zéro réseau.
+    // -----------------------------------------------------------------------
+    function base64ToBytes(b64) {
+      const clean = String(b64).replace(/\s+/g, '');
+      const binary = atob(clean);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+
+    async function initRuntime() {
+      const glueTag = document.getElementById('runtime-glue');
+      const wasmTag = document.getElementById('runtime-wasm');
+
+      if (!glueTag || !wasmTag) {
+        setRuntimeState('absent');
+        if (runtimeBadge) runtimeBadge.textContent = 'RUNTIME ABSENT';
+        renderStaticCard(
+          "Export de données : ce fichier ne contient pas le runtime jouable. " +
+          "Le moteur n'est pas chargé depuis un fichier ouvert en file:// " +
+          "(un import de ./pkg/engine_wasm.js y est bloqué par le navigateur). " +
+          "Réexportez le jeu avec les artefacts wasm (dist/pkg) pour obtenir un fichier unique jouable."
+        );
+        return;
+      }
+
+      try {
+        const glue = glueTag.textContent || '';
+        const bytes = base64ToBytes(wasmTag.textContent || '');
+        if (bytes.length === 0 || glue.trim().length === 0) {
+          throw new Error('runtime embarqué vide ou corrompu');
+        }
+
+        // La glue est chargée depuis une Blob URL : aucun fichier voisin, donc
+        // aucun CORS, même en file://.
+        const blobUrl = URL.createObjectURL(new Blob([glue], { type: 'text/javascript' }));
+        let wasmModule;
+        try {
+          wasmModule = await import(blobUrl);
+        } finally {
+          URL.revokeObjectURL(blobUrl);
+        }
+
+        // Instanciation synchrone à partir des octets déjà en mémoire : aucun
+        // fetch de engine_wasm_bg.wasm.
+        wasmModule.initSync({ module: bytes });
+
+        if (!wasmModule.wasm_init_engine()) {
+          const detail = typeof wasmModule.wasm_last_error === 'function'
+            ? wasmModule.wasm_last_error()
+            : '';
+          throw new Error(detail || 'wasm_init_engine a renvoyé false');
+        }
+
+        // Moteur prêt : les écouteurs d'entrée peuvent désormais transmettre
+        // les touches et la souris aux exports wasm_on_key_down/up/mouse_move.
+        wasmRuntime = wasmModule;
 
         const width = wasmModule.wasm_get_canvas_width();
         const height = wasmModule.wasm_get_canvas_height();
+        if (!width || !height) throw new Error('dimensions de canvas invalides');
+        canvas.width = width;
+        canvas.height = height;
 
+        wasmModule.wasm_import_game_package(JSON.stringify(gamePackage));
+
+        // Diagnostic d'export (lu par export-smoke.mjs) : nombre de niveaux
+        // réellement embarqués dans le paquet. Un ancien paquet sans `scenes`
+        // reste jouable et ne contient qu'une scène : on expose 1, jamais 0.
+        const niveaux = Array.isArray(gamePackage.scenes) ? gamePackage.scenes.length : 0;
+        window.__karacti_levels = niveaux > 0 ? niveaux : 1;
+
+        // WebAssembly.Memory exposé par le module (--target web n'exporte pas
+        // __wbindgen_memory). On relit .buffer à chaque frame : une croissance
+        // du tas wasm détache les anciens ArrayBuffer.
+        const memory = typeof wasmModule.wasm_memory === 'function'
+          ? wasmModule.wasm_memory()
+          : null;
+        if (!memory) throw new Error('mémoire wasm inaccessible');
+
+        // Recopie explicite du framebuffer wasm dans une ImageData, puis
+        // putImageData : seul chemin validé par le prototype.
+        const image = ctx.createImageData(width, height);
         let lastTime = performance.now();
-        function loop(now) {
+        let premiereFrame = true;
+        let framesSansFramebuffer = 0;
+
+        function drawFrame(now) {
           const dt = Math.min((now - lastTime) / 1000.0, 0.1);
           lastTime = now;
-
           wasmModule.wasm_render_frame(dt);
+
           const ptr = wasmModule.wasm_get_framebuffer_ptr();
           if (ptr !== 0) {
-            const pixels = new Uint8ClampedArray(wasmModule.wasm_memory ? wasmModule.wasm_memory().buffer : wasmModule.__wbindgen_memory().buffer, ptr, width * height * 4);
-            const img = new ImageData(pixels, width, height);
-            ctx.putImageData(img, 0, 0);
+            framesSansFramebuffer = 0;
+            const pixels = new Uint8ClampedArray(memory.buffer, ptr, width * height * 4);
+            image.data.set(pixels);
+            ctx.putImageData(image, 0, 0);
+            if (premiereFrame) {
+              premiereFrame = false;
+              setRuntimeState('running');
+              if (runtimeBadge) runtimeBadge.textContent = 'WASM • MOTEUR ACTIF';
+            }
+          } else {
+            framesSansFramebuffer++;
+            if (framesSansFramebuffer === 120) {
+              const message = 'le moteur a démarré mais ne produit aucun framebuffer après 120 frames';
+              setRuntimeState('error:' + message);
+              if (runtimeBadge) runtimeBadge.textContent = 'ERREUR RUNTIME';
+              renderStaticCard('Échec du rendu : ' + message + '.');
+            }
           }
-          requestAnimationFrame(loop);
+          requestAnimationFrame(drawFrame);
         }
-        requestAnimationFrame(loop);
-      } catch (err) {
-        console.info("Info: Runtime WASM externe non détecté, affichage pré-calculé.");
-        ctx.fillStyle = "#0D1322";
-        ctx.fillRect(0, 0, 1200, 800);
-        ctx.fillStyle = "#38BDF8";
-        ctx.font = "bold 24px sans-serif";
-        ctx.fillText(gamePackage.metadata.title, 80, 120);
-        ctx.fillStyle = "#94A3B8";
-        ctx.font = "16px sans-serif";
-        ctx.fillText("Entités : " + gamePackage.entities.length + " | Graphes KVL : " + Object.keys(gamePackage.kvl_graphs).length, 80, 160);
+        requestAnimationFrame(drawFrame);
+      } catch (erreur) {
+        const message = erreur && erreur.message ? erreur.message : String(erreur);
+        setRuntimeState('error:' + message);
+        if (runtimeBadge) runtimeBadge.textContent = 'ERREUR RUNTIME';
+        renderStaticCard("Échec du démarrage du moteur embarqué : " + message);
       }
     }
 

@@ -1,9 +1,327 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use crate::entity::{Entity, ShapeKind};
 use crate::game::GameState;
+use crate::scene::SceneData;
 use kvl_core::{Graph, Value};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+/// Nom du fichier de glue JS produit par `wasm-bindgen --target web`.
+const RUNTIME_GLUE_FILE: &str = "engine_wasm.js";
+/// Nom du binaire wasm produit par `wasm-bindgen`.
+const RUNTIME_WASM_FILE: &str = "engine_wasm_bg.wasm";
+/// Nom du manifeste de build écrit par `scripts/build_wasm.sh` à côté des
+/// artefacts : version du moteur et empreintes des fichiers.
+const RUNTIME_MANIFEST_FILE: &str = "runtime_manifest.json";
+
+/// Runtime WASM embarquable dans un export HTML autonome.
+///
+/// Regroupe la glue JS `engine_wasm.js` et le binaire `engine_wasm_bg.wasm`
+/// encodé en base64. L'exporteur les insère dans deux balises `<script>` non
+/// exécutées ; le template les décode et charge la glue via une Blob URL, puis
+/// instancie le module avec `initSync({ module: octets })`. Résultat : un seul
+/// fichier `.html`, jouable même en `file://` (aucun `import()` de module
+/// voisin, donc aucune requête CORS et aucune requête réseau).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddedRuntime {
+    /// Contenu texte de `engine_wasm.js` (glue wasm-bindgen).
+    pub glue: String,
+    /// Contenu de `engine_wasm_bg.wasm` encodé en base64 standard.
+    pub wasm_base64: String,
+    /// Taille réellement embarquée (glue + base64), en octets.
+    ///
+    /// C'est le surcoût du runtime dans le HTML : le base64 pèse environ 4/3
+    /// du binaire wasm. Sert à l'avertissement de pré-vol `runtime-embarque`.
+    pub bytes: usize,
+    /// Version du moteur ayant produit les artefacts, lue dans
+    /// `runtime_manifest.json`. `None` quand le manifeste est absent (build
+    /// antérieur) : l'export reste alors identique à l'historique.
+    pub engine_version: Option<String>,
+    /// Empreinte SHA-256 du binaire wasm, lue dans le manifeste. `None` quand
+    /// le manifeste est absent.
+    pub wasm_sha256: Option<String>,
+}
+
+impl EmbeddedRuntime {
+    /// Taille lisible en français, par exemple `« 4,7 Mo »`.
+    pub fn human_size(&self) -> String {
+        taille_lisible(self.bytes)
+    }
+}
+
+/// Longueur exacte d'un encodage base64 standard (remplissage compris).
+fn longueur_base64(octets: usize) -> usize {
+    if octets == 0 {
+        0
+    } else {
+        4 * ((octets + 2) / 3)
+    }
+}
+
+/// Formate une taille en octets à la française (`« 4,7 Mo »`).
+///
+/// Le seuil et le diviseur sont des multiples binaires (1 Mo = 1 024 Ko), comme
+/// les tailles affichées par le reste du Studio.
+fn taille_lisible(octets: usize) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * KIB;
+    let octets_f = octets as f64;
+    if octets_f >= MIB {
+        format!("{:.1} Mo", octets_f / MIB).replace('.', ",")
+    } else if octets_f >= KIB {
+        format!("{:.1} Ko", octets_f / KIB).replace('.', ",")
+    } else {
+        format!("{octets} o")
+    }
+}
+
+/// Trie récursivement les clés d'un [`serde_json::Value`].
+///
+/// Les tables du package (`kvl_graphs`, `sprite_assets`, `sheet_assets`,
+/// `initial_variables`) sont des `HashMap` : leur ordre d'itération dépend de
+/// la graine aléatoire du processus. Sans tri, deux exports du **même** projet
+/// produisent des JSON différents, donc des fichiers et des empreintes
+/// différentes. Le tri rend l'export reproductible octet pour octet.
+fn trier_cles_json(valeur: serde_json::Value) -> serde_json::Value {
+    match valeur {
+        serde_json::Value::Object(table) => {
+            let mut entrees: Vec<(String, serde_json::Value)> = table.into_iter().collect();
+            entrees.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut trie = serde_json::Map::with_capacity(entrees.len());
+            for (cle, valeur) in entrees {
+                trie.insert(cle, trier_cles_json(valeur));
+            }
+            serde_json::Value::Object(trie)
+        }
+        serde_json::Value::Array(elements) => {
+            serde_json::Value::Array(elements.into_iter().map(trier_cles_json).collect())
+        }
+        autre => autre,
+    }
+}
+
+/// Sérialise une valeur en JSON compact et **déterministe** (clés triées).
+///
+/// Utilisé pour le paquet embarqué dans le HTML : à projet et artefacts
+/// identiques, le fichier exporté est identique à l'octet près.
+fn serialiser_json_deterministe<T: Serialize>(valeur: &T) -> Result<String, serde_json::Error> {
+    let value = serde_json::to_value(valeur)?;
+    serde_json::to_string(&trier_cles_json(value))
+}
+
+/// Manifeste de build du runtime WASM (`dist/pkg/runtime_manifest.json`).
+///
+/// Écrit par `scripts/build_wasm.sh` juste après `wasm-bindgen`. Il date les
+/// artefacts pour qu'un `dist/pkg` périmé devienne visible au lieu de produire
+/// un export silencieusement bâti sur un ancien moteur.
+///
+/// Tous les champs sont optionnels et le fichier peut être absent : un ancien
+/// `dist/pkg` (sans manifeste) continue de fonctionner sans avertissement.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Deserialize)]
+pub struct RuntimeManifest {
+    /// Version de `engine-core` au moment du build.
+    #[serde(default)]
+    pub engine_version: Option<String>,
+    /// Empreinte SHA-256 de `engine_wasm_bg.wasm`.
+    #[serde(default)]
+    pub wasm_sha256: Option<String>,
+    /// Empreinte SHA-256 de `engine_wasm.js` (glue wasm-bindgen).
+    #[serde(default)]
+    pub glue_sha256: Option<String>,
+    /// Cible de compilation, par exemple `wasm32-unknown-unknown`.
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+/// Lit `runtime_manifest.json` dans `dir`, sans toucher au wasm.
+///
+/// Renvoie `None` si le fichier est absent, illisible ou n'est pas du JSON :
+/// l'appelant retombe alors sur le comportement historique (aucune version
+/// connue, aucun avertissement).
+pub fn load_runtime_manifest(dir: &Path) -> Option<RuntimeManifest> {
+    let texte = std::fs::read_to_string(dir.join(RUNTIME_MANIFEST_FILE)).ok()?;
+    serde_json::from_str(&texte).ok()
+}
+
+/// Charge le runtime WASM embarquable depuis `dir`.
+///
+/// Lit `engine_wasm.js` et `engine_wasm_bg.wasm`, puis encode le binaire en
+/// base64. Renvoie `None` si l'un des deux fichiers est absent, illisible ou
+/// vide : l'appelant produit alors un export sans runtime (carte explicite au
+/// lieu du jeu). **Aucune lecture réseau** : uniquement le disque local.
+///
+/// Le HTML produit est déterministe pour un même contenu de `dir` : base64
+/// standard sans saut de ligne ni horodatage. La version et l'empreinte du
+/// wasm proviennent de `runtime_manifest.json` quand il existe ; elles ne sont
+/// ni vérifiées ni recalculées ici (aucune dépendance de hachage embarquée).
+pub fn load_embedded_runtime(dir: &Path) -> Option<EmbeddedRuntime> {
+    let glue = std::fs::read_to_string(dir.join(RUNTIME_GLUE_FILE)).ok()?;
+    let wasm = std::fs::read(dir.join(RUNTIME_WASM_FILE)).ok()?;
+    if glue.trim().is_empty() || wasm.is_empty() {
+        return None;
+    }
+    let manifeste = load_runtime_manifest(dir).unwrap_or_default();
+    let wasm_base64 = STANDARD.encode(&wasm);
+    let bytes = glue.len() + wasm_base64.len();
+    debug_assert_eq!(wasm_base64.len(), longueur_base64(wasm.len()));
+    Some(EmbeddedRuntime {
+        glue,
+        wasm_base64,
+        bytes,
+        engine_version: manifeste.engine_version,
+        wasm_sha256: manifeste.wasm_sha256,
+    })
+}
+
+/// Taille embarquée d'un runtime présent dans `dir`, **sans** encoder le wasm.
+///
+/// Utilisée par le pré-vol : inutile de lire et d'encoder 3,5 Mo juste pour
+/// afficher un avertissement de taille. Le calcul reproduit exactement la
+/// longueur base64, donc la taille annoncée est celle du HTML final.
+fn taille_runtime_embarque(dir: &Path) -> Option<usize> {
+    let glue = std::fs::metadata(dir.join(RUNTIME_GLUE_FILE)).ok()?;
+    let wasm = std::fs::metadata(dir.join(RUNTIME_WASM_FILE)).ok()?;
+    if !glue.is_file() || !wasm.is_file() || glue.len() == 0 || wasm.len() == 0 {
+        return None;
+    }
+    let glue = usize::try_from(glue.len()).ok()?;
+    let wasm = usize::try_from(wasm.len()).ok()?;
+    Some(glue + longueur_base64(wasm))
+}
+
+/// Répertoire du runtime utilisé par [`StandaloneExporter::export_html`].
+///
+/// Ordre de résolution :
+/// 1. `$KARACTI_RUNTIME_DIR` s'il est défini — même s'il ne contient rien, ce
+///    qui est le moyen explicite de forcer un export sans runtime ;
+/// 2. `dist/pkg` du répertoire courant ;
+/// 3. `dist/pkg` à la racine du dépôt (`CARGO_MANIFEST_DIR/../..`), pour que
+///    l'export fonctionne aussi quand le binaire est lancé depuis
+///    `crates/…` ou `apps/studio/…`.
+///
+/// Aucune de ces pistes n'est une URL : tout vient du disque local.
+pub fn default_runtime_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("KARACTI_RUNTIME_DIR") {
+        return PathBuf::from(dir);
+    }
+    let racine_courante = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let local = racine_courante.join("dist/pkg");
+    if local.join(RUNTIME_WASM_FILE).is_file() {
+        return local;
+    }
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dist/pkg")
+}
+
+/// Échappe les fins de balise `</script` d'un contenu inséré dans un
+/// `<script type="text/plain">` : le parseur HTML couperait le script.
+///
+/// L'échappement `<\/script` est neutre en JavaScript (le `/` échappé vaut `/`
+/// dans une chaîne ou une expression régulière) et ne modifie donc pas la glue.
+/// La comparaison ignore la casse, comme le parseur HTML.
+fn echapper_fin_de_script(source: &str) -> String {
+    const MOTIF: &[u8] = b"</script";
+    let octets = source.as_bytes();
+    let mut sortie = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < octets.len() {
+        if i + MOTIF.len() <= octets.len()
+            && octets[i..i + MOTIF.len()].eq_ignore_ascii_case(MOTIF)
+        {
+            sortie.push_str("<\\/script");
+            i += MOTIF.len();
+        } else {
+            let caractere = source[i..]
+                .chars()
+                .next()
+                .expect("indice toujours aligné sur une frontière UTF-8");
+            sortie.push(caractere);
+            i += caractere.len_utf8();
+        }
+    }
+    sortie
+}
+
+/// Injecte les deux balises de runtime juste avant `</body>`.
+///
+/// Sans `</body>` (HTML étranger), le bloc est ajouté à la fin : la page reste
+/// lisible et le runtime disponible.
+fn injecter_runtime(html: String, runtime: &EmbeddedRuntime) -> String {
+    let bloc = format!(
+        "  <script id=\"runtime-glue\" type=\"text/plain\">\n{}\n  </script>\n  <script id=\"runtime-wasm\" type=\"application/base64\">\n{}\n  </script>\n",
+        echapper_fin_de_script(&runtime.glue),
+        runtime.wasm_base64
+    );
+    match html.rfind("</body>") {
+        Some(position) => {
+            let mut sortie = String::with_capacity(html.len() + bloc.len());
+            sortie.push_str(&html[..position]);
+            sortie.push_str(&bloc);
+            sortie.push_str(&html[position..]);
+            sortie
+        }
+        None => {
+            let mut sortie = html;
+            sortie.push_str(&bloc);
+            sortie
+        }
+    }
+}
+
+/// Balise `<meta name="karacti-runtime">` décrivant le runtime embarqué.
+///
+/// Contenu `version=…;wasm=…` (l'un ou l'autre si une seule valeur est
+/// connue), chaîne vide quand aucune ne l'est : un export sans manifeste ne
+/// gagne donc aucune balise et reste identique à l'historique. La fonction est
+/// déterministe : même manifeste, même balise.
+fn balise_meta_runtime(runtime: &EmbeddedRuntime) -> String {
+    let mut morceaux = Vec::with_capacity(2);
+    if let Some(version) = &runtime.engine_version {
+        morceaux.push(format!("version={}", assainir_valeur_meta(version)));
+    }
+    if let Some(sha) = &runtime.wasm_sha256 {
+        morceaux.push(format!("wasm={}", assainir_valeur_meta(sha)));
+    }
+    if morceaux.is_empty() {
+        return String::new();
+    }
+    format!(
+        "  <meta name=\"karacti-runtime\" content=\"{}\">\n",
+        morceaux.join(";")
+    )
+}
+
+/// Neutralise les caractères qui casseraient l'attribut `content` d'une balise
+/// (manifeste altéré ou rédigé à la main).
+fn assainir_valeur_meta(valeur: &str) -> String {
+    valeur
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
+        .collect()
+}
+
+/// Diagnostic pré-vol du runtime embarqué (non bloquant).
+fn avertissement_runtime(bytes: usize) -> PreflightIssue {
+    PreflightIssue::warning(
+        "runtime-embarque",
+        format!(
+            "runtime embarqué : {} — la glue JS et le binaire wasm sont inclus dans le HTML ; le jeu est jouable hors ligne en file:// (le fichier est plus lourd d'autant)",
+            taille_lisible(bytes)
+        ),
+    )
+}
+
+/// Diagnostic pré-vol d'un runtime construit pour une autre version du moteur.
+///
+/// Non bloquant : l'export reste possible, mais il jouerait l'ancien moteur.
+fn avertissement_runtime_perime(version_runtime: &str, version_moteur: &str) -> PreflightIssue {
+    PreflightIssue::warning(
+        "runtime-perime",
+        format!(
+            "le runtime embarqué a été construit pour la version {version_runtime}, le moteur est en {version_moteur} — relancez scripts/build_wasm.sh"
+        ),
+    )
+}
 
 /// Métadonnées descriptives du jeu exporté
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,7 +382,17 @@ pub struct KaractiGamePackage {
     pub scene_objective: Option<String>,
     /// Liste complète des entités avec leurs composants ECS
     pub entities: Vec<Entity>,
-    /// Table de tous les graphes KVL associés aux entités
+    /// Niveaux embarqués du projet, dans l'ordre de jeu (`scenes[0]` = niveau 1).
+    ///
+    /// `entities`/`scene_name` restent la **scène courante** au moment de
+    /// l'export (compatibilité des lecteurs historiques) ; `scenes` transporte
+    /// l'intégralité du projet pour que le HTML contienne tous les niveaux.
+    ///
+    /// `#[serde(default)]` : un ancien paquet sans ce champ reste lisible, son
+    /// `scenes` est vide et l'import conserve alors le comportement mono-scène.
+    #[serde(default)]
+    pub scenes: Vec<SceneData>,
+    /// Table de tous les graphes KVL associés aux entités (tous niveaux confondus)
     pub kvl_graphs: HashMap<String, Graph>,
     /// Variables globales initiales de contexte
     pub initial_variables: HashMap<String, Value>,
@@ -95,15 +423,222 @@ impl KaractiGamePackage {
 
     /// Génère un document HTML5 standalone complet intégrant le package et le lecteur Web
     pub fn generate_standalone_html(&self) -> String {
-        let package_json = self.to_json().unwrap_or_else(|_| "{}".to_string());
+        self.generate_standalone_html_with_runtime(None)
+    }
+
+    /// Génère le document HTML5 autonome, en embarquant éventuellement le
+    /// runtime WASM (glue + binaire base64) avant `</body>`.
+    ///
+    /// `None` produit le même document qu'historiquement : données du jeu
+    /// seules, carte d'identification au démarrage, aucune dépendance externe.
+    /// `Some(runtime)` produit un fichier réellement jouable en un seul fichier.
+    ///
+    /// Le paquet est sérialisé avec les **clés triées** : les `HashMap` du
+    /// package n'exposent donc pas leur ordre d'itération aléatoire, et deux
+    /// exports du même projet donnent exactement le même fichier.
+    pub fn generate_standalone_html_with_runtime(
+        &self,
+        runtime: Option<&EmbeddedRuntime>,
+    ) -> String {
+        let package_json = serialiser_json_deterministe(self).unwrap_or_else(|_| "{}".to_string());
         let escaped_json = package_json.replace("</script>", "<\\/script>");
+        let meta_runtime = runtime.map(balise_meta_runtime).unwrap_or_default();
         let template = include_str!("standalone_template.html");
-        template
+        let html = template
+            .replace("{{RUNTIME_META}}", &meta_runtime)
             .replace("{{TITLE}}", &self.metadata.title)
             .replace("{{AUTHOR}}", &self.metadata.author)
             .replace("{{GENRE}}", &self.metadata.genre)
-            .replace("{{EMBEDDED_JSON}}", &escaped_json)
+            .replace("{{EMBEDDED_JSON}}", &escaped_json);
+        match runtime {
+            Some(runtime) => injecter_runtime(html, runtime),
+            None => html,
+        }
     }
+}
+
+/// Sévérité d'un diagnostic de pré-vol d'export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PreflightSeverity {
+    /// Problème qui empêche un export jouable (script ou asset introuvable).
+    Blocking,
+    /// Problème tolérable qui mérite l'attention du créateur (budget de performance).
+    Warning,
+}
+
+/// Diagnostic unitaire produit par le pré-vol d'export.
+///
+/// Le `code` est volontairement court, stable et sans accent : il sert de clé
+/// technique à l'interface Studio, tandis que `message` est destiné au créateur.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreflightIssue {
+    /// Gravité du diagnostic.
+    pub severity: PreflightSeverity,
+    /// Code technique stable : `"script-manquant"`, `"asset-manquant"`,
+    /// `"budget-entites"`, `"budget-kvl"`, `"manifeste-absent"`,
+    /// `"runtime-embarque"`, `"runtime-perime"`, ou l'un des codes relayés du
+    /// manifeste (`"fichier-absent"`, `"hash-incoherent"`, `"taille-different"`,
+    /// `"budget-depasse"`, `"licence-manquante"`, `"chemin-invalide"`).
+    pub code: &'static str,
+    /// Message lisible en français, orienté créateur.
+    pub message: String,
+}
+
+impl PreflightIssue {
+    /// Construit un diagnostic bloquant.
+    fn blocking(code: &'static str, message: String) -> Self {
+        Self { severity: PreflightSeverity::Blocking, code, message }
+    }
+
+    /// Construit un diagnostic d'avertissement.
+    fn warning(code: &'static str, message: String) -> Self {
+        Self { severity: PreflightSeverity::Warning, code, message }
+    }
+}
+
+/// Rapport de pré-vol d'export : l'état du jeu est-il exportable en l'état ?
+///
+/// `ok` vaut `true` quand aucun diagnostic [`PreflightSeverity::Blocking`] n'a
+/// été relevé ; les avertissements de budget ne bloquent jamais l'export.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreflightReport {
+    /// `true` si aucun bloquage n'a été relevé.
+    pub ok: bool,
+    /// Diagnostics détectés, dans l'ordre de détection (blocages puis budgets).
+    pub issues: Vec<PreflightIssue>,
+}
+
+impl PreflightReport {
+    /// Nombre de diagnostics bloquants (export refusé).
+    pub fn blocking_count(&self) -> usize {
+        self.issues
+            .iter()
+            .filter(|i| i.severity == PreflightSeverity::Blocking)
+            .count()
+    }
+
+    /// Diagnostics non bloquants, dans l'ordre de détection.
+    pub fn warnings(&self) -> Vec<&PreflightIssue> {
+        self.issues
+            .iter()
+            .filter(|i| i.severity == PreflightSeverity::Warning)
+            .collect()
+    }
+
+    /// Résumé lisible pour le créateur, par exemple
+    /// `« 2 blocages, 1 avertissement : script-manquant — … ; budget-entites — … »`.
+    pub fn summary(&self) -> String {
+        if self.issues.is_empty() {
+            return "Pré-vol réussi : aucun problème détecté.".to_string();
+        }
+        let blocages = self.blocking_count();
+        let avertissements = self.warnings().len();
+        let entete = format!(
+            "{} blocage{}, {} avertissement{}",
+            blocages,
+            if blocages > 1 { "s" } else { "" },
+            avertissements,
+            if avertissements > 1 { "s" } else { "" }
+        );
+        let details = self
+            .issues
+            .iter()
+            .map(|i| format!("{} — {}", i.code, i.message))
+            .collect::<Vec<_>>()
+            .join(" ; ");
+        format!("{entete} : {details}")
+    }
+}
+
+/// Itère sur toutes les entités que l'export doit couvrir : celles de la scène
+/// courante, puis celles de chaque niveau embarqué (`GameState::levels`).
+///
+/// Les deux ensembles se recoupent souvent (`levels[0]` reflète la scène
+/// courante) : les tables d'assets sont des `HashMap` indexées par identifiant
+/// et le pré-vol déduplique par référence, donc aucun doublon n'est produit.
+fn entites_exportees(game: &GameState) -> impl Iterator<Item = std::borrow::Cow<'_, Entity>> {
+    let courantes = game.entities.iter().map(std::borrow::Cow::Borrowed);
+    // `to_entities` matérialise aussi les scènes au format historique
+    // (`player`/`coins`/`doors`/`enemies` sans tableau `entities`) : leurs
+    // scripts et sprites doivent voyager comme ceux des scènes modernes.
+    let niveaux = game.levels.iter().flat_map(|scene| {
+        scene
+            .to_entities()
+            .into_iter()
+            .map(std::borrow::Cow::Owned)
+            .collect::<Vec<_>>()
+            .into_iter()
+    });
+    courantes.chain(niveaux)
+}
+
+/// Lit le JSON d'un script KVL référencé par une entité.
+///
+/// Même ordre de résolution que `GameState::import_scripts` : chemin courant,
+/// puis `../../` (tests exécutés depuis `crates/engine-core`), puis racine du
+/// dépôt. Aucune lecture réseau. Un script introuvable renvoie `None` : c'est
+/// le pré-vol qui le signale comme bloquant, pas la sérialisation.
+fn lire_script_kvl(chemin: &str) -> Option<String> {
+    let candidats = [
+        PathBuf::from(chemin),
+        PathBuf::from(format!("../../{chemin}")),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(chemin),
+    ];
+    candidats
+        .iter()
+        .find_map(|candidat| std::fs::read_to_string(candidat).ok())
+}
+
+/// Union des graphes KVL du paquet : graphes déjà chargés dans l'état, puis
+/// tous les scripts référencés par les entités des niveaux embarqués.
+///
+/// Un paquet multi-niveaux doit transporter la logique de **toutes** ses
+/// scènes : sans cette union, seul le niveau courant garderait ses graphes et
+/// les portes des niveaux suivants resteraient muettes. La clé est le
+/// `script_path` exact de l'entité (celle qu'utilise le runtime pour résoudre
+/// le graphe).
+fn collecter_graphes_kvl(game: &GameState) -> HashMap<String, Graph> {
+    let mut graphes = game.kvl_graphs.clone();
+    for entite in entites_exportees(game) {
+        let Some(script) = &entite.script else { continue };
+        let chemin = script.script_path.as_str();
+        if chemin.trim().is_empty() || graphes.contains_key(chemin) {
+            continue;
+        }
+        if let Some(contenu) = lire_script_kvl(chemin) {
+            if let Ok(graphe) = Graph::from_json(&contenu) {
+                graphes.insert(chemin.to_string(), graphe);
+            }
+        }
+    }
+    graphes
+}
+
+/// Décode les assets embarqués d'un paquet (`id -> octets` / `id -> (png, json)`).
+///
+/// Un base64 corrompu est ignoré silencieusement : le rendu retombe alors sur
+/// le repli visuel, comme pour un asset absent du disque.
+fn decoder_assets_embarques(
+    package: &KaractiGamePackage,
+) -> (
+    HashMap<String, Vec<u8>>,
+    HashMap<String, (Vec<u8>, String)>,
+) {
+    let mut sprites = HashMap::new();
+    for (id, b64) in &package.sprite_assets {
+        if let Ok(bytes) = STANDARD.decode(b64) {
+            sprites.insert(id.clone(), bytes);
+        }
+    }
+    let mut sheets = HashMap::new();
+    for (id, sheet) in &package.sheet_assets {
+        if let Ok(png) = STANDARD.decode(&sheet.png) {
+            sheets.insert(id.clone(), (png, sheet.json.clone()));
+        }
+    }
+    (sprites, sheets)
 }
 
 /// Packageur et exportateur autonome de jeu KaractiRage
@@ -140,11 +675,17 @@ impl StandaloneExporter {
             initial_vars.insert("keys".to_string(), keys.clone());
         }
 
+        // Niveaux embarqués du projet : exporter « le jeu », pas seulement la
+        // scène courante. Un état construit par `load_from_scene` (hors projet)
+        // a `levels` vide : le paquet reste alors mono-scène, comme avant.
+        let scenes = game.levels.clone();
+
         // Collecte des assets pixel-art référencés (sprites + spritesheets/anims)
         // pour rendre le package autonome (pas de dépendance au système de fichiers).
+        // Tous les niveaux sont couverts : un sprite du niveau 3 doit voyager aussi.
         let mut sprite_assets = HashMap::new();
         let mut sheet_assets = HashMap::new();
-        for ent in &game.entities {
+        for ent in entites_exportees(game) {
             if let Some(rend) = &ent.renderable {
                 match &rend.shape {
                     ShapeKind::ImageRef { asset } => {
@@ -165,22 +706,295 @@ impl StandaloneExporter {
             }
         }
 
+        // Union des graphes : scène courante + scripts des niveaux 2/3.
+        let kvl_graphs = collecter_graphes_kvl(game);
+
         KaractiGamePackage {
             metadata,
             scene_name: game.scene_name.clone(),
             scene_objective: game.scene_objective.clone(),
             entities: game.entities.clone(),
-            kvl_graphs: game.kvl_graphs.clone(),
+            scenes,
+            kvl_graphs,
             initial_variables: initial_vars,
             sprite_assets,
             sheet_assets,
         }
     }
 
-    /// Exporte le jeu en un fichier HTML standalone complet
+    /// Exporte le jeu en un fichier HTML standalone complet.
+    ///
+    /// Le runtime WASM est cherché via [`default_runtime_dir`]
+    /// (`$KARACTI_RUNTIME_DIR`, sinon `dist/pkg`), **sur le disque local
+    /// uniquement** : aucune lecture réseau. S'il est trouvé, le HTML contient
+    /// la glue et le binaire wasm et le jeu démarre même en `file://`.
     pub fn export_html(game: &GameState, title: &str, author: &str) -> String {
+        let runtime_dir = default_runtime_dir();
+        Self::export_html_with_runtime(game, title, author, Some(runtime_dir.as_path()))
+    }
+
+    /// Exporte le jeu en HTML autonome avec un runtime explicite.
+    ///
+    /// `runtime_dir = Some(dir)` tente de charger `engine_wasm.js` et
+    /// `engine_wasm_bg.wasm` depuis `dir` ; si les artefacts sont absents ou
+    /// illisibles, l'export reste valide mais sans runtime (carte explicite).
+    /// `None` produit volontairement un export sans runtime, comme
+    /// [`KaractiGamePackage::generate_standalone_html`].
+    pub fn export_html_with_runtime(
+        game: &GameState,
+        title: &str,
+        author: &str,
+        runtime_dir: Option<&Path>,
+    ) -> String {
         let package = Self::create_package(game, title, author);
-        package.generate_standalone_html()
+        let runtime = runtime_dir.and_then(load_embedded_runtime);
+        package.generate_standalone_html_with_runtime(runtime.as_ref())
+    }
+
+    /// Pré-vol d'export : vérifie que chaque script et chaque asset référencés
+    /// sont résolvables, puis signale les budgets de performance dépassés.
+    ///
+    /// Le contrôle couvre **tous les niveaux embarqués** (`game.levels`) et pas
+    /// seulement la scène courante : un sprite manquant au niveau 2 bloque donc
+    /// l'export, comme un asset manquant au niveau 1. Un projet multi-niveaux
+    /// reçoit en plus l'avertissement informatif `"niveaux-exportes"`.
+    ///
+    /// Un script est considéré présent s'il figure dans `game.kvl_graphs` (graphe
+    /// déjà chargé) ou si son fichier existe sur disque. Un asset de rendu est
+    /// considéré présent s'il est connu du cache correspondant (`sprite_cache`
+    /// pour les PNG/SVG, `sheet_cache` pour les spritesheets/anims) ou si son
+    /// fichier source existe sous `assets/`.
+    ///
+    /// Quand le jeu porte un manifeste d'assets (`game.assets_manifest`), ses
+    /// entrées sont en plus vérifiées contre le disque : un fichier absent, une
+    /// taille ou un hash différent bloque l'export, une licence manquante
+    /// n'émet qu'un avertissement. Un projet **sans** manifeste reste
+    /// exportable ; il reçoit seulement l'avertissement `"manifeste-absent"`
+    /// lorsqu'une entité référence un script ou un asset de rendu.
+    ///
+    /// Les dépassements de budget (> 500 entités, > 5000 connexions KVL
+    /// cumulées) ne produisent que des avertissements : ils n'empêchent jamais
+    /// l'export.
+    ///
+    /// Le runtime embarqué produit un avertissement `"runtime-embarque"` (taille
+    /// ajoutée au HTML) et, quand `runtime_manifest.json` date les artefacts
+    /// d'une autre version que `CARGO_PKG_VERSION`, un avertissement
+    /// `"runtime-perime"` : l'export resterait possible, mais jouerait un
+    /// ancien moteur.
+    pub fn preflight(game: &GameState) -> PreflightReport {
+        let runtime_dir = default_runtime_dir();
+        Self::preflight_with_runtime_dir(game, Some(runtime_dir.as_path()))
+    }
+
+    /// Pré-vol identique à [`StandaloneExporter::preflight`], avec un
+    /// répertoire de runtime explicite (`None` = pas de runtime à inspecter).
+    ///
+    /// Permet aux tests de rester indépendants du vrai `dist/pkg` : ils
+    /// fabriquent un petit runtime factice dans un répertoire temporaire.
+    pub fn preflight_with_runtime_dir(
+        game: &GameState,
+        runtime_dir: Option<&Path>,
+    ) -> PreflightReport {
+        const BUDGET_ENTITES: usize = 500;
+        const BUDGET_CONNEXIONS_KVL: usize = 5000;
+
+        let mut issues = Vec::new();
+        // Évite de répéter le même diagnostic pour N entités partageant la même
+        // référence (cas fréquent : un script de collectible sur 20 pièces).
+        let mut deja_signales: HashSet<String> = HashSet::new();
+
+        for ent in entites_exportees(game) {
+            // --- Scripts KVL -------------------------------------------------
+            if let Some(script) = &ent.script {
+                let chemin = script.script_path.trim();
+                if !chemin.is_empty()
+                    && !game.kvl_graphs.contains_key(&script.script_path)
+                    && !fichier_existe(chemin)
+                {
+                    let cle = format!("script-manquant\u{1f}{chemin}");
+                    if deja_signales.insert(cle) {
+                        issues.push(PreflightIssue::blocking(
+                            "script-manquant",
+                            format!(
+                                "le script « {chemin} » est référencé par l'entité « {} » mais introuvable : aucun graphe KVL chargé et aucun fichier sur disque",
+                                ent.name
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            // --- Assets de rendu ---------------------------------------------
+            let Some(rend) = &ent.renderable else { continue };
+            let asset_absent = match &rend.shape {
+                ShapeKind::SvgRef { asset } => {
+                    // `vector_sprite` est renseigné à l'import quand le SVG a pu
+                    // être rastérisé (y compris via un asset embarqué).
+                    ent.vector_sprite.is_none()
+                        && game.sprite_cache.get(asset).is_none()
+                        && !asset_svg_existe(asset)
+                }
+                ShapeKind::ImageRef { asset } => {
+                    game.sprite_cache.get(asset).is_none()
+                        && crate::vector::read_png_source(asset).is_none()
+                }
+                ShapeKind::SheetRef { asset, .. } | ShapeKind::AnimRef { asset } => {
+                    game.sheet_cache.get(asset).is_none()
+                        && crate::sheet::read_sheet_source(asset).is_none()
+                }
+                _ => false,
+            };
+            if asset_absent {
+                let (reference, libelle) = match &rend.shape {
+                    ShapeKind::SvgRef { asset } | ShapeKind::ImageRef { asset } => (asset, "sprite"),
+                    ShapeKind::SheetRef { asset, .. } | ShapeKind::AnimRef { asset } => {
+                        (asset, "spritesheet")
+                    }
+                    _ => unreachable!("seuls les assets de rendu sont vérifiés"),
+                };
+                let cle = format!("asset-manquant\u{1f}{reference}");
+                if deja_signales.insert(cle) {
+                    issues.push(PreflightIssue::blocking(
+                        "asset-manquant",
+                        format!(
+                            "le {libelle} « {reference} » est référencé par l'entité « {} » mais introuvable : absent du cache et absent sous assets/",
+                            ent.name
+                        ),
+                    ));
+                }
+            }
+        }
+
+        // --- Manifeste d'assets (P2.1) --------------------------------------
+        // Un projet sans manifeste reste exportable ; l'absence n'est signalée
+        // que si des entités référencent réellement des scripts ou des assets.
+        if let Some(manifeste) = &game.assets_manifest {
+            let racine = racine_du_manifeste(manifeste);
+            for issue in manifeste.validate(&racine) {
+                let severity = if issue.blocking {
+                    PreflightSeverity::Blocking
+                } else {
+                    PreflightSeverity::Warning
+                };
+                issues.push(PreflightIssue {
+                    severity,
+                    code: issue.code,
+                    message: format!("manifeste : {}", issue.message),
+                });
+            }
+        } else if entites_referencent_des_assets(game) {
+            issues.push(PreflightIssue::warning(
+                "manifeste-absent",
+                "des entités référencent des scripts ou des assets de rendu, mais le projet ne déclare aucun manifeste d'assets : leur provenance et leur intégrité ne sont pas vérifiées. Ajoute un manifeste au projet.".to_string(),
+            ));
+        }
+
+        // --- Niveaux embarqués (avertissement informatif) ---------------------
+        // Depuis l'export multi-niveaux, le HTML contient toutes les scènes du
+        // projet. Le créateur doit le savoir : la taille et le contenu du
+        // fichier ne correspondent plus à la seule scène courante.
+        if game.levels.len() > 1 {
+            issues.push(PreflightIssue::warning(
+                "niveaux-exportes",
+                format!(
+                    "{} niveaux seront embarqués dans le HTML (toutes les scènes du projet, pas seulement la scène courante)",
+                    game.levels.len()
+                ),
+            ));
+        }
+
+        // --- Runtime embarqué (avertissements uniquement) --------------------
+        // Sans artefacts wasm, l'export reste valide mais non jouable : jamais
+        // bloquant. La taille annoncée est celle réellement ajoutée au HTML
+        // (glue + binaire base64), calculée sans encoder le wasm.
+        if let Some(dir) = runtime_dir {
+            if let Some(bytes) = taille_runtime_embarque(dir) {
+                issues.push(avertissement_runtime(bytes));
+                // Le manifeste peut dater les artefacts d'une autre version :
+                // l'export fonctionnerait, mais avec l'ancien moteur.
+                if let Some(version_runtime) =
+                    load_runtime_manifest(dir).and_then(|manifeste| manifeste.engine_version)
+                {
+                    let version_moteur = env!("CARGO_PKG_VERSION");
+                    if version_runtime != version_moteur {
+                        issues.push(avertissement_runtime_perime(
+                            &version_runtime,
+                            version_moteur,
+                        ));
+                    }
+                }
+            }
+        }
+
+        // --- Budgets (avertissements uniquement) -----------------------------
+        if game.entities.len() > BUDGET_ENTITES {
+            issues.push(PreflightIssue::warning(
+                "budget-entites",
+                format!(
+                    "{} entités : au-delà de {BUDGET_ENTITES}, les profils Bas de gamme et Batterie risquent de passer sous 60 FPS",
+                    game.entities.len()
+                ),
+            ));
+        }
+        let connexions: usize = game.kvl_graphs.values().map(|g| g.connections.len()).sum();
+        if connexions > BUDGET_CONNEXIONS_KVL {
+            issues.push(PreflightIssue::warning(
+                "budget-kvl",
+                format!(
+                    "{connexions} connexions KVL cumulées : au-delà de {BUDGET_CONNEXIONS_KVL}, l'interpréteur peut coûter cher à chaque frame"
+                ),
+            ));
+        }
+
+        PreflightReport {
+            ok: !issues
+                .iter()
+                .any(|i| i.severity == PreflightSeverity::Blocking),
+            issues,
+        }
+    }
+
+    /// Export HTML protégé par le pré-vol : renvoie le rapport en `Err` dès qu'un
+    /// diagnostic bloquant est présent, sinon produit l'export standard.
+    pub fn export_html_checked(
+        game: &GameState,
+        title: &str,
+        author: &str,
+    ) -> Result<String, PreflightReport> {
+        let report = Self::preflight(game);
+        if !report.ok {
+            return Err(report);
+        }
+        Ok(Self::export_html(game, title, author))
+    }
+
+    /// Empreinte stable du contenu exporté (FNV-1a 64 bits, 16 caractères hex).
+    ///
+    /// Le paquet JSON embarqué dans le HTML est isolé et haché en priorité : la
+    /// coquille HTML (titre, styles, lecteur) n'influence donc pas l'empreinte et
+    /// une éventuelle date volatile ajoutée dans la page (pied de page, bannière
+    /// « généré le … ») ne la fait pas dériver. Si le marqueur du paquet est
+    /// absent (HTML étranger), l'empreinte porte sur la chaîne entière.
+    ///
+    /// Limite connue : `PackageMetadata::created_at` est actuellement une
+    /// constante (`"2026-10-16"`), donc l'export est reproductible. Si ce champ
+    /// devenait un horodatage réel, il faudrait l'exclure du paquet avant
+    /// hachage, sinon deux exports identiques produiraient deux empreintes.
+    ///
+    /// Limite assumée : le **runtime embarqué** (`#runtime-glue` + le wasm
+    /// base64, soit ~4,7 Mo) n'entre pas dans l'empreinte. Deux exports du même
+    /// jeu produits avec des artefacts wasm différents partagent donc la même
+    /// empreinte alors que leurs fichiers diffèrent : c'est voulu, l'empreinte
+    /// identifie le contenu du jeu (entités, graphes KVL, assets), pas le
+    /// binaire du moteur. En revanche, à projet et artefacts identiques, la
+    /// sortie est octet pour octet identique (base64 déterministe, aucune date
+    /// volatile).
+    ///
+    /// Ce n'est pas un hash cryptographique : il sert à détecter une dérive de
+    /// contenu, pas à authentifier un export.
+    pub fn export_fingerprint(html: &str) -> String {
+        let empreinte = paquet_embarque(html).unwrap_or(html);
+        crate::ai_dictionary::hash_text(empreinte.as_bytes())
     }
 
     /// Exporte le package en JSON universel
@@ -189,9 +1003,67 @@ impl StandaloneExporter {
         package.to_json_pretty()
     }
 
-    /// Importe et applique un package de jeu dans l'état du jeu
+    /// Importe et applique un package de jeu dans l'état du jeu.
+    ///
+    /// **Paquet multi-niveaux** (`scenes` non vide) : reconstruit un jeu complet
+    /// à partir du niveau 1 (`scenes[0]`), installe tous les niveaux, l'union
+    /// des graphes KVL, les variables initiales et les assets embarqués, puis
+    /// place le joueur sur l'écran `Menu` (il lance la partie avec `Entrée`).
+    ///
+    /// **Ancien paquet** (`scenes` vide, champ absent) : comportement historique
+    /// inchangé — la scène du paquet remplace l'état courant et l'éditeur passe
+    /// en mode Jeu, sans forcer d'écran.
     #[allow(dead_code)]
     pub fn import_package(game: &mut GameState, package: &KaractiGamePackage) {
+        // --- Format multi-niveaux ------------------------------------------
+        if let Some(premiere) = package.scenes.first() {
+            if let Ok(mut nouveau) =
+                GameState::from_scene_data(premiere.clone(), "paquet:niveau_1")
+            {
+                nouveau.levels = package.scenes.clone();
+                nouveau.level_index = 0;
+                nouveau.scene_name = premiere.name.clone();
+                nouveau.scene_objective = premiere.objective.clone();
+                // Union calculée à l'export : elle couvre aussi les niveaux que
+                // le disque local ne peut pas résoudre (cas wasm/navigateur).
+                nouveau.kvl_graphs = package.kvl_graphs.clone();
+                for (k, v) in &package.initial_variables {
+                    nouveau.kvl_context.set_var(k.clone(), v.clone());
+                }
+
+                let (sprites, sheets) = decoder_assets_embarques(package);
+                nouveau.apply_embedded_assets(sprites, sheets);
+
+                // Réinitialise la caméra et la sélection du Studio.
+                nouveau.editor.selected = crate::editor::SelectedEntity::None;
+                nouveau.editor.mode = crate::editor::EditorMode::Play;
+
+                // Le joueur voit le menu, puis `Entrée` démarre le niveau 1.
+                nouveau.screen = crate::screens::GameScreen::Menu;
+                nouveau.sync_screen_variables();
+
+                // L'audio et le replay sont des ressources de session : on garde
+                // le même périphérique et la même session qu'avant l'import.
+                std::mem::swap(&mut nouveau.audio, &mut game.audio);
+                std::mem::swap(&mut nouveau.replay, &mut game.replay);
+
+                let total_entites: usize =
+                    package.scenes.iter().map(|scene| scene.entities.len()).sum();
+                *game = nouveau;
+                game.set_status(format!(
+                    "🎮 Jeu '{}' chargé avec succès ! ({} niveaux, {} entités, {} graphes KVL)",
+                    package.metadata.title,
+                    package.scenes.len(),
+                    total_entites,
+                    package.kvl_graphs.len()
+                ));
+                return;
+            }
+            // Reconstruction impossible (scène invalide) : on retombe sur le
+            // comportement historique plutôt que de laisser l'état à moitié importé.
+        }
+
+        // --- Ancien format mono-scène (scenes vide) --------------------------
         game.scene_name = package.scene_name.clone();
         game.scene_objective = package.scene_objective.clone();
         game.entities = package.entities.clone();
@@ -202,24 +1074,104 @@ impl StandaloneExporter {
         }
 
         // Décodage des assets embarqués + re-résolution des sprites/spritesheets.
-        let mut sprites = HashMap::new();
-        for (id, b64) in &package.sprite_assets {
-            if let Ok(bytes) = STANDARD.decode(b64) {
-                sprites.insert(id.clone(), bytes);
-            }
-        }
-        let mut sheets = HashMap::new();
-        for (id, s) in &package.sheet_assets {
-            if let Ok(png) = STANDARD.decode(&s.png) {
-                sheets.insert(id.clone(), (png, s.json.clone()));
-            }
-        }
+        let (sprites, sheets) = decoder_assets_embarques(package);
         game.apply_embedded_assets(sprites, sheets);
 
         // Réinitialise la caméra et la sélection du Studio
         game.editor.selected = crate::editor::SelectedEntity::None;
         game.editor.mode = crate::editor::EditorMode::Play;
         game.set_status(format!("🎮 Jeu '{}' chargé avec succès ! ({} entités, {} graphes KVL)", package.metadata.title, package.entities.len(), package.kvl_graphs.len()));
+    }
+}
+
+/// Vérifie l'existence d'un fichier relatif au dépôt.
+///
+/// Même motif de résolution que le reste du projet : chemin courant, puis
+/// `../../<chemin>` (les tests s'exécutent depuis `crates/engine-core`), puis la
+/// racine du dépôt pour rester indépendant du cwd.
+fn fichier_existe(rel: &str) -> bool {
+    if Path::new(rel).is_file() {
+        return true;
+    }
+    if Path::new(&format!("../../{rel}")).is_file() {
+        return true;
+    }
+    let racine = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+    Path::new(&format!("{racine}/{rel}")).is_file()
+}
+
+/// Racine disque du manifeste : répertoire courant, puis `../../` quand les
+/// chemins n'y répondent pas (même motif que [`fichier_existe`]).
+///
+/// Une entrée absente partout laisse la racine sur le répertoire courant : le
+/// diagnostic `fichier-absent` cite alors un chemin stable et compréhensible.
+fn racine_du_manifeste(manifeste: &crate::assets_manifest::AssetsManifest) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if manifeste
+        .entries
+        .iter()
+        .any(|entree| cwd.join(&entree.path).is_file())
+    {
+        return cwd;
+    }
+    let remontee = cwd.join("../..");
+    if manifeste
+        .entries
+        .iter()
+        .any(|entree| remontee.join(&entree.path).is_file())
+    {
+        return remontee;
+    }
+    cwd
+}
+
+/// `true` si au moins une entité référence un script ou un asset de rendu
+/// externe (SVG, PNG, spritesheet, animation) : c'est le cas où l'absence de
+/// manifeste mérite un avertissement de pré-vol.
+fn entites_referencent_des_assets(game: &GameState) -> bool {
+    entites_exportees(game).any(|entite| {
+        entite
+            .script
+            .as_ref()
+            .is_some_and(|script| !script.script_path.trim().is_empty())
+            || entite.renderable.as_ref().is_some_and(|rendu| {
+                matches!(
+                    rendu.shape,
+                    ShapeKind::SvgRef { .. }
+                        | ShapeKind::ImageRef { .. }
+                        | ShapeKind::SheetRef { .. }
+                        | ShapeKind::AnimRef { .. }
+                )
+            })
+    })
+}
+
+/// Vérifie qu'un sprite vectoriel référencé par `SvgRef` est résolvable sur
+/// disque (chemin explicite en `.svg` ou identifiant sous `assets/sprites/`).
+fn asset_svg_existe(asset: &str) -> bool {
+    if fichier_existe(asset) {
+        return true;
+    }
+    let rel = if asset.ends_with(".svg") {
+        asset.to_string()
+    } else {
+        format!("assets/sprites/{asset}.svg")
+    };
+    fichier_existe(&rel)
+}
+
+/// Marqueur du paquet JSON embarqué dans le template HTML standalone.
+const BALISE_PAQUET: &str = "<script id=\"embedded-package\" type=\"application/json\">";
+
+/// Extrait le JSON embarqué entre `BALISE_PAQUET` et `</script>`, s'il existe.
+fn paquet_embarque(html: &str) -> Option<&str> {
+    let debut = html.find(BALISE_PAQUET)? + BALISE_PAQUET.len();
+    let fin = html[debut..].find("</script>")? + debut;
+    let paquet = html[debut..fin].trim();
+    if paquet.is_empty() {
+        None
+    } else {
+        Some(paquet)
     }
 }
 
@@ -257,6 +1209,7 @@ mod tests {
             scene_name: "Donjon Oublié".to_string(),
             scene_objective: Some("Trouver la clé et vaincre le gardien".to_string()),
             entities: Vec::new(),
+            scenes: Vec::new(),
             kvl_graphs: graphs,
             initial_variables: HashMap::new(),
             sprite_assets: HashMap::new(),
@@ -288,6 +1241,7 @@ mod tests {
             scene_name: "Niveau 1".to_string(),
             scene_objective: None,
             entities: Vec::new(),
+            scenes: Vec::new(),
             kvl_graphs: HashMap::new(),
             initial_variables: HashMap::new(),
             sprite_assets: HashMap::new(),
@@ -300,5 +1254,866 @@ mod tests {
         assert!(html.contains("Tester"));
         assert!(html.contains("canvas id=\"game-canvas\""));
         assert!(html.contains("id=\"embedded-package\""));
+    }
+
+    /// Charge le niveau de référence P1 depuis le cwd, avec repli `../../`
+    /// (cargo exécute les tests depuis `crates/engine-core`).
+    fn jeu_reference() -> GameState {
+        let candidats = [
+            "assets/scenes/ref_niveau_1.scene.json",
+            "../../assets/scenes/ref_niveau_1.scene.json",
+        ];
+        for chemin in candidats {
+            if Path::new(chemin).is_file() {
+                return GameState::load_from_scene(chemin)
+                    .expect("la scène de référence doit être chargeable");
+            }
+        }
+        panic!("scène de référence introuvable : assets/scenes/ref_niveau_1.scene.json");
+    }
+
+    /// Charge le projet de référence P1 (3 niveaux) dans un `GameState`.
+    fn jeu_reference_projet() -> GameState {
+        let candidats = [
+            "assets/projects/jeu_reference.karacti",
+            "../../assets/projects/jeu_reference.karacti",
+        ];
+        for chemin in candidats {
+            if Path::new(chemin).is_file() {
+                let projet = crate::project::KaractiProject::load_from_file(chemin)
+                    .expect("le projet de référence doit être lisible");
+                let mut jeu = jeu_reference();
+                jeu.load_project(projet);
+                return jeu;
+            }
+        }
+        panic!("projet de référence introuvable : assets/projects/jeu_reference.karacti");
+    }
+
+    /// Scripts référencés par les trois niveaux du jeu de référence.
+    const SCRIPTS_REFERENCE: [&str; 4] = [
+        "assets/scripts/coin_pickup.kvl.json",
+        "assets/scripts/ref_porte_niveau.kvl.json",
+        "assets/scripts/ref_boss_verrou.kvl.json",
+        "assets/scripts/ref_porte_boss.kvl.json",
+    ];
+
+    #[test]
+    fn test_paquet_jeu_reference_contient_les_trois_niveaux() {
+        let jeu = jeu_reference_projet();
+        assert_eq!(jeu.levels.len(), 3, "le projet de référence déclare 3 scènes");
+
+        let package = StandaloneExporter::create_package(&jeu, "Référence", "Testeur");
+        assert_eq!(package.scenes.len(), 3, "les 3 niveaux sont sérialisés");
+        assert_eq!(package.scenes[0].name, jeu.levels[0].name);
+        assert_eq!(package.scenes[2].name, jeu.levels[2].name);
+        // Compatibilité : entities/scene_name restent la scène courante.
+        assert_eq!(package.scene_name, jeu.scene_name);
+        assert_eq!(package.entities.len(), jeu.entities.len());
+
+        // Union des graphes des niveaux 1, 2 et 3.
+        for script in SCRIPTS_REFERENCE {
+            assert!(
+                package.kvl_graphs.contains_key(script),
+                "graphe « {script} » absent de l'union : {:?}",
+                package.kvl_graphs.keys().collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(package.kvl_graphs.len(), SCRIPTS_REFERENCE.len());
+
+        // Le JSON conserve les niveaux et reste relisible.
+        let relu = KaractiGamePackage::from_json(&package.to_json().expect("sérialisation"))
+            .expect("désérialisation");
+        assert_eq!(relu.scenes.len(), 3, "scenes traverse le JSON");
+        assert_eq!(relu.kvl_graphs.len(), SCRIPTS_REFERENCE.len());
+    }
+
+    #[test]
+    fn test_paquet_sans_scenes_reste_importable_et_garde_l_ancien_comportement() {
+        let jeu = jeu_reference();
+        let package = StandaloneExporter::create_package(&jeu, "Ancien format", "Testeur");
+        assert!(package.scenes.is_empty(), "scène isolée : aucun niveau embarqué");
+
+        // Simule un ancien paquet : le champ `scenes` est totalement absent.
+        let mut valeur = serde_json::to_value(&package).expect("package en JSON");
+        let objet = valeur.as_object_mut().expect("objet JSON");
+        assert!(objet.remove("scenes").is_some(), "champ scenes présent avant retrait");
+        let json_ancien = serde_json::to_string(&valeur).expect("JSON compact");
+        assert!(!json_ancien.contains("\"scenes\""), "vieux format sans scenes");
+
+        let ancien = KaractiGamePackage::from_json(&json_ancien)
+            .expect("un ancien paquet reste importable");
+        assert!(ancien.scenes.is_empty(), "#[serde(default)] remplit avec un Vec vide");
+
+        // Import dans un état neuf : comportement historique (mono-scène, mode Jeu).
+        let mut cible = jeu_reference();
+        cible.levels.clear();
+        cible.screen = crate::screens::GameScreen::Playing;
+        StandaloneExporter::import_package(&mut cible, &ancien);
+        assert_eq!(cible.entities.len(), package.entities.len());
+        assert_eq!(cible.scene_name, package.scene_name);
+        assert_eq!(cible.kvl_graphs.len(), package.kvl_graphs.len());
+        assert_eq!(cible.editor.mode, crate::editor::EditorMode::Play);
+        assert_eq!(
+            cible.screen,
+            crate::screens::GameScreen::Playing,
+            "l'ancien format ne force pas l'écran Menu"
+        );
+    }
+
+    #[test]
+    fn test_import_paquet_jeu_reference_reconstruit_trois_niveaux() {
+        let source = jeu_reference_projet();
+        let package = StandaloneExporter::create_package(&source, "Référence", "Testeur");
+
+        // Instance neuve, comme au démarrage du runtime wasm.
+        let mut neuf = jeu_reference();
+        assert!(neuf.levels.is_empty());
+
+        StandaloneExporter::import_package(&mut neuf, &package);
+
+        assert_eq!(neuf.levels.len(), 3, "les 3 niveaux sont installés");
+        assert_eq!(neuf.level_index, 0);
+        assert_eq!(neuf.scene_name, package.scenes[0].name);
+        assert_eq!(
+            neuf.entities.len(),
+            package.scenes[0].to_entities().len(),
+            "le niveau 1 est instancié"
+        );
+        assert_eq!(
+            neuf.kvl_graphs.len(),
+            package.kvl_graphs.len(),
+            "l'union des graphes du paquet est installée"
+        );
+        assert_eq!(neuf.screen, crate::screens::GameScreen::Menu);
+        assert_eq!(neuf.editor.mode, crate::editor::EditorMode::Play);
+
+        // `Entrée` sur le menu → niveau 1 en jeu.
+        neuf.start_game();
+        assert_eq!(neuf.screen, crate::screens::GameScreen::Playing);
+        assert_eq!(neuf.level_index, 0);
+        assert_eq!(neuf.scene_name, "Niveau 1 : Salle des Émeraudes");
+
+        // Les niveaux suivants restent disponibles (le jeu est complet).
+        assert!(neuf.next_level(), "passage au niveau 2");
+        assert_eq!(neuf.level_index, 1);
+        assert!(neuf.next_level(), "passage au niveau 3");
+        assert_eq!(neuf.level_index, 2);
+        assert_eq!(neuf.scene_name, "Niveau 3 : Arène du Titan");
+        assert!(!neuf.next_level(), "dernier niveau : plus de suivant");
+    }
+
+    #[test]
+    fn test_export_html_projet_multi_niveaux_est_deterministe() {
+        let jeu = jeu_reference_projet();
+        let premier =
+            StandaloneExporter::export_html_with_runtime(&jeu, "Trois niveaux", "Testeur", None);
+        let second =
+            StandaloneExporter::export_html_with_runtime(&jeu, "Trois niveaux", "Testeur", None);
+        assert_eq!(premier, second, "même projet = même fichier");
+        assert_eq!(
+            StandaloneExporter::export_fingerprint(&premier),
+            StandaloneExporter::export_fingerprint(&second)
+        );
+        // Diagnostic lu par export-smoke.mjs --expect-levels.
+        assert!(premier.contains("__karacti_levels"));
+    }
+
+    #[test]
+    fn test_preflight_projet_multi_niveaux_signale_les_niveaux_sans_bloquer() {
+        let jeu = jeu_reference_projet();
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
+        assert!(report.ok, "pré-vol : {}", report.summary());
+        assert_eq!(report.blocking_count(), 0, "rapport : {}", report.summary());
+        let issue = report
+            .warnings()
+            .into_iter()
+            .find(|issue| issue.code == "niveaux-exportes")
+            .expect("avertissement niveaux-exportes attendu");
+        assert!(issue.message.contains('3'), "message : {}", issue.message);
+    }
+
+    #[test]
+    fn test_preflight_bloque_un_asset_manquant_dans_un_niveau_ulterieur() {
+        let mut jeu = jeu_reference_projet();
+        let entite = jeu.levels[1].entities.get_mut(0).expect("niveau 2 non vide");
+        entite.renderable = Some(crate::entity::Renderable2D::image_ref(
+            "assets/sprites/asset_fantome_niveau_2.png",
+            1,
+        ));
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
+        assert!(!report.ok, "un asset manquant au niveau 2 doit bloquer");
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.code == "asset-manquant"));
+    }
+
+    #[test]
+    fn test_preflight_bloque_un_script_manquant_dans_un_niveau_ulterieur() {
+        let mut jeu = jeu_reference_projet();
+        let entite = jeu.levels[2].entities.get_mut(0).expect("niveau 3 non vide");
+        entite.script = Some(crate::entity::KVLScriptComponent::new(
+            "assets/scripts/script_fantome_niveau_3.kvl.json",
+        ));
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
+        assert!(!report.ok, "un script manquant au niveau 3 doit bloquer");
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.code == "script-manquant"));
+    }
+
+    #[test]
+    fn test_preflight_projet_sain() {
+        let jeu = jeu_reference();
+        // Répertoire de runtime explicite vide : le test reste indépendant du
+        // vrai `dist/pkg` (ni `runtime-embarque`, ni `runtime-perime`).
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
+        assert!(report.ok, "pré-vol du niveau de référence : {}", report.summary());
+        assert_eq!(report.blocking_count(), 0, "aucun blocage attendu : {}", report.summary());
+        // Le niveau de référence référence des scripts mais ne déclare pas de
+        // manifeste : seul l'avertissement `manifeste-absent` est attendu.
+        assert_eq!(report.warnings().len(), 1, "rapport : {}", report.summary());
+        assert_eq!(report.issues[0].code, "manifeste-absent");
+    }
+
+    #[test]
+    fn test_preflight_signale_manifeste_absent_sans_bloquer() {
+        let jeu = jeu_reference();
+        assert!(
+            jeu.entities.iter().any(|entite| entite.script.is_some()),
+            "le jeu de référence doit référencer au moins un script"
+        );
+        assert!(jeu.assets_manifest.is_none(), "aucun manifeste par défaut");
+
+        let report = StandaloneExporter::preflight(&jeu);
+        let avertissement = report
+            .warnings()
+            .into_iter()
+            .find(|issue| issue.code == "manifeste-absent")
+            .expect("un avertissement manifeste-absent est attendu");
+        assert!(avertissement.message.contains("manifeste"));
+        assert!(report.ok, "l'absence de manifeste ne bloque pas l'export");
+        assert_eq!(report.blocking_count(), 0);
+    }
+
+    #[test]
+    fn test_preflight_sans_manifeste_ni_assets_reste_silencieux() {
+        let mut jeu = jeu_reference();
+        for entite in &mut jeu.entities {
+            entite.script = None;
+            if let Some(rendu) = &mut entite.renderable {
+                rendu.shape = ShapeKind::Rect;
+            }
+        }
+        assert!(!entites_referencent_des_assets(&jeu));
+
+        let report = StandaloneExporter::preflight(&jeu);
+        assert!(report.ok, "pré-vol : {}", report.summary());
+        // Aucun diagnostic lié au contenu ; l'éventuel `runtime-embarque` ne
+        // dépend que de la présence des artefacts wasm sur la machine.
+        assert!(
+            report
+                .issues
+                .iter()
+                .all(|issue| issue.code == "runtime-embarque"),
+            "aucun diagnostic attendu sans asset référencé : {}",
+            report.summary()
+        );
+    }
+
+    /// Chemin disque réel d'un asset du dépôt, quel que soit le cwd des tests.
+    fn chemin_asset_reference(rel: &str) -> PathBuf {
+        for candidat in [PathBuf::from(rel), PathBuf::from(format!("../../{rel}"))] {
+            if candidat.is_file() {
+                return candidat;
+            }
+        }
+        panic!("asset de référence introuvable : {rel}");
+    }
+
+    #[test]
+    fn test_preflight_manifeste_fichier_absent_bloque() {
+        let mut jeu = jeu_reference();
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "fantome".to_string(),
+                kind: crate::assets_manifest::AssetKind::Sprite,
+                // Nom unique et volontairement inexistant sous le cwd et ../../.
+                path: format!(
+                    "assets/sprites/manifeste_prevol_fantome_{}.png",
+                    std::process::id()
+                ),
+                bytes: 128,
+                hash: crate::ai_dictionary::hash_text(b"fantome"),
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".to_string()),
+                    created_at: "2026-11-11".to_string(),
+                },
+                dimensions: Some((16, 16)),
+                duration_ms: None,
+            })
+            .expect("entrée acceptée");
+        jeu.assets_manifest = Some(manifeste);
+
+        let report = StandaloneExporter::preflight(&jeu);
+        assert!(!report.ok, "un fichier déclaré absent doit bloquer");
+        assert_eq!(report.blocking_count(), 1, "rapport : {}", report.summary());
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.code == "fichier-absent")
+            .expect("le diagnostic fichier-absent du manifeste est attendu");
+        assert_eq!(issue.severity, PreflightSeverity::Blocking);
+        assert!(
+            issue.message.starts_with("manifeste : "),
+            "message attendu préfixé : {}",
+            issue.message
+        );
+        assert!(issue.message.contains("fantome"));
+    }
+
+    #[test]
+    fn test_preflight_manifeste_fichier_present_ne_signale_rien() {
+        let mut jeu = jeu_reference();
+        let rel = "assets/scenes/ref_niveau_1.scene.json";
+        let chemin = chemin_asset_reference(rel);
+        let (bytes, hash) =
+            crate::assets_manifest::verify_file(&chemin).expect("fichier de référence lisible");
+
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "niveau_reference".to_string(),
+                kind: crate::assets_manifest::AssetKind::Sprite,
+                path: rel.to_string(),
+                bytes,
+                hash,
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".to_string()),
+                    created_at: "2026-11-11".to_string(),
+                },
+                dimensions: None,
+                duration_ms: None,
+            })
+            .expect("entrée acceptée");
+        jeu.assets_manifest = Some(manifeste);
+
+        let report = StandaloneExporter::preflight(&jeu);
+        assert!(
+            report.ok,
+            "le manifeste valide ne doit rien bloquer : {}",
+            report.summary()
+        );
+        assert!(
+            report
+                .issues
+                .iter()
+                .all(|issue| !issue.message.starts_with("manifeste : ")),
+            "aucun diagnostic de manifeste attendu : {}",
+            report.summary()
+        );
+    }
+
+    #[test]
+    fn test_preflight_manifeste_licence_manquante_avertit_sans_bloquer() {
+        let mut jeu = jeu_reference();
+        let rel = "assets/scenes/ref_niveau_1.scene.json";
+        let (bytes, hash) = crate::assets_manifest::verify_file(&chemin_asset_reference(rel))
+            .expect("fichier de référence lisible");
+
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "sans_licence".to_string(),
+                kind: crate::assets_manifest::AssetKind::Sprite,
+                path: rel.to_string(),
+                bytes,
+                hash,
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: None,
+                    created_at: "2026-11-11".to_string(),
+                },
+                dimensions: None,
+                duration_ms: None,
+            })
+            .expect("entrée acceptée");
+        jeu.assets_manifest = Some(manifeste);
+
+        let report = StandaloneExporter::preflight(&jeu);
+        assert!(report.ok, "la licence n'est pas bloquante : {}", report.summary());
+        assert_eq!(report.blocking_count(), 0);
+        let issue = report
+            .warnings()
+            .into_iter()
+            .find(|issue| issue.code == "licence-manquante")
+            .expect("l'avertissement de licence est attendu");
+        assert!(issue.message.starts_with("manifeste : "));
+        assert!(!issue.message.contains("manifeste-absent"));
+    }
+
+    #[test]
+    fn test_preflight_script_manquant_bloque() {
+        let mut jeu = jeu_reference();
+        jeu.entities[0].script = Some(crate::entity::KVLScriptComponent::new(
+            "assets/scripts/script_fantome_introuvable.kvl.json",
+        ));
+
+        let report = StandaloneExporter::preflight(&jeu);
+        assert!(!report.ok);
+        assert_eq!(report.blocking_count(), 1, "rapport : {}", report.summary());
+        let issue = report
+            .issues
+            .iter()
+            .find(|i| i.code == "script-manquant")
+            .expect("un blocage script-manquant est attendu");
+        assert_eq!(issue.severity, PreflightSeverity::Blocking);
+        assert!(issue.message.contains("script_fantome_introuvable.kvl.json"));
+        assert!(issue.message.contains("Joueur"));
+        assert!(report.summary().contains("blocage"));
+    }
+
+    #[test]
+    fn test_export_html_checked_refuse_un_script_manquant() {
+        let sain = jeu_reference();
+        let html = StandaloneExporter::export_html_checked(&sain, "Niveau 1", "Testeur")
+            .expect("le niveau de référence doit s'exporter");
+        assert!(html.contains("<!DOCTYPE html>"));
+
+        let mut casse = jeu_reference();
+        casse.entities[1].script = Some(crate::entity::KVLScriptComponent::new(
+            "assets/scripts/script_fantome_introuvable.kvl.json",
+        ));
+        let err = StandaloneExporter::export_html_checked(&casse, "Niveau 1", "Testeur")
+            .expect_err("un script manquant doit refuser l'export");
+        assert!(!err.ok);
+        assert!(err.issues.iter().any(|i| i.code == "script-manquant"));
+    }
+
+    #[test]
+    fn test_preflight_budget_entites_avertit_sans_bloquer() {
+        let mut jeu = jeu_reference();
+        let modele = jeu.entities.clone();
+        assert!(!modele.is_empty());
+        let mut i = 0usize;
+        while jeu.entities.len() <= 500 {
+            let mut copie = modele[i % modele.len()].clone();
+            copie.id = jeu.entities.len() + 1;
+            jeu.entities.push(copie);
+            i += 1;
+        }
+
+        let report = StandaloneExporter::preflight(&jeu);
+        assert!(report.ok, "un budget dépassé n'est pas bloquant : {}", report.summary());
+        assert!(report
+            .warnings()
+            .iter()
+            .any(|a| a.code == "budget-entites"));
+        assert!(report
+            .issues
+            .iter()
+            .all(|i| i.severity == PreflightSeverity::Warning));
+    }
+
+    #[test]
+    fn test_export_fingerprint_stable() {
+        let jeu = jeu_reference();
+        let a = StandaloneExporter::export_html(&jeu, "Empreinte", "Testeur");
+        let b = StandaloneExporter::export_html(&jeu, "Empreinte", "Testeur");
+        let fa = StandaloneExporter::export_fingerprint(&a);
+        let fb = StandaloneExporter::export_fingerprint(&b);
+
+        assert_eq!(fa, fb, "deux exports du même état doivent partager l'empreinte");
+        assert_eq!(fa.len(), 16, "FNV-1a 64 bits encodé en 16 caractères hex");
+        assert!(fa.chars().all(|c| c.is_ascii_hexdigit()));
+
+        let autre = StandaloneExporter::export_html(&jeu, "Autre titre", "Testeur");
+        assert_ne!(fa, StandaloneExporter::export_fingerprint(&autre));
+    }
+
+    /// Répertoire temporaire unique par test, **supprimé automatiquement**.
+    ///
+    /// Les tests s'exécutent en parallèle : le nom mêle pid et nanosecondes.
+    /// Jamais les artefacts réels de 3,5 Mo, seulement de petites chaînes, pour
+    /// rester rapide et indépendant de la machine.
+    struct RepertoireTemporaire(PathBuf);
+
+    impl RepertoireTemporaire {
+        /// Chemin du répertoire, pour les API qui attendent un `Path`.
+        fn as_path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl std::ops::Deref for RepertoireTemporaire {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    /// Nettoyage en fin de test, y compris si le test panique (déroulement).
+    impl Drop for RepertoireTemporaire {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn repertoire_temporaire(nom: &str) -> RepertoireTemporaire {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duree| duree.as_nanos())
+            .unwrap_or(0);
+        let base = std::env::temp_dir().join(format!(
+            "karacti_runtime_{nom}_{}_{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&base).expect("répertoire temporaire créé");
+        RepertoireTemporaire(base)
+    }
+
+    /// Écrit un faux runtime (`glue` JS + binaire wasm factice) dans `dir`.
+    fn ecrire_faux_runtime(dir: &Path, glue: &str, wasm: &[u8]) {
+        std::fs::write(dir.join(RUNTIME_GLUE_FILE), glue).expect("glue écrite");
+        std::fs::write(dir.join(RUNTIME_WASM_FILE), wasm).expect("wasm écrit");
+    }
+
+    /// Écrit un manifeste de build factice (aucun vrai wasm n'est nécessaire).
+    fn ecrire_manifeste_runtime(dir: &Path, version: &str, wasm_sha: &str) {
+        let manifeste = format!(
+            "{{\n  \"engine_version\": \"{version}\",\n  \"wasm_sha256\": \"{wasm_sha}\",\n  \"glue_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\",\n  \"target\": \"wasm32-unknown-unknown\"\n}}\n"
+        );
+        std::fs::write(dir.join(RUNTIME_MANIFEST_FILE), manifeste).expect("manifeste écrit");
+    }
+
+    #[test]
+    fn test_load_embedded_runtime_lit_les_artefacts() {
+        let dir = repertoire_temporaire("load");
+        let glue = "export function initSync(module) { return module; }\n";
+        let wasm = b"\0asm\x01\0\0\0";
+        ecrire_faux_runtime(&dir, glue, wasm);
+
+        let runtime = load_embedded_runtime(&dir).expect("runtime factice chargeable");
+        assert_eq!(runtime.glue, glue);
+        assert_eq!(runtime.wasm_base64, STANDARD.encode(wasm));
+        assert_eq!(runtime.bytes, glue.len() + runtime.wasm_base64.len());
+        // La taille annoncée est exactement celle du HTML (base64 compris).
+        assert_eq!(runtime.bytes, taille_runtime_embarque(&dir).unwrap());
+        assert!(runtime.human_size().ends_with(" o"));
+    }
+
+    #[test]
+    fn test_load_embedded_runtime_renvoie_none_si_absent_ou_vide() {
+        let dir = repertoire_temporaire("absent");
+        assert!(load_embedded_runtime(&dir).is_none(), "répertoire vide");
+
+        // Glue vide : artefact inutilisable.
+        ecrire_faux_runtime(&dir, "   \n", b"\0asm");
+        assert!(load_embedded_runtime(&dir).is_none(), "glue vide");
+
+        // Binaire wasm vide.
+        ecrire_faux_runtime(&dir, "export const x = 1;", b"");
+        assert!(load_embedded_runtime(&dir).is_none(), "wasm vide");
+
+        // Fichier wasm manquant.
+        std::fs::remove_file(dir.join(RUNTIME_WASM_FILE)).unwrap();
+        assert!(load_embedded_runtime(&dir).is_none(), "wasm absent");
+    }
+
+    #[test]
+    fn test_echapper_fin_de_script_insensible_a_la_casse() {
+        assert_eq!(echapper_fin_de_script("a</script>b"), "a<\\/script>b");
+        assert_eq!(echapper_fin_de_script("a</SCRIPT>b"), "a<\\/script>b");
+        assert_eq!(echapper_fin_de_script("a</ScRiPt >b"), "a<\\/script >b");
+        assert_eq!(echapper_fin_de_script(" rien à échapper "), " rien à échapper ");
+    }
+
+    #[test]
+    fn test_export_html_with_runtime_injecte_avant_body() {
+        let dir = repertoire_temporaire("injecte");
+        let glue = "export function initSync() {}\n// piège : const s = \"</script>\";\n";
+        ecrire_faux_runtime(&dir, glue, b"\0asm\x01\0\0\0");
+        let jeu = jeu_reference();
+
+        let html = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Runtime",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+
+        assert!(html.contains("id=\"runtime-glue\""));
+        assert!(html.contains("id=\"runtime-wasm\" type=\"application/base64\""));
+        let injection = html.find("id=\"runtime-glue\"").unwrap();
+        let fin_body = html.rfind("</body>").unwrap();
+        assert!(injection < fin_body, "le runtime doit être injecté avant </body>");
+        // Le paquet est toujours présent avant le runtime.
+        assert!(html.find("id=\"embedded-package\"").unwrap() < injection);
+
+        // La glue piégée est échappée : exactement 4 fermetures de script
+        // (paquet, module, glue, wasm), aucune coupure prématurée.
+        assert_eq!(html.matches("</script>").count(), 4);
+        assert!(!html.contains("</SCRIPT>"));
+        assert!(html.contains("<\\/script>"), "la glue doit être échappée");
+
+        // Le runtime n'est pas haché : l'empreinte reste celle du paquet.
+        assert_eq!(
+            StandaloneExporter::export_fingerprint(&html),
+            StandaloneExporter::export_fingerprint(
+                &StandaloneExporter::export_html_with_runtime(
+                    &jeu,
+                    "Runtime",
+                    "Testeur",
+                    None
+                )
+            )
+        );
+    }
+
+    #[test]
+    fn test_export_html_with_runtime_absent_reste_jouable_en_donnees() {
+        let dir = repertoire_temporaire("vide");
+        let jeu = jeu_reference();
+
+        for html in [
+            StandaloneExporter::export_html_with_runtime(&jeu, "Sans", "Testeur", None),
+            StandaloneExporter::export_html_with_runtime(
+                &jeu,
+                "Sans",
+                "Testeur",
+                Some(dir.as_path()),
+            ),
+        ] {
+            assert!(!html.contains("id=\"runtime-glue\""));
+            assert!(!html.contains("id=\"runtime-wasm\""));
+            assert!(html.contains("id=\"embedded-package\""));
+            assert!(html.contains("id=\"game-canvas\""));
+            // L'import sibling (source de l'erreur CORS) a disparu du template :
+            // seul l'import de la Blob URL subsiste.
+            assert!(!html.contains("await import('./pkg"));
+            assert!(html.contains("URL.createObjectURL(new Blob"));
+            assert!(html.contains("putImageData"));
+            assert!(html.contains("wasm_last_error"));
+        }
+    }
+
+    #[test]
+    fn test_export_html_with_runtime_est_deterministe() {
+        let dir = repertoire_temporaire("deterministe");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        let jeu = jeu_reference();
+
+        let a = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Déterminisme",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+        let b = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Déterminisme",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+        assert_eq!(a, b, "même projet + mêmes artefacts = même fichier");
+        assert_eq!(
+            StandaloneExporter::export_fingerprint(&a),
+            StandaloneExporter::export_fingerprint(&b)
+        );
+    }
+
+    #[test]
+    fn test_serialisation_json_deterministe_trie_les_cles() {
+        // `HashMap` n'a pas d'ordre stable entre processus : le tri des clés
+        // est ce qui rend le HTML reproductible.
+        let mut table = HashMap::new();
+        table.insert("zeta".to_string(), 1u32);
+        table.insert("alpha".to_string(), 2u32);
+        table.insert("mike".to_string(), 3u32);
+        assert_eq!(
+            serialiser_json_deterministe(&table).unwrap(),
+            r#"{"alpha":2,"mike":3,"zeta":1}"#
+        );
+
+        // Les objets imbriqués dans des tableaux sont triés eux aussi.
+        let imbrique = serde_json::json!({"z": {"b": 1, "a": 2}, "a": [{"y": 1, "x": 2}]});
+        assert_eq!(
+            serialiser_json_deterministe(&imbrique).unwrap(),
+            r#"{"a":[{"x":2,"y":1}],"z":{"a":2,"b":1}}"#
+        );
+    }
+
+    #[test]
+    fn test_preflight_avertit_runtime_embarque_sans_bloquer() {
+        // 4 882 616 octets = glue + base64 d'environ 3,5 Mo de wasm.
+        let issue = avertissement_runtime(4_882_616);
+        assert_eq!(issue.severity, PreflightSeverity::Warning);
+        assert_eq!(issue.code, "runtime-embarque");
+        assert!(
+            issue.message.starts_with("runtime embarqué : 4,7 Mo"),
+            "message attendu avec la taille : {}",
+            issue.message
+        );
+
+        let dir = repertoire_temporaire("avertissement");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        assert_eq!(
+            taille_runtime_embarque(&dir),
+            Some(load_embedded_runtime(&dir).unwrap().bytes)
+        );
+        assert!(taille_runtime_embarque(&repertoire_temporaire("avertissement_vide")).is_none());
+    }
+
+    /// Empreinte factice stable : 64 caractères hexadécimaux, comme un SHA-256.
+    const SHA_WASM_FACTICE: &str =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn test_runtime_manifeste_coherent_remonte_version_et_aucun_avertissement() {
+        let dir = repertoire_temporaire("manifeste_coherent");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        ecrire_manifeste_runtime(&dir, env!("CARGO_PKG_VERSION"), SHA_WASM_FACTICE);
+        let jeu = jeu_reference();
+
+        let runtime = load_embedded_runtime(&dir).expect("runtime factice chargeable");
+        assert_eq!(
+            runtime.engine_version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(runtime.wasm_sha256.as_deref(), Some(SHA_WASM_FACTICE));
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, Some(dir.as_path()));
+        assert!(report.ok, "pré-vol : {}", report.summary());
+        assert!(
+            !report.issues.iter().any(|i| i.code == "runtime-perime"),
+            "aucun runtime-perime quand les versions concordent : {}",
+            report.summary()
+        );
+        assert!(
+            report.issues.iter().any(|i| i.code == "runtime-embarque"),
+            "l'avertissement de taille reste présent : {}",
+            report.summary()
+        );
+    }
+
+    #[test]
+    fn test_runtime_manifeste_version_differente_avertit_sans_bloquer() {
+        let dir = repertoire_temporaire("manifeste_perime");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        let version_obsolete = format!("{}-perime", env!("CARGO_PKG_VERSION"));
+        assert_ne!(
+            version_obsolete,
+            env!("CARGO_PKG_VERSION"),
+            "la version factice doit différer de celle du moteur"
+        );
+        ecrire_manifeste_runtime(&dir, &version_obsolete, SHA_WASM_FACTICE);
+        let jeu = jeu_reference();
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, Some(dir.as_path()));
+        assert!(report.ok, "un runtime périmé n'empêche pas l'export : {}", report.summary());
+        assert_eq!(report.blocking_count(), 0, "rapport : {}", report.summary());
+
+        let issue = report
+            .issues
+            .iter()
+            .find(|i| i.code == "runtime-perime")
+            .expect("runtime-perime attendu");
+        assert_eq!(issue.severity, PreflightSeverity::Warning);
+        assert!(
+            issue
+                .message
+                .contains(&format!("construit pour la version {version_obsolete}")),
+            "message : {}",
+            issue.message
+        );
+        assert!(
+            issue
+                .message
+                .contains(&format!("le moteur est en {}", env!("CARGO_PKG_VERSION"))),
+            "message : {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("scripts/build_wasm.sh"),
+            "message : {}",
+            issue.message
+        );
+    }
+
+    #[test]
+    fn test_runtime_manifeste_absent_reste_compatible() {
+        let dir = repertoire_temporaire("manifeste_absent");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        let jeu = jeu_reference();
+
+        let runtime = load_embedded_runtime(&dir).expect("runtime factice chargeable");
+        assert_eq!(runtime.engine_version, None, "aucun manifeste : version inconnue");
+        assert_eq!(runtime.wasm_sha256, None, "aucun manifeste : sha inconnu");
+
+        let html = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Sans manifeste",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+        assert!(
+            !html.contains("<meta name=\"karacti-runtime\""),
+            "aucune méta sans manifeste (le template lit simplement une balise absente)"
+        );
+        assert!(html.contains("id=\"runtime-glue\""), "le runtime reste embarqué");
+        assert!(html.contains("id=\"embedded-package\""), "le paquet reste présent");
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, Some(dir.as_path()));
+        assert!(report.ok, "rapport : {}", report.summary());
+        assert!(
+            !report.issues.iter().any(|i| i.code == "runtime-perime"),
+            "pas d'avertissement sans manifeste : {}",
+            report.summary()
+        );
+    }
+
+    #[test]
+    fn test_export_runtime_html_contient_meta_quand_manifeste_existe() {
+        let dir = repertoire_temporaire("meta_runtime");
+        ecrire_faux_runtime(&dir, "export function initSync() {}\n", b"\0asm\x01\0\0\0");
+        ecrire_manifeste_runtime(&dir, env!("CARGO_PKG_VERSION"), SHA_WASM_FACTICE);
+        let jeu = jeu_reference();
+
+        let html = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Meta runtime",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+        let meta = format!(
+            "  <meta name=\"karacti-runtime\" content=\"version={};wasm={SHA_WASM_FACTICE}\">\n",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(html.contains(&meta), "balise meta attendue, absente du HTML");
+
+        let position = html.find("karacti-runtime").unwrap();
+        let fin_head = html.find("</head>").unwrap();
+        assert!(position < fin_head, "la méta doit être dans le <head>");
+        assert!(
+            position < html.find("id=\"embedded-package\"").unwrap(),
+            "la méta précède les données du jeu"
+        );
+
+        // Même projet + mêmes artefacts + même manifeste = fichier identique.
+        let second = StandaloneExporter::export_html_with_runtime(
+            &jeu,
+            "Meta runtime",
+            "Testeur",
+            Some(dir.as_path()),
+        );
+        assert_eq!(html, second, "la méta doit rester déterministe");
     }
 }

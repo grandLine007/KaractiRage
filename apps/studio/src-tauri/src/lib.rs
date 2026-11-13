@@ -309,6 +309,201 @@ async fn ai_history() -> Vec<karactirage_engine::ai_history::AiRunLog> {
     karactirage_engine::ai_history::list_runs(&root)
 }
 
+// ----------------------------------------------------------------------------
+// Édition IA inline (plan IA inline, sprint 1) : contexte → aperçu → application
+// ----------------------------------------------------------------------------
+
+/// Proposition en attente d'application, avec l'instantané nécessaire à l'annulation.
+struct PendingAiEdit {
+    proposal: karactirage_engine::ai_edit::EditProposal,
+    before_json: String,
+}
+
+/// Propositions en attente et instantanés d'annulation, indexés par identifiant.
+#[derive(Default)]
+pub struct AiEditState {
+    pending: Mutex<HashMap<String, PendingAiEdit>>,
+    undo_snapshots: Mutex<HashMap<String, String>>,
+}
+
+/// Réponse d'un aperçu : proposition (template), clarification, ou prompt pour le LLM.
+#[derive(Serialize)]
+struct AiEditPreviewResult {
+    /// `proposal` | `clarification` | `llm`
+    status: &'static str,
+    proposal: Option<karactirage_engine::ai_edit::EditProposal>,
+    message: Option<String>,
+    prompt: Option<String>,
+    prompt_tokens: Option<usize>,
+}
+
+impl AiEditPreviewResult {
+    fn proposal(proposal: karactirage_engine::ai_edit::EditProposal) -> Self {
+        Self {
+            status: "proposal",
+            proposal: Some(proposal),
+            message: None,
+            prompt: None,
+            prompt_tokens: None,
+        }
+    }
+
+    fn clarification(message: String) -> Self {
+        Self {
+            status: "clarification",
+            proposal: None,
+            message: Some(message),
+            prompt: None,
+            prompt_tokens: None,
+        }
+    }
+
+    fn llm(prompt: karactirage_engine::ai_prompt::AssembledPrompt) -> Self {
+        Self {
+            status: "llm",
+            proposal: None,
+            message: None,
+            prompt: Some(prompt.text),
+            prompt_tokens: Some(prompt.estimated_tokens),
+        }
+    }
+}
+
+fn edit_state_error() -> String {
+    "état d'édition IA indisponible (verrou empoisonné)".to_string()
+}
+
+/// Contexte d'édition : sélection, scène, dimension, outil actif. Ne modifie rien.
+#[tauri::command]
+fn ai_context(engine: tauri::State<'_, SharedEngine>) -> Result<String, String> {
+    let guard = engine.lock().unwrap();
+    serde_json::to_string(&guard.ai_edit_context())
+        .map_err(|error| format!("contexte non sérialisable : {error}"))
+}
+
+/// Aperçu d'une instruction inline. **Ne modifie rien.**
+#[tauri::command]
+fn ai_edit_preview(
+    instruction: String,
+    provider_name: Option<String>,
+    state: tauri::State<'_, AiEditState>,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<AiEditPreviewResult, String> {
+    let (before_json, preview) = {
+        let guard = engine.lock().unwrap();
+        (guard.export_project_json(), guard.ai_edit_preview(&instruction))
+    };
+    match preview {
+        Ok(Some(proposal)) => {
+            state
+                .pending
+                .lock()
+                .map_err(|_| edit_state_error())?
+                .insert(
+                    proposal.id.clone(),
+                    PendingAiEdit {
+                        proposal: proposal.clone(),
+                        before_json,
+                    },
+                );
+            Ok(AiEditPreviewResult::proposal(proposal))
+        }
+        Ok(None) => {
+            let provider = provider_name
+                .as_deref()
+                .map(provider_from_name)
+                .unwrap_or(AiProvider::OfflineLocal);
+            let prompt = {
+                let guard = engine.lock().unwrap();
+                guard.ai_edit_prompt(provider, &instruction)
+            };
+            Ok(AiEditPreviewResult::llm(prompt))
+        }
+        Err(message) => Ok(AiEditPreviewResult::clarification(message)),
+    }
+}
+
+/// Construit une proposition depuis la sortie JSON du LLM (ops revalidées par le moteur).
+#[tauri::command]
+fn ai_edit_propose(
+    raw_json: String,
+    state: tauri::State<'_, AiEditState>,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<AiEditPreviewResult, String> {
+    let (before_json, proposal) = {
+        let guard = engine.lock().unwrap();
+        (guard.export_project_json(), guard.ai_edit_propose(&raw_json)?)
+    };
+    state
+        .pending
+        .lock()
+        .map_err(|_| edit_state_error())?
+        .insert(
+            proposal.id.clone(),
+            PendingAiEdit {
+                proposal: proposal.clone(),
+                before_json,
+            },
+        );
+    Ok(AiEditPreviewResult::proposal(proposal))
+}
+
+/// Applique une proposition en attente. Renvoie le rapport (changements + transaction).
+#[tauri::command]
+fn ai_edit_apply(
+    proposal_id: String,
+    state: tauri::State<'_, AiEditState>,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    let (proposal, before_json) = {
+        let pending = state.pending.lock().map_err(|_| edit_state_error())?;
+        let entry = pending
+            .get(&proposal_id)
+            .ok_or_else(|| "proposition introuvable : aperçu périmé ou annulé".to_string())?;
+        (entry.proposal.clone(), entry.before_json.clone())
+    };
+    let (report, transaction) = {
+        let mut guard = engine.lock().unwrap();
+        guard.ai_edit_apply(&proposal)?
+    };
+    state
+        .undo_snapshots
+        .lock()
+        .map_err(|_| edit_state_error())?
+        .insert(transaction.id.clone(), before_json);
+    state
+        .pending
+        .lock()
+        .map_err(|_| edit_state_error())?
+        .remove(&proposal_id);
+    Ok(report)
+}
+
+/// Oublie une proposition sans rien appliquer.
+#[tauri::command]
+fn ai_edit_cancel(proposal_id: String, state: tauri::State<'_, AiEditState>) -> bool {
+    state
+        .pending
+        .lock()
+        .map(|mut pending| pending.remove(&proposal_id).is_some())
+        .unwrap_or(false)
+}
+
+/// Annule une édition appliquée (une intention = une transaction = un ⌘Z).
+#[tauri::command]
+fn ai_edit_undo(transaction_id: String, state: tauri::State<'_, AiEditState>, engine: tauri::State<'_, SharedEngine>) -> Result<bool, String> {
+    let snapshot = state
+        .undo_snapshots
+        .lock()
+        .map_err(|_| edit_state_error())?
+        .remove(&transaction_id);
+    let Some(snapshot) = snapshot else {
+        return Ok(false);
+    };
+    engine.lock().unwrap().ai_edit_restore(&snapshot)?;
+    Ok(true)
+}
+
 /// Résout un fournisseur depuis son libellé utilisateur.
 fn provider_from_name(name: &str) -> AiProvider {
     match name.to_lowercase().as_str() {
@@ -776,6 +971,22 @@ fn engine_plugin_catalog(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().plugin_catalog()
 }
 
+/// Pré-vol d'export : liste les blocages (script/asset manquant) et les budgets.
+#[tauri::command]
+fn engine_export_preflight(engine: tauri::State<'_, SharedEngine>) -> String {
+    engine.lock().unwrap().export_preflight_json()
+}
+
+/// Export HTML5 validé par le pré-vol (chaîne vide + message en cas de refus).
+#[tauri::command]
+fn engine_export_standalone_html_checked(
+    title: String,
+    author: String,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    engine.lock().unwrap().export_standalone_html_checked(&title, &author)
+}
+
 #[tauri::command]
 fn engine_export_standalone_html(title: String, author: String, engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().export_standalone_html(&title, &author)
@@ -810,6 +1021,38 @@ fn engine_load_project_json(project_json: String, engine: tauri::State<'_, Share
 #[tauri::command]
 fn engine_export_project_json(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().export_project_json()
+}
+
+#[tauri::command]
+fn engine_save_game(slot: u32, engine: tauri::State<'_, SharedEngine>) -> Result<String, String> {
+    engine.lock().unwrap().save_game(slot)
+}
+
+#[tauri::command]
+fn engine_load_game(slot: u32, engine: tauri::State<'_, SharedEngine>) -> bool {
+    engine.lock().unwrap().load_game(slot)
+}
+
+/// Reprend la partie la plus récente (projet, niveau et variables restaurés).
+#[tauri::command]
+fn engine_resume_game(engine: tauri::State<'_, SharedEngine>) -> bool {
+    engine.lock().unwrap().resume_game()
+}
+
+/// Réglages audio persistants (hors sauvegarde de partie).
+#[tauri::command]
+fn engine_audio_settings(engine: tauri::State<'_, SharedEngine>) -> String {
+    serde_json::to_string(&engine.lock().unwrap().audio_settings()).unwrap_or_default()
+}
+
+#[tauri::command]
+fn engine_set_audio_settings(
+    volume: f32,
+    muted: bool,
+    engine: tauri::State<'_, SharedEngine>,
+) -> String {
+    serde_json::to_string(&engine.lock().unwrap().set_audio_settings(volume, muted))
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -1318,6 +1561,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(shared)
         .manage(AiStreamState::default())
+        .manage(AiEditState::default())
         .manage(PxlServe(Mutex::new(None)))
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -1350,6 +1594,12 @@ pub fn run() {
             ai_plan,
             ai_start,
             ai_history,
+            ai_context,
+            ai_edit_preview,
+            ai_edit_propose,
+            ai_edit_apply,
+            ai_edit_cancel,
+            ai_edit_undo,
             ai_step,
             ai_step_cancel,
             ai_review,
@@ -1398,6 +1648,8 @@ pub fn run() {
             engine_kvl_rename_graph,
             engine_kvl_delete_graph,
             engine_export_standalone_html,
+            engine_export_standalone_html_checked,
+            engine_export_preflight,
             engine_move_player_to,
             engine_get_player_pos,
             engine_interact,
@@ -1405,6 +1657,11 @@ pub fn run() {
             engine_load_project_json,
             engine_export_project_json,
             engine_get_entities_summary,
+            engine_save_game,
+            engine_load_game,
+            engine_resume_game,
+            engine_audio_settings,
+            engine_set_audio_settings,
             engine_update_entity_transform,
             engine_delete_entity,
             engine_spawn_entity_preset,

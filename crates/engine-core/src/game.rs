@@ -227,6 +227,28 @@ pub struct GameState {
     pub quest: Option<QuestTracker>,
     /// Écrans UI déclaratifs (HUD, menu, pause, victoire, game over) issus du projet.
     pub ui_screens: Vec<crate::subsystems::UiScreen>,
+    /// État d'écran courant du runtime (menu / jeu / pause / défaite / victoire).
+    ///
+    /// Seule source de vérité : les variables KVL `menu_active`/`paused`/`game_won`
+    /// en sont le miroir en sortie, jamais l'entrée.
+    pub screen: crate::screens::GameScreen,
+    /// Niveaux embarqués du projet, dans l'ordre de jeu (niveau 1 = `scenes[0]`).
+    ///
+    /// Alimentés par `KaractiProject::scenes` : aucun chemin de fichier, donc un projet
+    /// reste auto-porteur à l'export.
+    pub levels: Vec<crate::scene::SceneData>,
+    /// Index du niveau courant dans [`Self::levels`].
+    pub level_index: usize,
+    /// Identifiant stable du projet ouvert (vide = scène isolée).
+    ///
+    /// Ne dérive **jamais** du nom de scène : sinon un changement de niveau déplacerait
+    /// les sauvegardes dans un autre dossier.
+    pub project_id: String,
+    /// Manifeste d'assets du projet (P2.1), transporté de `project.assets`.
+    ///
+    /// `None` quand le projet n'en déclare pas : le pré-vol d'export reste alors
+    /// silencieux, sauf si des entités référencent des scripts ou des assets.
+    pub assets_manifest: Option<crate::assets_manifest::AssetsManifest>,
     /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
     pub camera3d: Option<crate::subsystems::Camera3DData>,
     /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
@@ -257,6 +279,39 @@ pub struct GameState {
     pub anim_states: HashMap<usize, crate::sheet::AnimState>,
     /// Hôte de plugins : catalogue de nœuds, handlers et packs de contenu.
     pub plugins: crate::plugin::PluginHost,
+    /// Dossier de destination des exports (par défaut `export/`).
+    ///
+    /// Configurable pour que les tests, les projets ouverts hors du dépôt et les
+    /// exports dirigés n'écrivent jamais dans le répertoire courant du processus.
+    pub export_root: std::path::PathBuf,
+}
+
+/// Lit le contenu d'un script KVL référencé par une entité.
+///
+/// Ordre : chemin courant, puis `../../` (tests lancés depuis le crate), puis les
+/// scripts de démonstration embarqués dans le binaire.
+fn resolve_script_content(script_path: &str) -> Option<String> {
+    if let Ok(content) = fs::read_to_string(script_path) {
+        return Some(content);
+    }
+    if let Ok(content) = fs::read_to_string(format!("../../{}", script_path)) {
+        return Some(content);
+    }
+    if script_path.contains("coin_pickup") {
+        Some(include_str!("../../../assets/scripts/coin_pickup.kvl.json").to_string())
+    } else if script_path.contains("door_interaction") {
+        Some(include_str!("../../../assets/scripts/door_interaction.kvl.json").to_string())
+    } else if script_path.contains("guard_alert") {
+        Some(include_str!("../../../assets/scripts/guard_alert.kvl.json").to_string())
+    } else if script_path.contains("ref_porte_niveau") {
+        Some(include_str!("../../../assets/scripts/ref_porte_niveau.kvl.json").to_string())
+    } else if script_path.contains("ref_porte_boss") {
+        Some(include_str!("../../../assets/scripts/ref_porte_boss.kvl.json").to_string())
+    } else if script_path.contains("ref_boss_verrou") {
+        Some(include_str!("../../../assets/scripts/ref_boss_verrou.kvl.json").to_string())
+    } else {
+        None
+    }
 }
 
 impl GameState {
@@ -916,6 +971,18 @@ impl GameState {
             }
         };
 
+        Self::from_scene_data(scene_data, path)
+    }
+
+    /// Construit un état de jeu à partir d'une scène **en mémoire**.
+    ///
+    /// Utilisé par les niveaux embarqués d'un projet (`KaractiProject::scenes`) : aucune
+    /// lecture disque. `scene_path` ne sert qu'à la traçabilité et à la résolution des
+    /// scripts KVL référencés par les entités.
+    pub fn from_scene_data(
+        scene_data: SceneData,
+        scene_path: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut entities = scene_data.to_entities();
 
         // Résolution des sprites vectoriels SVG référencés par les entités
@@ -980,21 +1047,6 @@ impl GameState {
         let mut kvl_context = ExecutionContext::new();
         kvl_context.set_var("score", Value::Int(0));
 
-        let resolve_script_content = |script_path: &str| -> Option<String> {
-            if let Ok(c) = fs::read_to_string(script_path) {
-                Some(c)
-            } else if let Ok(c) = fs::read_to_string(format!("../../{}", script_path)) {
-                Some(c)
-            } else if script_path.contains("coin_pickup") {
-                Some(include_str!("../../../assets/scripts/coin_pickup.kvl.json").to_string())
-            } else if script_path.contains("door_interaction") {
-                Some(include_str!("../../../assets/scripts/door_interaction.kvl.json").to_string())
-            } else if script_path.contains("guard_alert") {
-                Some(include_str!("../../../assets/scripts/guard_alert.kvl.json").to_string())
-            } else {
-                None
-            }
-        };
 
         // Chargement data-driven universel des graphes KVL pour TOUTES les entités scriptées
         for ent in &entities {
@@ -1089,7 +1141,7 @@ impl GameState {
         }
 
         let mut state = Self {
-            scene_path: path.to_string(),
+            scene_path: scene_path.to_string(),
             scene_name: scene_data.name,
             scene_objective,
             entities,
@@ -1112,6 +1164,11 @@ impl GameState {
             dialogue_cooldown: 0.0,
             quest,
             ui_screens: Vec::new(),
+            screen: crate::screens::GameScreen::Playing,
+            levels: Vec::new(),
+            level_index: 0,
+            project_id: String::new(),
+            assets_manifest: None,
             camera3d: None,
             lights: Vec::new(),
             save_config: crate::subsystems::SaveConfig::default(),
@@ -1130,6 +1187,7 @@ impl GameState {
             sheet_cache,
             anim_states,
             plugins,
+            export_root: std::path::PathBuf::from("export"),
         };
         state.rebuild_static_spatial_grid();
         Ok(state)
@@ -1204,13 +1262,101 @@ impl GameState {
         }
     }
 
+    /// Charge les scripts KVL référencés par des entités (graphes manquants résolus sur
+    /// disque) et initialise leurs variables.
+    ///
+    /// Sans cela, un projet ouvert via `load_project` n'aurait aucun script dans
+    /// `kvl_graphs` : la porte ne s'ouvrirait pas et l'export serait vide de logique.
+    pub fn import_scripts(&mut self, script_paths: &[String]) {
+        for path in script_paths {
+            if path.is_empty() || self.kvl_graphs.contains_key(path) {
+                continue;
+            }
+            let Some(content) = resolve_script_content(path) else {
+                continue;
+            };
+            let Ok(graph) = Graph::from_json(&content) else {
+                continue;
+            };
+            for (key, variable) in &graph.variables {
+                if self.kvl_context.get_var(key).is_none() {
+                    self.kvl_context.set_var(key.clone(), variable.initial_value.clone());
+                }
+            }
+            self.kvl_graphs.insert(path.clone(), graph);
+        }
+    }
+
     pub fn reload(&mut self) {
-        if let Ok(new_state) = Self::load_from_scene(&self.scene_path) {
+        // Les écrans et les niveaux viennent du projet, pas de la scène : on les conserve.
+        let screens = self.ui_screens.clone();
+        let levels = self.levels.clone();
+        let index = self.level_index;
+        let project_id = self.project_id.clone();
+        let assets_manifest = self.assets_manifest.clone();
+        let rebuilt = match levels.get(index) {
+            Some(scene) => Self::from_scene_data(scene.clone(), &format!("projet:niveau_{}", index + 1)),
+            None => Self::load_from_scene(&self.scene_path),
+        };
+        if let Ok(mut new_state) = rebuilt {
+            new_state.ui_screens = screens;
+            new_state.levels = levels;
+            new_state.level_index = index;
+            new_state.project_id = project_id;
+            new_state.assets_manifest = assets_manifest;
+            // Même périphérique audio et mêmes réglages après un hot-reload.
+            std::mem::swap(&mut new_state.audio, &mut self.audio);
+            std::mem::swap(&mut new_state.replay, &mut self.replay);
+            new_state.screen = crate::screens::GameScreen::initial(
+                new_state.ui_screens.iter().any(|s| s.kind == crate::subsystems::UiScreenKind::Menu),
+                new_state.kvl_context.get_var("menu_active") == Some(&Value::Bool(true)),
+            );
             *self = new_state;
             self.status_message = "Hot-Reloading ECS réussi depuis les fichiers JSON !".into();
         } else {
             self.status_message = "Erreur de rechargement JSON.".into();
         }
+    }
+
+    /// Passe à la scène suivante du projet, en conservant variables et inventaire.
+    ///
+    /// Renvoie `false` s'il n'y a pas de niveau suivant (dernier niveau, ou projet
+    /// mono-scène) : l'appelant décide alors de la victoire.
+    pub fn next_level(&mut self) -> bool {
+        let next_index = self.level_index + 1;
+        let Some(scene) = self.levels.get(next_index).cloned() else {
+            return false;
+        };
+
+        let context = self.kvl_context.clone();
+        let screens = self.ui_screens.clone();
+        let levels = self.levels.clone();
+        let inventory = self.inventory.clone();
+        let project_id = self.project_id.clone();
+        let assets_manifest = self.assets_manifest.clone();
+        let Ok(mut fresh) = Self::from_scene_data(scene, &format!("projet:niveau_{}", next_index + 1))
+        else {
+            return false;
+        };
+        fresh.kvl_context = context;
+        fresh.ui_screens = screens;
+        fresh.levels = levels;
+        fresh.level_index = next_index;
+        fresh.project_id = project_id;
+        fresh.assets_manifest = assets_manifest;
+        fresh.inventory = inventory;
+        fresh.screen = crate::screens::GameScreen::Playing;
+        fresh.editor.mode = EditorMode::Play;
+        // L'audio n'est pas clonable : on garde le même périphérique et les mêmes réglages
+        // (volume/mute) à travers le changement de niveau.
+        std::mem::swap(&mut fresh.audio, &mut self.audio);
+        // Même logique pour le replay : `*self = fresh` l'écraserait et perdrait la
+        // session en cours (menu → niveaux).
+        std::mem::swap(&mut fresh.replay, &mut self.replay);
+        *self = fresh;
+        self.audio.play(SoundType::QuestSuccess);
+        self.set_status(format!("Niveau {} / {}", next_index + 1, self.levels.len()));
+        true
     }
 
     pub fn cycle_scene_forward(&mut self) {
@@ -1268,13 +1414,29 @@ impl GameState {
     }
 
     /// Charge un projet KaractiProject complet dans le moteur de jeu
-    pub fn load_project(&mut self, project: crate::project::KaractiProject) {
-        self.scene_name = project.metadata.title;
+    pub fn load_project(&mut self, mut project: crate::project::KaractiProject) {
+        // Niveaux embarqués : niveau 1 = `scenes[0]` (normalisé si le JSON est ancien).
+        let mut scenes = std::mem::take(&mut project.scenes);
+        if scenes.is_empty() {
+            scenes.push(project.scene.clone());
+        }
+        // Le nom affiché est celui du niveau 1 ; le titre du projet reste dans les
+        // métadonnées (et dans le Hub).
+        let level_name = project.scene.name.clone();
+        self.scene_name = if level_name.is_empty() {
+            project.metadata.title
+        } else {
+            level_name
+        };
         self.scene_objective = project.scene.objective;
         self.entities = project.scene.entities;
         self.kvl_graphs = project.kvl_graphs;
         self.kvl_context = ExecutionContext::new();
         self.ui_screens = project.ui_screens;
+        self.levels = scenes;
+        self.level_index = 0;
+        self.project_id = project.metadata.id.clone();
+        self.assets_manifest = project.assets;
         self.camera3d = project.camera3d;
         self.lights = project.lights;
         self.save_config = project.save_config;
@@ -1285,6 +1447,13 @@ impl GameState {
         if self.kvl_context.get_var("score").is_none() {
             self.kvl_context.set_var("score", Value::Int(0));
         }
+        // Les graphes ne sont pas dans le projet : on les résout depuis les entités.
+        let script_paths: Vec<String> = self
+            .entities
+            .iter()
+            .filter_map(|entity| entity.script.as_ref().map(|script| script.script_path.clone()))
+            .collect();
+        self.import_scripts(&script_paths);
 
         self.rebuild_static_spatial_grid();
         self.editor.selected = crate::editor::SelectedEntity::None;
@@ -1292,6 +1461,14 @@ impl GameState {
             "edit" => EditorMode::Edit,
             _ => EditorMode::Play,
         };
+        // Écran de départ : menu si le projet en déclare un et le demande (`menu_active`).
+        self.screen = crate::screens::GameScreen::initial(
+            self.ui_screens
+                .iter()
+                .any(|screen| screen.kind == crate::subsystems::UiScreenKind::Menu),
+            self.kvl_context.get_var("menu_active") == Some(&Value::Bool(true)),
+        );
+        self.sync_screen_variables();
 
         if let Some(p_idx) = self.player_index() {
             let px = self.entities[p_idx].transform.center_x();
@@ -1320,7 +1497,11 @@ impl GameState {
         };
 
         let metadata = crate::project::ProjectMetadata {
-            id: format!("proj_{:x}", (self.scene_name.len() as u64) ^ 0xCAFEBABE),
+            id: if self.project_id.is_empty() {
+                format!("proj_{:x}", (self.scene_name.len() as u64) ^ 0xCAFEBABE)
+            } else {
+                self.project_id.clone()
+            },
             title: self.scene_name.clone(),
             author: "Créateur KaractiRage".to_string(),
             version: "1.0.0".to_string(),
@@ -1358,12 +1539,24 @@ impl GameState {
             kvl_vars.insert("score".to_string(), s.clone());
         }
 
+        // Niveaux embarqués : le niveau courant reflète l'état runtime, les autres sont
+        // conservés tels quels (l'export reste auto-porteur, sans chemin de fichier).
+        let mut scenes = self.levels.clone();
+        if scenes.is_empty() {
+            scenes.push(scene.clone());
+        } else {
+            let index = self.level_index.min(scenes.len() - 1);
+            scenes[index] = scene.clone();
+        }
+        let level_names: Vec<String> = (1..=scenes.len()).map(|index| format!("niveau_{index}")).collect();
+
         crate::project::KaractiProject {
             schema_version: crate::project::PROJECT_SCHEMA_VERSION,
             metadata,
             settings,
             recipe: None,
             scene,
+            scenes,
             kvl_graphs: self.kvl_graphs.clone(),
             kvl_variables: kvl_vars,
             ui_screens: self.ui_screens.clone(),
@@ -1371,7 +1564,8 @@ impl GameState {
             export_target: None,
             camera3d: self.camera3d.clone(),
             lights: self.lights.clone(),
-            levels: Vec::new(),
+            levels: level_names,
+            assets: self.assets_manifest.clone(),
         }
     }
 
@@ -1791,6 +1985,139 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
     }
 }
 
+    /// Vrai si le projet déclare un écran de ce type.
+    fn has_screen(&self, kind: crate::subsystems::UiScreenKind) -> bool {
+        self.ui_screens.iter().any(|screen| screen.kind == kind)
+    }
+
+    /// Reflète l'état d'écran dans les variables KVL (sortie, jamais entrée).
+    pub(crate) fn sync_screen_variables(&mut self) {
+        self.kvl_context
+            .set_var("menu_active", Value::Bool(self.screen == crate::screens::GameScreen::Menu));
+        self.kvl_context
+            .set_var("paused", Value::Bool(self.screen == crate::screens::GameScreen::Paused));
+    }
+
+    /// Démarre (ou redémarre) une partie : scène rechargée, écran `Playing`.
+    ///
+    /// Le rechargement remet le joueur debout, les variables et les entités à neuf ;
+    /// les écrans déclarés du projet sont conservés (ils vivent dans le projet, pas
+    /// dans la scène).
+    pub fn start_game(&mut self) {
+        let screens = self.ui_screens.clone();
+        let levels = self.levels.clone();
+        let project_id = self.project_id.clone();
+        let assets_manifest = self.assets_manifest.clone();
+        let rebuilt = match levels.first() {
+            Some(first) => Self::from_scene_data(first.clone(), "projet:niveau_1"),
+            None => Self::load_from_scene(&self.scene_path),
+        };
+        if let Ok(mut fresh) = rebuilt {
+            fresh.ui_screens = screens;
+            fresh.levels = levels;
+            fresh.level_index = 0;
+            fresh.project_id = project_id;
+            fresh.assets_manifest = assets_manifest;
+            fresh.editor.mode = EditorMode::Play;
+            std::mem::swap(&mut fresh.audio, &mut self.audio);
+            std::mem::swap(&mut fresh.replay, &mut self.replay);
+            *self = fresh;
+        }
+        self.screen = crate::screens::GameScreen::Playing;
+        self.sync_screen_variables();
+        self.set_status("Partie démarrée");
+    }
+
+    /// Applique les entrées d'écran (`Entrée`/clic = valider, `Échap` = pause).
+    fn advance_screen_flow(&mut self, input: &InputState) {
+        use crate::screens::GameScreen;
+        use crate::subsystems::UiScreenKind;
+
+        let mut next = self.screen;
+        if input.is_key_just_pressed(KeyCode::Enter) || input.mouse_just_clicked {
+            next = next.confirm();
+        }
+        if input.is_key_just_pressed(KeyCode::Escape) {
+            next = next.pause_toggle();
+        }
+        if next == self.screen {
+            return;
+        }
+
+        // On ne bascule que vers un écran réellement déclaré : jamais d'écran vide.
+        let allowed = match next {
+            GameScreen::Playing => true,
+            GameScreen::Menu => self.has_screen(UiScreenKind::Menu),
+            GameScreen::Paused => self.has_screen(UiScreenKind::Pause),
+            GameScreen::GameOver => self.has_screen(UiScreenKind::GameOver),
+            GameScreen::Victory => self.has_screen(UiScreenKind::Victory),
+        };
+        if !allowed {
+            return;
+        }
+
+        if next == GameScreen::Playing && self.screen != GameScreen::Paused {
+            // Menu, défaite ou victoire → nouvelle partie.
+            self.start_game();
+        } else {
+            self.screen = next;
+            self.sync_screen_variables();
+            self.set_status(format!("Écran : {}", next.label()));
+        }
+    }
+
+    /// Détecte la fin de partie (mort du joueur, victoire KVL) et bascule l'écran.
+    fn detect_screen_outcome(&mut self) {
+        use crate::screens::GameScreen;
+        use crate::subsystems::UiScreenKind;
+
+        if self.screen != GameScreen::Playing {
+            return;
+        }
+        let player_dead = self
+            .player_index()
+            .and_then(|index| self.entities[index].health.as_ref())
+            .map_or(false, |health| health.is_dead);
+        if player_dead && self.has_screen(UiScreenKind::GameOver) {
+            self.screen = GameScreen::GameOver;
+            self.sync_screen_variables();
+            self.audio.play(SoundType::PlayerDeath);
+            self.set_status("Défaite");
+            return;
+        }
+        let won = self.kvl_context.get_var("game_won") == Some(&Value::Bool(true));
+        if won && self.has_screen(UiScreenKind::Victory) {
+            self.screen = GameScreen::Victory;
+            self.sync_screen_variables();
+            self.audio.play(SoundType::QuestSuccess);
+            self.set_status("Victoire");
+            return;
+        }
+
+        // Passage de niveau : `level_complete` (posé par `SetVar:level_complete:1`).
+        // Le verrou du boss du niveau 3 est **déclaratif** : son graphe de porte
+        // (`ref_porte_boss.kvl.json`) exige `IsBossDefeated` avant de poser le
+        // drapeau. Aucune règle « dernier niveau = boss » n'est codée ici : le
+        // même chemin sert aux portes des niveaux 1/2 et à la victoire finale.
+        // Sur le dernier niveau — ou dans un projet mono-scène — c'est une victoire.
+        let level_done = matches!(
+            self.kvl_context.get_var("level_complete"),
+            Some(Value::Int(value)) if *value != 0
+        ) || self.kvl_context.get_var("level_complete") == Some(&Value::Bool(true));
+        if level_done {
+            self.kvl_context.set_var("level_complete", Value::Int(0));
+            if self.next_level() {
+                return;
+            }
+            if self.has_screen(UiScreenKind::Victory) {
+                self.screen = GameScreen::Victory;
+                self.sync_screen_variables();
+                self.audio.play(SoundType::QuestSuccess);
+                self.set_status("Dernier niveau terminé : victoire");
+            }
+        }
+    }
+
     pub fn update(&mut self, dt: f32, input: &InputState) {
         self.elapsed_time += dt;
         self.sim_tick += 1;
@@ -1801,6 +2128,17 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         // Disponibilité universelle des coordonnées souris pour le survol (hover) et les infobulles
         self.editor.mouse_x = input.mouse_x;
         self.editor.mouse_y = input.mouse_y;
+
+        // --- Écrans (P1.1) : hors `Playing`, le monde est figé et seules les
+        // transitions d'écran consomment l'entrée. En mode Édition, l'atelier garde
+        // la main (aucun gel, aucune bascule). ---
+        if self.editor.mode == EditorMode::Play {
+            self.detect_screen_outcome();
+            self.advance_screen_flow(input);
+            if !self.screen.is_playing() {
+                return;
+            }
+        }
 
         // Auto-fade du message de statut vers le repos sobre après 4 secondes
         if self.status_timer > 0.0 {
@@ -3949,6 +4287,13 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             if !ent.is_active {
                 continue;
             }
+            // Les projectiles ne sont pas des cibles : les insérer dans la grille
+            // les faisait s'annuler entre eux (une nova radiale apparaît au même
+            // point), ce qui neutralisait les attaques du boss. Ils restent
+            // détectés via `query_aabb` face aux vraies cibles.
+            if ent.projectile.is_some() {
+                continue;
+            }
             if let Some(ref col) = ent.collider {
                 // Les murs et plateformes fixes sont déjà conservés dans static_buckets
                 let is_static = ent.movement.is_none() && (col.is_solid || col.is_one_way) && !col.is_pushable;
@@ -4479,7 +4824,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                             self.audio.play(SoundType::QuestSuccess);
                             self.camera.add_shake(25.0);
                             self.spawn_particles(bcx, bcy, 80, 0x00FDE047);
-                            self.status_message = "TRIOMPHE TOTAL ! Le Titan KVL-MK3 a été terrassé ! Victoire !".into();
+                            self.status_message = "TITAN TERRASSÉ ! La porte du sanctuaire s'ouvre : franchissez-la (E).".into();
                             if let Some(ref script) = self.entities[target_idx].script.clone() {
                                 if let Some(graph) = self.kvl_graphs.get(&script.script_path) {
                                     let _ = Interpreter::trigger_event_with(graph, &mut self.kvl_context, "OnBossDefeated", self.plugins.handlers());
@@ -7798,11 +8143,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         // superposés au HUD en mode jeu selon l'état runtime (joueur mort, `game_won`,
         // `paused` ou `menu_active`).
         if !is_edit_mode {
-            let player_dead = self
-                .player_index()
-                .and_then(|i| self.entities[i].health.as_ref())
-                .map_or(false, |h| h.is_dead);
-            let trigger = crate::ui_render::resolve_screen_trigger(&self.kvl_context, player_dead);
+            let trigger = self.screen.trigger();
             if trigger != crate::ui_render::ScreenTrigger::Hud {
                 if let Some(screen) = crate::ui_render::active_screen(&self.ui_screens, trigger) {
                     crate::ui_render::render_overlay(canvas, screen, &self.kvl_context, vx, vy, vw, vh);
@@ -8995,39 +9336,62 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         let author = self.editor.export_author.clone();
         let fmt = self.editor.export_format_idx;
 
-        // Création du répertoire d'export local
-        let _ = std::fs::create_dir_all("export");
+        // Création du répertoire d'export local (configurable, cf. `export_root`).
+        let export_root = self.export_root.clone();
+        let _ = std::fs::create_dir_all(&export_root);
 
         match fmt {
             0 => {
-                // 1. Export Web HTML5 Standalone (fichier autonome unique)
-                let html_content = crate::exporter::StandaloneExporter::export_html(self, &title, &author);
-                let out_path = "export/standalone_game.html";
-                if std::fs::write(out_path, &html_content).is_ok() {
-                    self.set_status(&format!("✨ Jeu exporté en HTML5 autonome dans '{}' (Prêt à jouer) !", out_path));
-                } else {
-                    self.set_status(&format!("✨ Export HTML5 prêt en mémoire : {} Ko !", html_content.len() / 1024));
+                // 1. Export Web HTML5 (données + carte d'identification ; le runtime
+                //    WASM embarqué n'est pas encore disponible — voir P6).
+                match crate::exporter::StandaloneExporter::export_html_checked(self, &title, &author) {
+                    Ok(html_content) => {
+                        let out_path = export_root.join("standalone_game.html");
+                        if std::fs::write(&out_path, &html_content).is_ok() {
+                            self.set_status(&format!(
+                                "💾 Export HTML5 (données) écrit dans '{}' — runtime jouable requis (P6).",
+                                out_path.display()
+                            ));
+                        } else {
+                            self.set_status(&format!(
+                                "💾 Export HTML5 prêt en mémoire : {} Ko !",
+                                html_content.len() / 1024
+                            ));
+                        }
+                    }
+                    Err(report) => {
+                        self.set_status(format!("⛔ Export refusé : {}", report.summary()));
+                        self.audio.play(SoundType::AccessDenied);
+                    }
                 }
             }
             1 => {
                 // 2. Export Package universel .karacti.json
                 let json_content = crate::exporter::StandaloneExporter::export_package_json(self, &title, &author)
                     .unwrap_or_else(|_| "{}".to_string());
-                let out_path = "export/game.karacti.json";
-                if std::fs::write(out_path, &json_content).is_ok() {
-                    self.set_status(&format!("💾 Package complet exporté dans '{}' ({} Ko) !", out_path, json_content.len() / 1024));
+                let out_path = export_root.join("game.karacti.json");
+                if std::fs::write(&out_path, &json_content).is_ok() {
+                    self.set_status(&format!(
+                        "💾 Package complet exporté dans '{}' ({} Ko) !",
+                        out_path.display(),
+                        json_content.len() / 1024
+                    ));
                 } else {
                     self.set_status("💾 Package universel sérialisé avec succès !");
                 }
             }
             _ => {
                 // 3. Export Dossier Bundle Desktop avec lanceurs autonomes
-                let _ = std::fs::create_dir_all("export/desktop_bundle");
+                let bundle = export_root.join("desktop_bundle");
+                let _ = std::fs::create_dir_all(&bundle);
                 let html_content = crate::exporter::StandaloneExporter::export_html(self, &title, &author);
-                let _ = std::fs::write("export/desktop_bundle/index.html", &html_content);
+                let _ = std::fs::write(bundle.join("index.html"), &html_content);
                 let runner_script = "#!/bin/bash\necho 'Lancement de KaractiRage Standalone...'\nopen index.html || xdg-open index.html\n";
-                let _ = std::fs::write("export/desktop_bundle/lancer_jeu.sh", runner_script);
-                self.set_status("🖥️ Bundle Desktop distribuable généré dans 'export/desktop_bundle/' !");
+                let _ = std::fs::write(bundle.join("lancer_jeu.sh"), runner_script);
+                self.set_status(&format!(
+                    "🖥️ Bundle Desktop distribuable généré dans '{}' !",
+                    bundle.display()
+                ));
             }
         }
 
@@ -10722,6 +11086,13 @@ mod tests {
             .expect("Chargement de la scène de test");
 
         let p_idx = state.player_index().unwrap();
+        // Le Studio auto-sauvegarde la scène de démonstration quand on joue : ce test
+        // ne doit pas dépendre des coordonnées du fichier (il cassait dès qu'une
+        // partie réelle avait déplacé le joueur). On place le joueur explicitement.
+        state.entities[p_idx].transform.x = 189.0;
+        state.entities[p_idx].transform.y = 106.0;
+        state.entities[p_idx].transform.prev_x = 189.0;
+        state.entities[p_idx].transform.prev_y = 106.0;
         let init_x = state.entities[p_idx].transform.x;
         let init_y = state.entities[p_idx].transform.y;
         assert_eq!(init_x as i32, 189);
@@ -11421,9 +11792,908 @@ mod tests {
         assert!(state.editor.add_comp_hitboxes.iter().any(|(n, ..)| n == "TogglePushable"));
     }
 
+    // ------------------------------------------------------------------
+    // P1.1 — Écrans : menu, pause, défaite, victoire
+    // ------------------------------------------------------------------
+
+    fn screens_fixture() -> Vec<crate::subsystems::UiScreen> {
+        use crate::subsystems::{UiScreen, UiScreenKind};
+        [
+            ("menu", UiScreenKind::Menu, "MENU"),
+            ("pause", UiScreenKind::Pause, "PAUSE"),
+            ("over", UiScreenKind::GameOver, "PERDU"),
+            ("win", UiScreenKind::Victory, "GAGNÉ"),
+        ]
+        .into_iter()
+        .map(|(id, kind, title)| UiScreen {
+            id: id.to_string(),
+            kind,
+            title: Some(title.to_string()),
+            elements: Vec::new(),
+        })
+        .collect()
+    }
+
+    fn state_with_screens() -> GameState {
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("Scène de test");
+        state.ui_screens = screens_fixture();
+        state.editor.mode = EditorMode::Play;
+        state
+    }
+
+    /// Fait avancer `frames` pas en imitant la boucle réelle (entrées transitoires purgées).
+    fn step(state: &mut GameState, input: &mut InputState, frames: usize) {
+        for _ in 0..frames {
+            state.update(0.016, input);
+            input.clear_transient();
+        }
+    }
+
     #[test]
-    fn test_data_driven_objective_hierarchy() {
-        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
+    fn menu_screen_freezes_the_world() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.screen = GameScreen::Menu;
+        let player = state.player_index().expect("joueur");
+        let before = state.entities[player].transform.x;
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::KeyD);
+        step(&mut state, &mut input, 20);
+
+        assert_eq!(
+            state.entities[player].transform.x, before,
+            "au menu, le monde ne doit pas avancer"
+        );
+        assert_eq!(state.screen, GameScreen::Menu);
+    }
+
+    #[test]
+    fn enter_leaves_the_menu_and_starts_playing() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.screen = GameScreen::Menu;
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut input, 1);
+
+        assert_eq!(state.screen, GameScreen::Playing, "Entrée démarre la partie");
+        assert!(state.player_index().is_some(), "la scène rechargée a un joueur");
+    }
+
+    #[test]
+    fn escape_pauses_freezes_and_resumes() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        assert_eq!(state.screen, GameScreen::Playing);
+
+        // 1. Échap → pause.
+        let mut escape = InputState::new();
+        escape.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut escape, 1);
+        assert_eq!(state.screen, GameScreen::Paused);
+        assert_eq!(
+            state.kvl_context.get_var("paused"),
+            Some(&Value::Bool(true)),
+            "la variable KVL miroir doit suivre"
+        );
+
+        // 2. En pause, le monde est figé.
+        let player = state.player_index().expect("joueur");
+        let frozen_x = state.entities[player].transform.x;
+        let mut right = InputState::new();
+        right.on_key_down(KeyCode::KeyD);
+        step(&mut state, &mut right, 20);
+        assert_eq!(state.entities[player].transform.x, frozen_x, "pause = monde figé");
+
+        // 3. Échap → reprise, et le monde réagit de nouveau.
+        let mut resume = InputState::new();
+        resume.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut resume, 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+        assert_eq!(state.kvl_context.get_var("paused"), Some(&Value::Bool(false)));
+        let resumed_x = state.entities[player].transform.x;
+        step(&mut state, &mut right, 30);
+        assert!(
+            (state.entities[player].transform.x - resumed_x).abs() > 1.0,
+            "après reprise, le joueur bouge"
+        );
+    }
+
+    #[test]
+    fn player_death_switches_to_game_over_screen() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        let player = state.player_index().expect("joueur");
+        if let Some(health) = state.entities[player].health.as_mut() {
+            health.current = 0.0;
+            health.is_dead = true;
+        }
+
+        step(&mut state, &mut InputState::new(), 1);
+        assert_eq!(state.screen, GameScreen::GameOver);
+    }
+
+    #[test]
+    fn game_won_variable_switches_to_victory_screen() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.kvl_context.set_var("game_won", Value::Bool(true));
+
+        step(&mut state, &mut InputState::new(), 1);
+        assert_eq!(state.screen, GameScreen::Victory);
+    }
+
+    #[test]
+    fn game_over_confirm_returns_to_the_menu() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.screen = GameScreen::GameOver;
+
+        let mut input = InputState::new();
+        input.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut input, 1);
+
+        assert_eq!(state.screen, GameScreen::Menu);
+    }
+
+    #[test]
+    fn project_without_screens_never_freezes_or_switches() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.ui_screens.clear();
+
+        // Mort du joueur : sans écran de défaite déclaré, le jeu continue (compatibilité).
+        let player = state.player_index().expect("joueur");
+        if let Some(health) = state.entities[player].health.as_mut() {
+            health.is_dead = true;
+        }
+        step(&mut state, &mut InputState::new(), 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+
+        // Échap sans écran de pause : aucun gel invisible.
+        let mut escape = InputState::new();
+        escape.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut escape, 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+    }
+
+    #[test]
+    fn editing_mode_is_never_frozen_by_screens() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.editor.mode = EditorMode::Edit;
+        // Même avec un état d'écran non-joueur, l'atelier garde la main.
+        state.screen = GameScreen::Menu;
+
+        let tick_before = state.sim_tick;
+        let mut escape = InputState::new();
+        escape.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut escape, 3);
+
+        assert_eq!(state.screen, GameScreen::Menu, "l'édition ne bascule pas d'écran");
+        assert_eq!(state.sim_tick, tick_before + 3, "l'atelier n'est jamais gelé");
+    }
+
+    #[test]
+    fn full_screen_lifecycle_from_menu_to_game_over_and_back() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.screen = GameScreen::Menu;
+
+        // Menu → jeu
+        let mut enter = InputState::new();
+        enter.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut enter, 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+
+        // Jeu → pause
+        let mut pause = InputState::new();
+        pause.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut pause, 1);
+        assert_eq!(state.screen, GameScreen::Paused);
+
+        // Pause → jeu
+        let mut resume = InputState::new();
+        resume.on_key_down(KeyCode::Escape);
+        step(&mut state, &mut resume, 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+
+        // Jeu → défaite
+        let player = state.player_index().expect("joueur");
+        if let Some(health) = state.entities[player].health.as_mut() {
+            health.current = 0.0;
+            health.is_dead = true;
+        }
+        step(&mut state, &mut InputState::new(), 1);
+        assert_eq!(state.screen, GameScreen::GameOver);
+
+        // Défaite → menu
+        let mut back = InputState::new();
+        back.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut back, 1);
+        assert_eq!(state.screen, GameScreen::Menu);
+    }
+
+    /// Scène embarquée de test, renommée pour identifier le niveau.
+    fn level_scene(name: &str) -> crate::scene::SceneData {
+        let mut scene = crate::scene::SceneData::from_json_str(include_str!(
+            "../../../assets/scenes/level_01.scene.json"
+        ))
+        .expect("scène de test lisible");
+        scene.name = name.to_string();
+        scene
+    }
+
+    #[test]
+    fn level_complete_advances_and_keeps_progress() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.levels = vec![level_scene("NIVEAU 1"), level_scene("NIVEAU 2")];
+        state.level_index = 0;
+        state.kvl_context.set_var("score", Value::Int(42));
+
+        state.kvl_context.set_var("level_complete", Value::Int(1));
+        step(&mut state, &mut InputState::new(), 1);
+
+        assert_eq!(state.level_index, 1, "le niveau 2 est chargé");
+        assert_eq!(state.scene_name, "NIVEAU 2", "la scène embarquée est instanciée");
+        assert_eq!(
+            state.kvl_context.get_var("score"),
+            Some(&Value::Int(42)),
+            "le score traverse le passage de niveau"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("level_complete"),
+            Some(&Value::Int(0)),
+            "le drapeau est consommé (pas de double passage)"
+        );
+        assert_eq!(state.screen, GameScreen::Playing);
+        assert_eq!(state.ui_screens.len(), 4, "les écrans du projet survivent");
+    }
+
+    #[test]
+    fn level_complete_on_the_last_level_shows_victory() {
+        use crate::screens::GameScreen;
+        let mut state = state_with_screens();
+        state.levels = vec![level_scene("NIVEAU UNIQUE")];
+        state.level_index = 0;
+
+        state.kvl_context.set_var("level_complete", Value::Int(1));
+        step(&mut state, &mut InputState::new(), 1);
+
+        assert_eq!(state.screen, GameScreen::Victory);
+    }
+
+    #[test]
+    fn next_level_without_declared_levels_returns_false() {
+        let mut state = state_with_screens();
+        assert!(!state.next_level(), "aucun niveau déclaré → pas de passage");
+    }
+
+    #[test]
+    fn legacy_project_without_scenes_is_normalized() {
+        let project = crate::project::KaractiProject::new_empty("Héritage", "auteur", crate::recipe::GameGenre::Platformer);
+        let mut value: serde_json::Value = serde_json::to_value(&project).expect("projet sérialisable");
+        // Simule un projet écrit avant l'ajout de `scenes`.
+        value.as_object_mut().expect("objet").remove("scenes");
+        let legacy = serde_json::to_string(&value).expect("json");
+
+        let loaded = crate::project::KaractiProject::from_json(&legacy).expect("projet relu");
+        assert_eq!(loaded.scenes.len(), 1, "un projet mono-scène est normalisé");
+        assert_eq!(loaded.scenes[0].name, loaded.scene.name);
+        assert_eq!(loaded.level_count(), 1);
+    }
+
+    #[test]
+    fn project_scenes_roundtrip_preserves_levels() {
+        let mut project = crate::project::KaractiProject::new_empty("Niveaux", "auteur", crate::recipe::GameGenre::Platformer);
+        project.scenes = vec![level_scene("NIVEAU A"), level_scene("NIVEAU B"), level_scene("NIVEAU C")];
+        project.scene = project.scenes[0].clone();
+        let json = project.to_json().expect("sérialisation");
+        let loaded = crate::project::KaractiProject::from_json(&json).expect("relecture");
+
+        assert_eq!(loaded.level_count(), 3);
+        assert_eq!(loaded.scenes[1].name, "NIVEAU B");
+        assert_eq!(loaded.scenes[2].name, "NIVEAU C");
+    }
+
+    #[test]
+    fn load_project_starts_on_the_first_embedded_level() {
+        let mut project = crate::project::KaractiProject::new_empty("Niveaux", "auteur", crate::recipe::GameGenre::Platformer);
+        project.scenes = vec![level_scene("PREMIER"), level_scene("SECOND")];
+        project.scene = project.scenes[0].clone();
+
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
+        state.load_project(project);
+
+        assert_eq!(state.scene_name, "PREMIER", "le niveau 1 est instancié");
+        assert_eq!(state.level_index, 0);
+        assert_eq!(state.levels.len(), 2);
+    }
+
+    #[test]
+    fn export_current_project_keeps_all_levels_and_the_current_edit() {
+        let mut state = state_with_screens();
+        state.levels = vec![level_scene("NIVEAU 1"), level_scene("NIVEAU 2")];
+        state.level_index = 1;
+        state.scene_name = "NIVEAU 2 EDITE".to_string();
+
+        let project = state.export_current_project();
+        assert_eq!(project.scenes.len(), 2, "l'export embarque tous les niveaux");
+        assert_eq!(project.scenes[1].name, "NIVEAU 2 EDITE", "le niveau courant reflète l'état");
+        assert_eq!(project.scenes[0].name, "NIVEAU 1", "les autres niveaux sont intacts");
+        assert_eq!(project.levels.len(), 2, "les noms de niveaux sont renseignés");
+    }
+
+    /// Manifeste minimal avec licence, utilisé par les tests de transport.
+    fn manifeste_fixture() -> crate::assets_manifest::AssetsManifest {
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "hero_idle".to_string(),
+                kind: crate::assets_manifest::AssetKind::Sprite,
+                path: "assets/sprites/hero.png".to_string(),
+                bytes: 12,
+                hash: crate::ai_dictionary::hash_text(b"png-hero-idle"),
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".to_string()),
+                    created_at: "2026-11-11".to_string(),
+                },
+                dimensions: Some((32, 48)),
+                duration_ms: None,
+            })
+            .expect("entrée acceptée");
+        manifeste
+    }
+
+    #[test]
+    fn load_project_transporte_le_manifeste_dans_l_etat() {
+        let manifeste = manifeste_fixture();
+        let mut project = crate::project::KaractiProject::new_empty(
+            "Manifeste",
+            "auteur",
+            crate::recipe::GameGenre::Platformer,
+        );
+        project.assets = Some(manifeste.clone());
+
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
+        assert!(state.assets_manifest.is_none(), "None par défaut");
+        state.load_project(project);
+
+        assert_eq!(
+            state.assets_manifest,
+            Some(manifeste),
+            "le manifeste du projet est transporté dans GameState"
+        );
+    }
+
+    #[test]
+    fn export_current_project_restitue_le_manifeste() {
+        let manifeste = manifeste_fixture();
+        let mut state = state_with_screens();
+        state.assets_manifest = Some(manifeste.clone());
+
+        let project = state.export_current_project();
+        assert_eq!(
+            project.assets.as_ref(),
+            Some(&manifeste),
+            "l'export réécrit le manifeste dans le projet"
+        );
+
+        // Le JSON exporté reste relisible et conserve le manifeste.
+        let json = project.to_json().expect("sérialisation");
+        let relu = crate::project::KaractiProject::from_json(&json).expect("relecture");
+        assert!(relu.assets.is_some(), "le manifeste traverse le JSON exporté");
+    }
+
+    #[test]
+    fn manifeste_survit_a_start_game_next_level_et_reload() {
+        let manifeste = manifeste_fixture();
+        let mut state = state_with_screens();
+        state.levels = vec![level_scene("NIVEAU 1"), level_scene("NIVEAU 2")];
+        state.assets_manifest = Some(manifeste.clone());
+
+        state.start_game();
+        assert_eq!(state.assets_manifest, Some(manifeste.clone()), "start_game");
+
+        assert!(state.next_level(), "un second niveau est disponible");
+        assert_eq!(
+            state.assets_manifest,
+            Some(manifeste.clone()),
+            "next_level"
+        );
+
+        state.reload();
+        assert_eq!(state.assets_manifest, Some(manifeste), "reload");
+    }
+
+    #[test]
+    fn start_game_returns_to_the_first_level() {
+        let mut state = state_with_screens();
+        state.levels = vec![level_scene("NIVEAU 1"), level_scene("NIVEAU 2")];
+        state.level_index = 1;
+        state.scene_name = "NIVEAU 2".to_string();
+
+        state.start_game();
+
+        assert_eq!(state.level_index, 0, "une nouvelle partie repart du niveau 1");
+        assert_eq!(state.scene_name, "NIVEAU 1");
+    }
+
+    /// Chemin du jeu de référence livré (robuste au répertoire courant des tests).
+    fn reference_project_path() -> &'static str {
+        if std::path::Path::new("assets/projects/jeu_reference.karacti").exists() {
+            "assets/projects/jeu_reference.karacti"
+        } else {
+            "../../assets/projects/jeu_reference.karacti"
+        }
+    }
+
+    #[test]
+    fn reference_game_starts_at_menu_with_three_levels() {
+        use crate::screens::GameScreen;
+
+        let project = crate::project::KaractiProject::load_from_file(reference_project_path())
+            .expect("projet de référence lisible");
+        assert_eq!(project.scenes.len(), 3, "trois niveaux embarqués");
+        assert_eq!(project.ui_screens.len(), 4, "menu, pause, défaite, victoire");
+
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
+        state.load_project(project);
+
+        assert_eq!(state.screen, GameScreen::Menu, "menu_active démarre au menu");
+        assert_eq!(state.level_index, 0);
+        assert_eq!(state.scene_name, "Niveau 1 : Salle des Émeraudes");
+    }
+
+    /// Place le joueur à portée d'interaction (< 80 px) de la porte du niveau.
+    fn teleport_player_to_door(state: &mut GameState) {
+        let player = state.player_index().expect("joueur");
+        let (door_x, door_y) = state
+            .entities
+            .iter()
+            .find(|entity| entity.tag == "door")
+            .map(|door| (door.transform.center_x(), door.transform.center_y()))
+            .expect("porte dans la scène");
+        let x = door_x - 60.0 - state.entities[player].transform.w * 0.5;
+        let y = door_y - state.entities[player].transform.h * 0.5;
+        let transform = &mut state.entities[player].transform;
+        transform.x = x;
+        transform.y = y;
+        transform.prev_x = x;
+        transform.prev_y = y;
+        state.rebuild_static_spatial_grid();
+    }
+
+    /// Index de la porte du niveau courant.
+    fn door_index(state: &GameState) -> usize {
+        state
+            .entities
+            .iter()
+            .position(|entity| entity.tag == "door")
+            .expect("porte dans la scène")
+    }
+
+    /// Index du boss du niveau courant.
+    fn boss_index(state: &GameState) -> usize {
+        state
+            .entities
+            .iter()
+            .position(|entity| entity.boss.is_some())
+            .expect("boss dans la scène")
+    }
+
+    /// PV courants du boss (0 s'il est déjà tombé).
+    fn boss_health(state: &GameState) -> f32 {
+        state.entities[boss_index(state)]
+            .health
+            .as_ref()
+            .map_or(0.0, |health| health.current)
+    }
+
+    /// Vrai si le drapeau `level_complete` est armé (entier non nul ou booléen vrai).
+    fn level_complete_is_armed(state: &GameState) -> bool {
+        matches!(
+            state.kvl_context.get_var("level_complete"),
+            Some(Value::Int(value)) if *value != 0
+        ) || state.kvl_context.get_var("level_complete") == Some(&Value::Bool(true))
+    }
+
+    /// Charge le projet de référence et se place **directement** sur le niveau 3.
+    ///
+    /// Les niveaux 1 et 2 sont traversés par `next_level` : ce point d'entrée
+    /// isole l'arène du Titan de la logique des portes précédentes, déjà couverte
+    /// par `reference_game_completes_three_levels_through_real_door_interactions`.
+    fn reference_state_on_level_three() -> GameState {
+        use crate::screens::GameScreen;
+
+        let project = crate::project::KaractiProject::load_from_file(reference_project_path())
+            .expect("projet de référence lisible");
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
+        state.load_project(project);
+
+        let mut enter = InputState::new();
+        enter.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut enter, 1);
+        assert_eq!(state.screen, GameScreen::Playing, "menu → partie");
+
+        assert!(state.next_level(), "niveau 2 disponible");
+        assert!(state.next_level(), "niveau 3 disponible");
+        assert_eq!(state.level_index, 2);
+        assert_eq!(state.screen, GameScreen::Playing);
+        state
+    }
+
+    /// Téléporte le joueur juste sous le boss, aligné sur son centre.
+    ///
+    /// En mode `TopDown`, `fire_player_projectile` tire vers le haut : sans cet
+    /// alignement le tir part à côté du Titan et le test ne prouverait rien.
+    fn teleport_player_under_boss(state: &mut GameState) {
+        let player = state.player_index().expect("joueur");
+        let b_idx = boss_index(state);
+        let (bx, by, bw, bh) = {
+            let boss = &state.entities[b_idx];
+            (
+                boss.transform.x,
+                boss.transform.y,
+                boss.transform.w,
+                boss.transform.h,
+            )
+        };
+        let x = bx + bw * 0.5 - state.entities[player].transform.w * 0.5;
+        let y = by + bh + 10.0;
+        let transform = &mut state.entities[player].transform;
+        transform.x = x;
+        transform.y = y;
+        transform.prev_x = x;
+        transform.prev_y = y;
+        if let Some(movement) = state.entities[player].movement.as_mut() {
+            movement.vx = 0.0;
+            movement.vy = 0.0;
+        }
+        state.rebuild_static_spatial_grid();
+    }
+
+    /// Tire réellement (`fire_player_projectile` + frames) jusqu'à la mort du Titan.
+    ///
+    /// Le joueur est replacé sous le boss avant chaque tir : les projectiles du
+    /// boss peuvent le terrasser et le faire réapparaître au point de départ, ce
+    /// qui décalerait le tir vertical et rendrait le test dépendant de la chance.
+    fn defeat_reference_boss_with_real_shots(state: &mut GameState) -> usize {
+        const MAX_FRAMES: usize = 2400;
+        let mut frames = 0;
+        while boss_health(state) > 0.0 && frames < MAX_FRAMES {
+            teleport_player_under_boss(state);
+            assert!(
+                state.fire_player_projectile(),
+                "le joueur doit pouvoir tirer un projectile"
+            );
+            state.update(1.0 / 60.0, &InputState::new());
+            frames += 1;
+        }
+        assert_eq!(boss_health(state), 0.0, "le Titan doit tomber sous les tirs");
+        assert!(frames < MAX_FRAMES, "le combat doit se terminer en moins de 40 s");
+        frames
+    }
+
+    #[test]
+    fn reference_game_completes_three_levels_through_real_door_interactions() {
+        use crate::screens::GameScreen;
+
+        let project = crate::project::KaractiProject::load_from_file(reference_project_path())
+            .expect("projet de référence lisible");
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de test");
+        state.load_project(project);
+
+        // Menu → niveau 1.
+        let mut enter = InputState::new();
+        enter.on_key_down(KeyCode::Enter);
+        step(&mut state, &mut enter, 1);
+        assert_eq!(state.screen, GameScreen::Playing);
+        assert_eq!(state.level_index, 0);
+
+        // Niveaux 1 et 2 : on franchit la porte par une **vraie** interaction (touche E),
+        // qui déclenche le graphe KVL, qui pose `level_complete`, qui fait avancer l'état.
+        for expected in 0..2 {
+            teleport_player_to_door(&mut state);
+            let mut interact = InputState::new();
+            interact.on_key_down(KeyCode::KeyE);
+            step(&mut state, &mut interact, 2);
+            assert_eq!(
+                state.level_index,
+                expected + 1,
+                "niveau {} non atteint (écran : {:?})",
+                expected + 2,
+                state.screen
+            );
+            assert_eq!(state.screen, GameScreen::Playing);
+        }
+
+        // Le niveau 3 est l'arène du boss.
+        assert!(
+            state.entities.iter().any(|entity| entity.boss.is_some()),
+            "le dernier niveau contient le boss"
+        );
+
+        // Dernier niveau : le Titan est un obstacle réel. On le terrasse avec de
+        // vrais tirs avant de toucher à la porte — aucune interaction préalable.
+        let combat_frames = defeat_reference_boss_with_real_shots(&mut state);
+        assert!(
+            combat_frames > 0,
+            "le boss doit encaisser au moins un tir avant de tomber"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("boss_defeated"),
+            Some(&Value::Bool(true)),
+            "la mort du Titan doit être actée par le moteur"
+        );
+        assert_eq!(
+            state.screen,
+            GameScreen::Playing,
+            "le combat seul ne déclare pas la victoire : la porte reste la sortie"
+        );
+        assert!(
+            !state.entities[door_index(&state)]
+                .collider
+                .as_ref()
+                .expect("collider de porte")
+                .is_solid,
+            "la porte doit s'ouvrir à la mort du Titan"
+        );
+
+        // Une fois le boss vaincu, la porte déclare la victoire.
+        teleport_player_to_door(&mut state);
+        let mut interact = InputState::new();
+        interact.on_key_down(KeyCode::KeyE);
+        step(&mut state, &mut interact, 2);
+        assert_eq!(
+            state.screen,
+            GameScreen::Victory,
+            "victoire atteinte par interaction réelle (écran : {:?})",
+            state.screen
+        );
+    }
+
+    /// Verrou de porte piloté par le boss, contenu déclaratif :
+    /// `assets/scripts/ref_porte_boss.kvl.json` teste `IsBossDefeated` avant de
+    /// poser `level_complete`. Tant que le Titan vit, la porte reste solide et
+    /// aucune victoire n'est déclarée.
+    #[test]
+    fn reference_level_three_door_refuses_to_open_while_the_titan_lives() {
+        use crate::screens::GameScreen;
+
+        let mut state = reference_state_on_level_three();
+        let door = door_index(&state);
+        let boss = boss_index(&state);
+        assert!(
+            state.entities[boss]
+                .health
+                .as_ref()
+                .is_some_and(|health| health.current > 0.0),
+            "le Titan doit être vivant au début du niveau"
+        );
+        assert!(
+            state.entities[door]
+                .collider
+                .as_ref()
+                .expect("collider de porte")
+                .is_solid,
+            "la porte naît solide"
+        );
+
+        teleport_player_to_door(&mut state);
+        let mut interact = InputState::new();
+        interact.on_key_down(KeyCode::KeyE);
+        step(&mut state, &mut interact, 2);
+
+        assert_eq!(
+            state.screen,
+            GameScreen::Playing,
+            "la porte verrouillée ne doit pas déclarer la victoire"
+        );
+        assert!(
+            !level_complete_is_armed(&state),
+            "aucun level_complete ne doit être posé tant que le boss vit"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("door_is_open"),
+            Some(&Value::Bool(false)),
+            "le graphe de porte doit maintenir le verrou fermé"
+        );
+        assert!(
+            state.entities[door]
+                .collider
+                .as_ref()
+                .expect("collider de porte")
+                .is_solid,
+            "la porte doit rester solide après le refus"
+        );
+        assert!(
+            state.status_message.contains("fermée"),
+            "message de verrou attendu, obtenu : {:?}",
+            state.status_message
+        );
+    }
+
+    /// Cœur de la correction : charger le niveau 3, tuer le Titan avec de vrais
+    /// projectiles (`fire_player_projectile` + frames), constater le
+    /// déverrouillage de la porte, puis seulement interagir avec elle pour gagner.
+    #[test]
+    fn reference_level_three_titan_defeat_unlocks_the_door_then_victory() {
+        use crate::screens::GameScreen;
+
+        let mut state = reference_state_on_level_three();
+        let door = door_index(&state);
+        let boss = boss_index(&state);
+
+        // Aucune interaction avec la porte avant la mort du boss.
+        let combat_frames = defeat_reference_boss_with_real_shots(&mut state);
+        assert!(combat_frames > 0);
+
+        assert_eq!(
+            state.entities[boss].boss.as_ref().map(|boss| boss.phase),
+            Some(BossPhase::Defeated),
+            "le Titan doit passer en phase Defeated"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("boss_defeated"),
+            Some(&Value::Bool(true)),
+            "boss_defeated doit être posé par la mort du boss"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("door_is_open"),
+            Some(&Value::Bool(true)),
+            "le graphe OnBossDefeated doit ouvrir la porte"
+        );
+        assert!(
+            !state.entities[door]
+                .collider
+                .as_ref()
+                .expect("collider de porte")
+                .is_solid,
+            "la porte doit être franchissable une fois le Titan vaincu"
+        );
+        assert_eq!(
+            state.screen,
+            GameScreen::Playing,
+            "la victoire exige encore de franchir la porte"
+        );
+
+        // La porte déverrouillée est maintenant la sortie du niveau.
+        teleport_player_to_door(&mut state);
+        let mut interact = InputState::new();
+        interact.on_key_down(KeyCode::KeyE);
+        step(&mut state, &mut interact, 2);
+        assert_eq!(
+            state.screen,
+            GameScreen::Victory,
+            "la porte du sanctuaire déclare la victoire après la chute du Titan"
+        );
+    }
+
+    /// Le Titan attaque réellement : ses projectiles et ses ondes blessent le
+    /// joueur, jusqu'à le terrasser. Le moteur applique alors sa politique de
+    /// réapparition (voir `test_player_hazard_damage_and_respawn`).
+    #[test]
+    fn reference_level_three_titan_attacks_and_can_defeat_the_player() {
+        let mut state = reference_state_on_level_three();
+        let player = state.player_index().expect("joueur");
+        let b_idx = boss_index(&state);
+        let (bx, by, bw, bh) = {
+            let boss = &state.entities[b_idx];
+            (
+                boss.transform.x,
+                boss.transform.y,
+                boss.transform.w,
+                boss.transform.h,
+            )
+        };
+
+        // À portée des novae radiales et des tirs ciblés du boss.
+        state.entities[player].transform.x = bx + bw * 0.5 - state.entities[player].transform.w * 0.5;
+        state.entities[player].transform.y = by + bh + 70.0;
+        state.rebuild_static_spatial_grid();
+        if let Some(health) = state.entities[player].health.as_mut() {
+            health.current = health.max;
+            health.is_dead = false;
+            health.invulnerability_timer = 0.0;
+        }
+
+        let input = InputState::new();
+        let mut min_hp = f32::MAX;
+        let mut saw_hit_message = false;
+        let mut saw_death_message = false;
+        for _ in 0..900 {
+            state.update(1.0 / 60.0, &input);
+            if let Some(health) = state.entities[player].health.as_ref() {
+                min_hp = min_hp.min(health.current);
+            }
+            if state.status_message.contains("TOUCHÉ") || state.status_message.contains("OUCH") {
+                saw_hit_message = true;
+            }
+            if state.status_message.contains("PÉRI") || state.status_message.contains("ÉCRASÉ") {
+                saw_death_message = true;
+            }
+        }
+
+        assert!(
+            saw_hit_message || min_hp < 3.0,
+            "le Titan doit infliger des dégâts au joueur (PV min : {min_hp})"
+        );
+        assert!(
+            saw_death_message,
+            "le joueur doit pouvoir être terrassé par les attaques du Titan"
+        );
+    }
+
+    #[test]
+    fn reference_door_graph_marks_the_level_complete() {
+        let path = if std::path::Path::new("assets/scripts/ref_porte_niveau.kvl.json").exists() {
+            "assets/scripts/ref_porte_niveau.kvl.json"
+        } else {
+            "../../assets/scripts/ref_porte_niveau.kvl.json"
+        };
+        let content = std::fs::read_to_string(path).expect("graphe de porte lisible");
+        let graph = kvl_core::Graph::from_json(&content).expect("graphe KVL valide");
+        assert_eq!(graph.nodes.len(), 2, "un événement + une action");
+
+        let action = graph
+            .nodes
+            .values()
+            .find_map(|node| match &node.kind {
+                kvl_core::NodeKind::Action { action_type } => Some(action_type.clone()),
+                _ => None,
+            })
+            .expect("action présente");
+        assert_eq!(action, "SetVariable:level_complete:true");
+
+        let diagnostics = kvl_core::Validator::validate(&graph);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.severity == kvl_core::ValidationSeverity::Error),
+            "le graphe de référence ne doit pas produire d'erreur : {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn reference_project_export_embeds_scripts_and_passes_preflight() {
+        use crate::exporter::StandaloneExporter;
+
+        let project = crate::project::KaractiProject::load_from_file(reference_project_path())
+            .expect("projet de référence");
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("scène de base");
+        state.load_project(project);
+
+        assert!(
+            state.kvl_graphs.len() >= 2,
+            "les scripts référencés par les entités doivent être chargés au projet : {:?}",
+            state.kvl_graphs.keys().collect::<Vec<_>>()
+        );
+
+        let report = StandaloneExporter::preflight(&state);
+        assert!(report.ok, "pré-vol : {}", report.summary());
+
+        let html = StandaloneExporter::export_html_checked(&state, "Export Test", "Auteur")
+            .expect("export autorisé");
+        assert!(html.contains("embedded-package"), "paquet embarqué présent");
+        assert!(html.contains("ref_porte_niveau"), "le graphe de porte est embarqué");
+        assert!(
+            !html.contains("fonts.googleapis.com") && !html.contains("fonts.gstatic.com"),
+            "aucune police externe (export hors ligne)"
+        );
+        assert_eq!(
+            StandaloneExporter::export_fingerprint(&html),
+            StandaloneExporter::export_fingerprint(&html),
+            "l'empreinte est stable"
+        );
+    }
+
+    #[test]
+    fn test_data_driven_objective_hierarchy() {        let mut state = GameState::load_from_scene("assets/scenes/level_01.scene.json")
             .expect("Scène chargée");
 
         // 1. Scene objective chargé depuis le JSON
@@ -11503,7 +12773,13 @@ mod tests {
             title: Some("VICTOIRE".into()),
             elements: vec![],
         }];
+        state.editor.mode = EditorMode::Play;
         state.kvl_context.set_var("game_won", Value::Bool(true));
+
+        // Depuis P1.1, la variable KVL est une **entrée** lue par la machine à états :
+        // un pas de simulation suffit à basculer l'écran, qui fait ensuite autorité.
+        state.update(0.016, &InputState::new());
+        assert_eq!(state.screen, crate::screens::GameScreen::Victory);
 
         let mut canvas = Canvas::new(1200, 800);
         state.render(&mut canvas);
@@ -13608,6 +14884,10 @@ mod tests {
     #[test]
     fn test_standalone_exporter_lifecycle_and_modal() {
         let mut state = GameState::load_from_scene(get_test_scene_path()).unwrap();
+        // L'export écrit sur disque : on le redirige vers un répertoire temporaire.
+        let export_root = std::env::temp_dir().join(format!("karactirage_export_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&export_root);
+        state.export_root = export_root.clone();
         let mut canvas = Canvas::new(1200, 800);
 
         // 1. Rendu initial pour générer le bouton [📦 EXPORT] dans l'en-tête
@@ -13647,7 +14927,12 @@ mod tests {
         state.update(0.016, &input_enter);
 
         assert!(!state.editor.show_export_modal, "La modale doit se fermer après confirmation d'export");
-        assert!(state.status_message.contains("exporté"), "Un message de confirmation doit s'afficher");
+        assert!(state.status_message.contains("Export HTML5"), "Un message de confirmation doit s'afficher");
+        // Le fichier a été écrit dans le répertoire temporaire, pas dans le dépôt.
+        assert!(
+            export_root.join("standalone_game.html").is_file(),
+            "export HTML5 attendu sous la racine temporaire"
+        );
 
         // 7. Vérification de l'intégrité du package généré et réimportation
         let pkg_json = crate::exporter::StandaloneExporter::export_package_json(&state, "Jeu Test", "Testeur").unwrap();
@@ -13661,6 +14946,7 @@ mod tests {
         let mut imported_state = GameState::load_from_scene(get_test_scene_path()).unwrap();
         crate::exporter::StandaloneExporter::import_package(&mut imported_state, &loaded_pkg);
         assert_eq!(imported_state.entities.len(), state.entities.len());
+        let _ = std::fs::remove_dir_all(&export_root);
         assert_eq!(imported_state.scene_name, state.scene_name);
     }
 

@@ -271,6 +271,9 @@ pub fn render_overlay(
 }
 
 /// Déclencheur d'écran : état runtime qui pilote la bascule HUD/menu/pause/….
+///
+/// La résolution est faite par [`crate::screens::GameScreen::trigger`] : depuis P1.1,
+/// l'état d'écran fait autorité (les variables KVL en sont le miroir, pas la source).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenTrigger {
     Hud,
@@ -278,30 +281,6 @@ pub enum ScreenTrigger {
     Pause,
     Victory,
     GameOver,
-}
-
-/// Résout le déclencheur d'écran actif à partir de l'état runtime du jeu.
-///
-/// Priorité (la première condition vraie l'emporte) :
-/// 1. joueur mort → `GameOver` ;
-/// 2. variable KVL `game_won == true` → `Victory` ;
-/// 3. variable KVL `paused == true` → `Pause` ;
-/// 4. variable KVL `menu_active == true` → `Menu` ;
-/// 5. sinon → `Hud`.
-pub fn resolve_screen_trigger(ctx: &ExecutionContext, player_dead: bool) -> ScreenTrigger {
-    if player_dead {
-        return ScreenTrigger::GameOver;
-    }
-    if ctx.get_var("game_won") == Some(&Value::Bool(true)) {
-        return ScreenTrigger::Victory;
-    }
-    if ctx.get_var("paused") == Some(&Value::Bool(true)) {
-        return ScreenTrigger::Pause;
-    }
-    if ctx.get_var("menu_active") == Some(&Value::Bool(true)) {
-        return ScreenTrigger::Menu;
-    }
-    ScreenTrigger::Hud
 }
 
 /// Retourne l'écran déclaré correspondant au déclencheur, ou `None` si absent.
@@ -367,24 +346,6 @@ mod tests {
         assert_eq!(resolve_bind(&ctx, Some("score")), Some("7".to_string()));
         assert_eq!(resolve_bind(&ctx, Some("absent")), None);
         assert_eq!(resolve_bind(&ctx, None), None);
-    }
-
-    #[test]
-    fn resolve_screen_trigger_priority_order() {
-        let ctx = ctx_with(&[]);
-        assert_eq!(resolve_screen_trigger(&ctx, false), ScreenTrigger::Hud);
-        assert_eq!(resolve_screen_trigger(&ctx, true), ScreenTrigger::GameOver);
-
-        let won = ctx_with(&[("game_won", Value::Bool(true))]);
-        assert_eq!(resolve_screen_trigger(&won, false), ScreenTrigger::Victory);
-        // La mort prime sur la victoire.
-        assert_eq!(resolve_screen_trigger(&won, true), ScreenTrigger::GameOver);
-
-        let paused = ctx_with(&[("paused", Value::Bool(true))]);
-        assert_eq!(resolve_screen_trigger(&paused, false), ScreenTrigger::Pause);
-
-        let menu = ctx_with(&[("menu_active", Value::Bool(true))]);
-        assert_eq!(resolve_screen_trigger(&menu, false), ScreenTrigger::Menu);
     }
 
     #[test]

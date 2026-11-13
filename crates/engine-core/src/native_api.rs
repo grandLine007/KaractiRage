@@ -6,6 +6,7 @@
 //! une seule compilation.
 
 use crate::camera::Camera3D;
+use crate::ai_plan::AiOp;
 use crate::entity::{Entity, MaterialRef, MeshRef, Renderable3D, Transform2D, Transform3D};
 use crate::game::GameState;
 use crate::input::InputState;
@@ -54,6 +55,11 @@ pub struct NativeEngine {
     save_manager: SaveManager,
     /// Référence de prévisualisation pour `ai_review` (capturée avant un patch).
     review_baseline: Option<crate::preview::PreviewCapture>,
+    /// Racine du projet pour les écritures d'authoring (assets KVL, sprites).
+    ///
+    /// `None` = racine compilée (`CARGO_MANIFEST_DIR/../..`). Les tests et les projets
+    /// ouverts hors du dépôt la remplacent pour ne jamais écrire dans le code source.
+    workspace_root: Option<std::path::PathBuf>,
 }
 
 /// Résout le chemin de la scène par défaut, quel que soit le répertoire courant
@@ -129,6 +135,48 @@ fn swizzle_xrgb_to_rgba(px: u32) -> u32 {
     0xFF00_0000 | ((px & 0x0000_00FF) << 16) | (px & 0x0000_FF00) | ((px & 0x00FF_0000) >> 16)
 }
 
+// --- Horloge de télémétrie (indisponible sous wasm) ---------------------------
+//
+// `std::time::Instant::now()` **panique** sous `wasm32-unknown-unknown` : la std
+// n'a aucune horloge sans hôte JS (`time not implemented on this platform`). Une
+// frame ne doit jamais échouer pour de la télémétrie : sous wasm on mesure donc
+// des durées nulles. `Telemetry::record_frame(0)` conserve alors ses valeurs par
+// défaut (FPS initial), sans division par zéro ni comportement aberrant.
+
+/// Repère d'horloge natif (aucune allocation, copie triviale).
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+struct ClockMark(std::time::Instant);
+
+/// Repère neutre sous wasm (pas d'horloge disponible).
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy)]
+struct ClockMark;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn clock_mark() -> ClockMark {
+    ClockMark(std::time::Instant::now())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+fn clock_mark() -> ClockMark {
+    ClockMark
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn clock_elapsed_us(since: ClockMark, until: ClockMark) -> u64 {
+    (until.0 - since.0).as_micros() as u64
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+fn clock_elapsed_us(_since: ClockMark, _until: ClockMark) -> u64 {
+    0
+}
+
 // --- Helpers d'extraction des paramètres de recettes KVL guidées -------------
 
 fn j_str(v: &serde_json::Value, key: &str, default: &str) -> String {
@@ -189,7 +237,7 @@ impl NativeEngine {
         crate::renderer::warmup_glyph_cache();
         let input = InputState::new();
 
-        Ok(Self {
+        let state = Self {
             game,
             canvas,
             input,
@@ -203,6 +251,54 @@ impl NativeEngine {
                 crate::project_registry::ProjectRegistry::home_dir().join("saves"),
             ),
             review_baseline: None,
+            workspace_root: None,
+        };
+        // Réglages utilisateur (hors partie) : appliqués au démarrage.
+        let audio_settings = crate::settings::AudioSettings::load();
+        state.game.audio.set_master_volume(audio_settings.volume);
+        state.game.audio.set_muted(audio_settings.muted);
+        Ok(state)
+    }
+
+    /// Réglages audio courants (volume maître, mute).
+    pub fn audio_settings(&self) -> crate::settings::AudioSettings {
+        crate::settings::AudioSettings {
+            volume: self.game.audio.master_volume(),
+            muted: self.game.audio.is_muted(),
+        }
+    }
+
+    /// Applique et persiste les réglages audio (jamais dans la sauvegarde de partie).
+    pub fn set_audio_settings(&mut self, volume: f32, muted: bool) -> crate::settings::AudioSettings {
+        let settings = crate::settings::AudioSettings { volume, muted }.sanitized();
+        self.game.audio.set_master_volume(settings.volume);
+        self.game.audio.set_muted(settings.muted);
+        if let Err(error) = settings.save() {
+            tracing::warn!("réglages audio non persistés : {error}");
+        }
+        settings
+    }
+
+    /// Redirige toutes les écritures d'authoring (graphes KVL, sprites importés)
+    /// sous `root` au lieu de la racine compilée du dépôt.
+    ///
+    /// Utilisé par les tests et par l'ouverture d'un projet situé ailleurs sur le disque.
+    pub fn set_workspace_root(&mut self, root: impl Into<std::path::PathBuf>) {
+        self.workspace_root = Some(root.into());
+    }
+
+    /// Redirige les sauvegardes (slots) vers un répertoire précis.
+    ///
+    /// Utile aux tests et aux projets ouverts hors du `$KARACTI_HOME` par défaut.
+    pub fn set_save_root(&mut self, root: impl Into<std::path::PathBuf>) {
+        let config = self.save_manager.config.clone();
+        self.save_manager = SaveManager::with_root(config, root.into());
+    }
+
+    /// Racine du projet pour les écritures d'authoring.
+    pub fn workspace_root(&self) -> std::path::PathBuf {
+        self.workspace_root.clone().unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
         })
     }
 
@@ -221,7 +317,7 @@ impl NativeEngine {
         // avalanche de sous-pas (spirale de la mort).
         self.accumulator += dt.clamp(0.0, 0.25);
 
-        let t0 = std::time::Instant::now();
+        let t0 = clock_mark();
         let mut steps = 0u32;
         while self.accumulator >= SIM_DT && steps < MAX_SUBSTEPS {
             self.game.update(SIM_DT, &self.input);
@@ -233,17 +329,17 @@ impl NativeEngine {
                 self.input.clear_transient();
             }
         }
-        let t1 = std::time::Instant::now();
+        let t1 = clock_mark();
         self.game.render(&mut self.canvas);
-        let t2 = std::time::Instant::now();
+        let t2 = clock_mark();
         // Sécurité : garantit que les transitoires sont purgées même sans sous-pas.
         self.input.clear_transient();
         let bytes = self.frame_bytes();
-        let t3 = std::time::Instant::now();
+        let t3 = clock_mark();
 
-        let update_us = (t1 - t0).as_micros() as u64;
-        let render_us = (t2 - t1).as_micros() as u64;
-        let encode_us = (t3 - t2).as_micros() as u64;
+        let update_us = clock_elapsed_us(t0, t1);
+        let render_us = clock_elapsed_us(t1, t2);
+        let encode_us = clock_elapsed_us(t2, t3);
         let total_us = update_us + render_us + encode_us;
         self.frame_stats = FrameStats {
             update_us,
@@ -797,6 +893,41 @@ impl NativeEngine {
 
     // --- Export / import ------------------------------------------------------
 
+    /// Pré-vol d'export sérialisé : `{ ok, issues[], summary }`.
+    ///
+    /// Ne modifie rien : sert au Studio à refuser un export avant de l'écrire.
+    pub fn export_preflight_json(&self) -> String {
+        use crate::exporter::PreflightSeverity;
+
+        let report = crate::exporter::StandaloneExporter::preflight(&self.game);
+        let issues: Vec<serde_json::Value> = report
+            .issues
+            .iter()
+            .map(|issue| {
+                serde_json::json!({
+                    "severity": match issue.severity {
+                        PreflightSeverity::Blocking => "blocking",
+                        PreflightSeverity::Warning => "warning",
+                    },
+                    "code": issue.code,
+                    "message": issue.message,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "ok": report.ok,
+            "issues": issues,
+            "summary": report.summary(),
+        })
+        .to_string()
+    }
+
+    /// Export HTML5 **validé** par le pré-vol ; renvoie le résumé des blocages sinon.
+    pub fn export_standalone_html_checked(&self, title: &str, author: &str) -> Result<String, String> {
+        crate::exporter::StandaloneExporter::export_html_checked(&self.game, title, author)
+            .map_err(|report| report.summary())
+    }
+
     pub fn export_standalone_html(&self, title: &str, author: &str) -> String {
         crate::exporter::StandaloneExporter::export_html(&self.game, title, author)
     }
@@ -1000,18 +1131,45 @@ impl NativeEngine {
     /// Sauvegarde l'état courant du jeu dans un slot (`0..slots`). Renvoie le chemin.
     pub fn save_game(&mut self, slot: u32) -> Result<String, String> {
         self.sync_save_config();
-        let project = self.game.export_current_project();
-        let path = self.save_manager.save(&project, slot as usize)?;
+        let state = self.capture_save_state();
+        let project_id = state.project.metadata.id.clone();
+        let path = self.save_manager.save_state(&state, &project_id, slot as usize)?;
         Ok(path.display().to_string())
+    }
+
+    /// Instantané de partie : projet + niveau courant + variables KVL.
+    fn capture_save_state(&self) -> crate::save::SaveState {
+        crate::save::SaveState::new(
+            self.game.export_current_project(),
+            self.game.level_index,
+            self.game.kvl_context.variables.clone(),
+        )
+    }
+
+    /// Applique une sauvegarde : projet, variables runtime, puis niveau sauvegardé.
+    ///
+    /// Une reprise remet toujours le jeu en `Playing` : charger une partie signifie
+    /// « reprendre où on s'était arrêté », pas « revenir au menu ».
+    fn apply_save_state(&mut self, state: crate::save::SaveState) {
+        let level = state.level_index;
+        self.game.load_project(state.project);
+        self.game.kvl_context.variables = state.variables;
+        for _ in 0..level {
+            if !self.game.next_level() {
+                break;
+            }
+        }
+        self.game.screen = crate::screens::GameScreen::Playing;
+        self.game.sync_screen_variables();
     }
 
     /// Charge un slot et remplace l'état courant du jeu. `false` si le slot est vide.
     pub fn load_game(&mut self, slot: u32) -> bool {
         self.sync_save_config();
         let project_id = self.game.export_current_project().metadata.id;
-        match self.save_manager.load(&project_id, slot as usize) {
-            Ok(project) => {
-                self.game.load_project(project);
+        match self.save_manager.load_state(&project_id, slot as usize) {
+            Ok(state) => {
+                self.apply_save_state(state);
                 true
             }
             Err(_) => false,
@@ -1022,9 +1180,9 @@ impl NativeEngine {
     pub fn resume_game(&mut self) -> bool {
         self.sync_save_config();
         let project_id = self.game.export_current_project().metadata.id;
-        match self.save_manager.resume(&project_id) {
-            Some(project) => {
-                self.game.load_project(project);
+        match self.save_manager.resume_state(&project_id) {
+            Some(state) => {
+                self.apply_save_state(state);
                 true
             }
             None => false,
@@ -1034,9 +1192,9 @@ impl NativeEngine {
     /// Avance l'auto-save d'un pas de temps ; renvoie le chemin écrit le cas échéant.
     pub fn auto_save(&mut self, dt: f32) -> Option<String> {
         self.sync_save_config();
-        let project = self.game.export_current_project();
+        let state = self.capture_save_state();
         self.save_manager
-            .auto_save_tick(dt, &project)
+            .auto_save_tick(dt, &state)
             .ok()
             .flatten()
             .map(|p| p.display().to_string())
@@ -1093,6 +1251,137 @@ impl NativeEngine {
 
     pub fn get_selected_entity_id(&self) -> Option<usize> {
         self.game.selected_entity_id()
+    }
+
+    // ------------------------------------------------------------------
+    // Édition IA ciblée (plan IA inline, sprint 1)
+    // ------------------------------------------------------------------
+
+    /// Contexte d'édition : ce que voit l'IA (sélection, scène, dimension, outil actif).
+    ///
+    /// Jamais la scène entière : la sélection est transmise telle quelle par identifiant.
+    pub fn ai_edit_context(&self) -> crate::ai_edit::EditContext {
+        use crate::ai_edit::{ActivePanel, Dimension, EditContext, TargetRef};
+
+        // Le moteur n'a pas de champ « dimension » : on la déduit de la présence de 3D.
+        let dimension = if self
+            .game
+            .entities
+            .iter()
+            .any(|entity| entity.transform3d.is_some() || entity.renderable3d.is_some())
+        {
+            Dimension::ThreeD
+        } else {
+            Dimension::TwoD
+        };
+
+        EditContext {
+            project_id: format!("proj_{:x}", (self.game.scene_name.len() as u64) ^ 0xCAFE_BABE),
+            scene_id: self.game.scene_name.clone(),
+            dimension,
+            selection: self
+                .get_selected_entity_id()
+                .map(|id| vec![TargetRef::EntityId(id)])
+                .unwrap_or_default(),
+            hover: None,
+            cursor_world: None,
+            active_panel: ActivePanel::Viewport,
+            active_tool: format!("{:?}", self.game.editor.active_tool).to_lowercase(),
+            camera: self.game.camera3d.clone(),
+            recent_ops: Vec::new(),
+        }
+    }
+
+    /// Aperçu par le résolveur déterministe.
+    ///
+    /// `Ok(None)` = aucune règle certaine : l'appelant doit passer par le LLM avec le
+    /// prompt micro. `Err(message)` = la demande est compréhensible mais incomplète.
+    pub fn ai_edit_preview(
+        &self,
+        instruction: &str,
+    ) -> Result<Option<crate::ai_edit::EditProposal>, String> {
+        use crate::ai_edit_resolver::{Resolution, resolve_instruction};
+
+        let project = self.game.export_current_project();
+        let context = self.ai_edit_context();
+        let Some(resolution) = resolve_instruction(instruction, &project, &context) else {
+            return Ok(None);
+        };
+        match resolution {
+            Resolution::NeedsClarification(message) => Err(message),
+            Resolution::Ops(ops) => {
+                let intent_id =
+                    format!("int_{}", crate::ai_dictionary::hash_text(instruction.as_bytes()));
+                crate::ai_edit::build_proposal(&project, &context, &intent_id, ops, instruction)
+                    .map(Some)
+                    .map_err(|error| error.to_string())
+            }
+        }
+    }
+
+    /// Construit une proposition depuis des ops JSON (sortie LLM).
+    ///
+    /// Accepte `[...]`, `{"ops":[...]}` ou une proposition complète : seule la liste `ops`
+    /// est utilisée, puis tout est revalidé par le moteur.
+    pub fn ai_edit_propose(&self, raw_json: &str) -> Result<crate::ai_edit::EditProposal, String> {
+        let ops = parse_ai_ops(raw_json)?;
+        let project = self.game.export_current_project();
+        let context = self.ai_edit_context();
+        let intent_id = format!("int_{}", crate::ai_dictionary::hash_text(raw_json.as_bytes()));
+        crate::ai_edit::build_proposal(&project, &context, &intent_id, ops, "proposition LLM")
+            .map_err(|error| error.to_string())
+    }
+
+    /// Prompt micro prêt à envoyer au fournisseur (blocs cible/voisins/schéma).
+    pub fn ai_edit_prompt(
+        &self,
+        provider: crate::ai_client::AiProvider,
+        instruction: &str,
+    ) -> crate::ai_prompt::AssembledPrompt {
+        let project = self.game.export_current_project();
+        let context = self.ai_edit_context();
+        crate::ai_prompt::assemble_micro(provider, &project, &context, instruction)
+    }
+
+    /// Applique une proposition à la scène courante : `(rapport JSON, transaction)`.
+    ///
+    /// La scène est mise à jour **sur place** (sélection, mode et caméra conservés) ;
+    /// l'annulation passe par la transaction, pas par la pile d'undo de l'éditeur.
+    pub fn ai_edit_apply(
+        &mut self,
+        proposal: &crate::ai_edit::EditProposal,
+    ) -> Result<(String, crate::ai_edit::AiTransaction), String> {
+        let project = self.game.export_current_project();
+        let applied =
+            crate::ai_edit::apply_edit(&project, proposal).map_err(|error| error.to_string())?;
+        self.apply_ai_edit_project(&applied.project);
+        let report = serde_json::json!({
+            "transaction_id": applied.transaction.id,
+            "intent_id": applied.transaction.intent_id,
+            "changes": proposal.preview.changes,
+            "risk": proposal.risk,
+        });
+        Ok((report.to_string(), applied.transaction))
+    }
+
+    /// Applique un projet édité à la scène : entités, graphes, nom et objectif seulement.
+    ///
+    /// Contrairement à `load_project`, la sélection, le mode d'édition et la caméra sont
+    /// conservés : c'est ce qui permet d'enchaîner plusieurs micro-éditions.
+    pub fn apply_ai_edit_project(&mut self, project: &crate::project::KaractiProject) {
+        self.game.entities = project.scene.entities.clone();
+        self.game.kvl_graphs = project.kvl_graphs.clone();
+        self.game.scene_name = project.scene.name.clone();
+        self.game.scene_objective = project.scene.objective.clone();
+        self.game.rebuild_static_spatial_grid();
+    }
+
+    /// Restaure un projet sérialisé (annulation d'une édition IA).
+    pub fn ai_edit_restore(&mut self, project_json: &str) -> Result<(), String> {
+        let project = crate::project::KaractiProject::from_json(project_json)
+            .map_err(|error| format!("projet illisible : {error}"))?;
+        self.apply_ai_edit_project(&project);
+        Ok(())
     }
 
     pub fn delete_selected_entity(&mut self) -> bool {
@@ -1723,7 +2012,7 @@ impl NativeEngine {
     // --- Import d'images & vectorisation --------------------------------------
 
     fn repo_root(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+        self.workspace_root()
     }
 
     fn valid_id(&self, id: &str) -> Result<(), String> {
@@ -2165,6 +2454,22 @@ fn ensure_graph_target_free(
     Ok(())
 }
 
+/// Lit une liste d'`AiOp` depuis une sortie LLM.
+///
+/// Accepte une liste nue (`[...]`), un objet `{"ops":[...]}` ou une proposition complète :
+/// le moteur ne fait jamais confiance au reste du JSON, il ne prend que les ops.
+pub fn parse_ai_ops(raw_json: &str) -> Result<Vec<AiOp>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw_json.trim()).map_err(|error| format!("JSON invalide : {error}"))?;
+    let ops_value = value.get("ops").cloned().unwrap_or(value);
+    let ops: Vec<AiOp> =
+        serde_json::from_value(ops_value).map_err(|error| format!("ops invalides : {error}"))?;
+    if ops.is_empty() {
+        return Err("aucune opération proposée".to_string());
+    }
+    Ok(ops)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2172,6 +2477,10 @@ mod tests {
     #[test]
     fn test_guided_graph_builds_valid_mechanics() {
         let mut engine = NativeEngine::init().expect("init moteur");
+        // Écritures d'authoring redirigées : le test ne doit jamais salir le dépôt.
+        let workspace = std::env::temp_dir().join(format!("karactirage_guided_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&workspace);
+        engine.set_workspace_root(workspace.clone());
 
         let recipes = ["collectible", "hazard", "teleport", "switch", "chest", "door"];
         for recipe in recipes {
@@ -2203,6 +2512,12 @@ mod tests {
                 out
             );
         }
+        // Les graphes ont bien été écrits… dans le répertoire temporaire.
+        assert!(
+            workspace.join("assets/scripts").is_dir(),
+            "écriture attendue sous la racine temporaire"
+        );
+        let _ = std::fs::remove_dir_all(&workspace);
     }
 
     #[test]
@@ -2424,6 +2739,68 @@ mod tests {
             crate::render_packet::LightKind::Point
         );
         assert_eq!(packet.lights[0].pos, [2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_save_and_resume_restore_level_and_score() {
+        use kvl_core::Value;
+
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let root = std::env::temp_dir().join(format!(
+            "karacti_engine_progress_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        engine.set_save_root(root.clone());
+
+        let project_path = if std::path::Path::new("assets/projects/jeu_reference.karacti").exists() {
+            "assets/projects/jeu_reference.karacti"
+        } else {
+            "../../assets/projects/jeu_reference.karacti"
+        };
+        let project = crate::project::KaractiProject::load_from_file(project_path)
+            .expect("projet de référence");
+
+        // Partie avancée : niveau 2 et score 77.
+        engine.game.load_project(project.clone());
+        engine.game.next_level();
+        assert_eq!(engine.game.level_index, 1);
+        engine.game.kvl_context.set_var("score", Value::Int(77));
+        engine.save_game(0).expect("sauvegarde");
+
+        // Redémarrage : projet rechargé au niveau 1, score remis à zéro.
+        engine.game.load_project(project);
+        assert_eq!(engine.game.level_index, 0);
+        engine.game.kvl_context.set_var("score", Value::Int(0));
+
+        assert!(engine.resume_game(), "une reprise doit être disponible");
+        assert_eq!(engine.game.level_index, 1, "niveau sauvegardé restauré");
+        assert_eq!(
+            engine.game.kvl_context.get_var("score"),
+            Some(&Value::Int(77)),
+            "score restauré"
+        );
+        assert_eq!(engine.game.screen, crate::screens::GameScreen::Playing);
+        assert_eq!(engine.game.scene_name, "Niveau 2 : Crypte du Sanctuaire");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_audio_settings_are_clamped_and_applied() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+
+        // Volume hors bornes : borné, et appliqué à la sortie audio.
+        let applied = engine.set_audio_settings(4.0, true);
+        assert_eq!(applied.volume, 1.0);
+        assert!(applied.muted);
+        assert!((engine.game.audio.master_volume() - 1.0).abs() < f32::EPSILON);
+        assert!(engine.game.audio.is_muted());
+
+        let clamped_low = engine.set_audio_settings(-1.0, false);
+        assert_eq!(clamped_low.volume, 0.0);
+        assert!(!clamped_low.muted);
+        assert_eq!(engine.audio_settings(), clamped_low);
     }
 
     #[test]
@@ -2671,5 +3048,148 @@ mod tests {
         assert!(!engine.delete_kvl_graph("../../evil.kvl.json"));
         assert!(engine.delete_kvl_graph(&path));
         assert!(!engine.game.kvl_graphs.contains_key(&path));
+    }
+}
+
+#[cfg(test)]
+mod ai_edit_tests {
+    use super::*;
+
+    /// Première entité dotée d'un rendu 2D (cible sûre pour une édition de couleur).
+    fn first_drawn_entity(engine: &NativeEngine) -> Option<(usize, u32)> {
+        engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.renderable.is_some())
+            .map(|entity| (entity.id, entity.renderable.as_ref().expect("rendu").color))
+    }
+
+    #[test]
+    fn context_reports_selection_scene_and_tool() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let Some((id, _)) = first_drawn_entity(&engine) else {
+            panic!("la scène de démonstration doit contenir une entité dessinée");
+        };
+        engine.select_entity(id);
+
+        let context = engine.ai_edit_context();
+        assert_eq!(context.scene_id, engine.game.scene_name);
+        assert_eq!(context.selection, vec![crate::ai_edit::TargetRef::EntityId(id)]);
+        assert!(!context.active_tool.is_empty());
+    }
+
+    #[test]
+    fn preview_without_selection_is_explicit() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        engine.game.editor.selected = crate::editor::SelectedEntity::None;
+        let error = engine.ai_edit_preview("mets-le en rouge").expect_err("sans sélection");
+        assert!(error.contains("sélection"), "message : {error}");
+    }
+
+    #[test]
+    fn template_preview_then_apply_then_restore() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let Some((id, _)) = first_drawn_entity(&engine) else {
+            panic!("scène de démonstration vide");
+        };
+        engine.select_entity(id);
+
+        let proposal = engine
+            .ai_edit_preview("mets-le en rouge")
+            .expect("aperçu")
+            .expect("le template doit résoudre cette instruction");
+        assert!(!proposal.preview.changes.is_empty());
+        // L'aperçu ne modifie rien.
+        let before = engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
+        let applied = engine.ai_edit_apply(&proposal).expect("application");
+        let after = engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
+        assert_ne!(before, after, "la couleur a changé");
+        assert_eq!(after, Some(0x00DC2626));
+        // La sélection survit à l'application (édition enchaînable).
+        assert_eq!(engine.get_selected_entity_id(), Some(id));
+
+        let report: serde_json::Value = serde_json::from_str(&applied.0).expect("rapport JSON");
+        assert!(report.get("transaction_id").is_some());
+        assert!(report.get("changes").is_some());
+    }
+
+    #[test]
+    fn llm_ops_are_revalidated_by_the_engine() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let Some((id, color)) = first_drawn_entity(&engine) else {
+            panic!("scène vide");
+        };
+        let new_color = color ^ 0x0000FF;
+        let raw = format!(
+            r#"[{{"op":"update_entity","target":{{"entity_id":{id}}},"patch":{{"color":{new_color}}}}}]"#
+        );
+        let proposal = engine.ai_edit_propose(&raw).expect("proposition");
+        engine.ai_edit_apply(&proposal).expect("application");
+        let applied_color = engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
+        assert_eq!(applied_color, Some(new_color));
+    }
+
+    #[test]
+    fn unknown_field_from_llm_is_rejected() {
+        let engine = NativeEngine::init().expect("init moteur");
+        let Some((id, _)) = first_drawn_entity(&engine) else {
+            panic!("scène vide");
+        };
+        let raw = format!(
+            r#"[{{"op":"set_entity_property","target":{{"entity_id":{id}}},"path":"couleur_magique","value":{{"type":"int","value":1}}}}]"#
+        );
+        let error = engine.ai_edit_propose(&raw).expect_err("champ inconnu");
+        assert!(error.contains("propriété inconnue"), "message : {error}");
+    }
+
+    #[test]
+    fn restore_undoes_an_applied_edit() {
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let Some((id, color)) = first_drawn_entity(&engine) else {
+            panic!("scène vide");
+        };
+        let before_json = engine.export_project_json();
+        engine.select_entity(id);
+
+        let proposal = engine
+            .ai_edit_preview("mets-le en rouge")
+            .expect("aperçu")
+            .expect("template");
+        engine.ai_edit_apply(&proposal).expect("application");
+        engine.ai_edit_restore(&before_json).expect("restauration");
+
+        let restored = engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
+        assert_eq!(restored, Some(color));
+    }
+
+    #[test]
+    fn parse_ai_ops_accepts_list_and_wrapped_forms() {
+        let list = parse_ai_ops(r#"[{"op":"set_scene_setting","key":"objective","value":{"type":"string","value":"GAGNER"}}]"#);
+        assert_eq!(list.expect("liste").len(), 1);
+        let wrapped = parse_ai_ops(r#"{"ops":[{"op":"set_scene_setting","key":"name","value":{"type":"string","value":"Salle"}}]}"#);
+        assert_eq!(wrapped.expect("objet ops").len(), 1);
+        assert!(parse_ai_ops("[]").is_err());
+        assert!(parse_ai_ops("pas du json").is_err());
     }
 }

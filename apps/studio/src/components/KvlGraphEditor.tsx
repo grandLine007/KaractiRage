@@ -637,7 +637,7 @@ export const KvlGraphEditor: React.FC = () => {
                       onClick={() => setNodeFilter(key)}
                       className={`flex-1 px-1.5 py-1.5 rounded text-[10px] font-semibold transition ${nodeFilter === key ? 'bg-[#2e1065] text-[#f0abfc] border border-[#a855f7]' : 'text-[#94a3b8] hover:text-[#f8fafc] bg-[#150d27] border border-transparent'}`}
                     >
-                      {label} <span className="opacity-70">({countByFlavor[key]})</span>
+                      {label} <span>({countByFlavor[key]})</span>
                     </button>
                   ))}
                 </div>

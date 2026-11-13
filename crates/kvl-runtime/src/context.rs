@@ -36,10 +36,16 @@ impl ExecutionContext {
     }
 
     pub fn record_step(&mut self, node_id: impl Into<String>, node_name: impl Into<String>, msg: impl Into<String>) {
+        // Sur wasm32-unknown-unknown, `SystemTime::now()` panique (non implémenté) :
+        // une simple pièce ramassée ferait planter le jeu exporté. La télémétrie n'a pas
+        // besoin d'horodatage wall-clock pour rester utile : on garde un compteur monotone.
+        #[cfg(not(target_arch = "wasm32"))]
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros();
+        #[cfg(target_arch = "wasm32")]
+        let now: u128 = (self.steps_count as u128) * 16_667;
 
         self.execution_log.push(ExecutionTraceStep {
             node_id: node_id.into(),

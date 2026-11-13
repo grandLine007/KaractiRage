@@ -9,6 +9,7 @@ import { SpawnPalette } from './components/SpawnPalette';
 import { SuggestionPanel } from './components/SuggestionPanel';
 import { ToastCenter, type Toast } from './components/ToastCenter';
 import { AiAssistantModal } from './components/AiAssistantModal';
+import { InlineAiBar } from './components/InlineAiBar';
 import { ProjectHubModal } from './components/ProjectHubModal';
 import { ArchetypesModal } from './components/ArchetypesModal';
 import { RecipeWizardModal } from './components/RecipeWizardModal';
@@ -16,6 +17,7 @@ import { KvlGraphEditor } from './components/KvlGraphEditor';
 import { PxlArtWorkspace } from './components/PxlArtWorkspace';
 import { VectorWorkspace } from './components/VectorWorkspace';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { SaveSlotsPanel, SAVE_SLOTS_PANEL_ID } from './components/SaveSlotsPanel';
 import { useStudioState } from './hooks/useStudioState';
 import {
   launchArchetypeGame,
@@ -38,10 +40,14 @@ import {
   spawn3dPreset,
   setEditorMode,
   getEngineStatus,
+  getAudioSettings,
+  setAudioSettings,
+  getExportPreflight,
   type StudioEntitySummary,
 } from './services/engineBridge';
-import { Check, X, HelpCircle } from 'lucide-react';
+import { Check, X, HelpCircle, Volume2, VolumeX, Save } from 'lucide-react';
 import type { ProjectEntry } from './services/projectBridge';
+import { getAiEditContext, undoAiEdit, type AiApplyReport } from './services/aiEditBridge';
 import { prewarm3D } from './render3d/prewarm';
 
 export function App() {
@@ -59,6 +65,19 @@ export function App() {
   const [pendingAiPatch, setPendingAiPatch] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  // Panneau « Sauvegardes » (non modal, ancré au-dessus du pied de page).
+  const [isSavePanelOpen, setIsSavePanelOpen] = useState(false);
+  // Pile des couches ancrées empilables (barre IA inline + panneau Sauvegardes).
+  // `null` = aucune couche ouverte ; sinon la **dernière ouverte** est au sommet.
+  // Échap ferme le sommet, puis la couche restante, et seulement ensuite les modales.
+  const [lastOpenedLayer, setLastOpenedLayer] = useState<'ai' | 'save' | null>(null);
+  // Réglages audio (persistés hors partie) : lus au démarrage, écrits à chaque changement.
+  const [audio, setAudioState] = useState({ volume: 0.5, muted: false });
+  // Édition IA inline : barre ancrée (pas de modale) + dernière transaction annulable.
+  const [isAiBarOpen, setIsAiBarOpen] = useState(false);
+  const [aiFieldHint, setAiFieldHint] = useState<string | null>(null);
+  const [aiSceneId, setAiSceneId] = useState('scène courante');
+  const [lastAiTransaction, setLastAiTransaction] = useState<string | null>(null);
 
   const [metrics, setMetrics] = useState({
     fps: 60,
@@ -82,6 +101,10 @@ export function App() {
   }, [editorState]);
 
   const toastIdRef = useRef(0);
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
+  // Déclencheur ✦ de la barre IA, mémorisé à l'ouverture pour rendre le focus
+  // au bouton d'origine à la fermeture (Ctrl+K n'a pas de bouton propre).
+  const aiTriggerRef = useRef<HTMLElement | null>(null);
   const pushToast = useCallback((message: string, kind: Toast['kind'] = 'info') => {
     const id = ++toastIdRef.current;
     setToasts(prev => [...prev, { id, message, kind }]);
@@ -90,6 +113,108 @@ export function App() {
   const dismissToast = useCallback((id: number) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
+
+  // Panneau Sauvegardes : fermeture + retour du focus au bouton d'ouverture (Échap).
+  // On ne retire du sommet de pile que si c'est bien cette couche qui y était :
+  // fermer le panneau ne doit pas « oublier » que la barre IA est plus récente.
+  const closeSavePanel = useCallback((restoreFocus = false) => {
+    setIsSavePanelOpen(false);
+    setLastOpenedLayer(prev => (prev === 'save' ? null : prev));
+    if (restoreFocus) saveButtonRef.current?.focus();
+  }, []);
+
+  // Ouverture / fermeture du panneau : c'est ici que la pile est mise à jour.
+  const toggleSavePanel = useCallback(() => {
+    if (isSavePanelOpen) {
+      closeSavePanel(false);
+    } else {
+      setIsSavePanelOpen(true);
+      setLastOpenedLayer('save');
+    }
+  }, [isSavePanelOpen, closeSavePanel]);
+
+  // Clic extérieur (hors bouton et hors panneau) : fermeture propre, sans voler le focus.
+  useEffect(() => {
+    if (!isSavePanelOpen) return;
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (saveButtonRef.current?.contains(target)) return;
+      if (document.getElementById(SAVE_SLOTS_PANEL_ID)?.contains(target)) return;
+      closeSavePanel(false);
+    }
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [isSavePanelOpen, closeSavePanel]);
+
+  // --- Édition IA inline (barre ancrée) -------------------------------------
+  const openAiEdit = useCallback((field: string | null = null) => {
+    // Retient le déclencheur réel s'il s'agit d'une affordance ✦ (bouton de champ).
+    // Ctrl+K n'a pas de bouton propre : on ne mémorise pas le focus « incident »
+    // (ex. bouton de mode), le repli ci-dessous visera la première affordance ✦.
+    const active = document.activeElement;
+    aiTriggerRef.current =
+      active instanceof HTMLElement && active.matches('[data-testid^="ai-sparkle"]')
+        ? active
+        : null;
+    setAiFieldHint(field);
+    setIsAiBarOpen(true);
+    setLastOpenedLayer('ai');
+    // Le nom de scène vient du contexte moteur, jamais d'une supposition côté UI.
+    void getAiEditContext().then(context => {
+      if (context?.scene_id) setAiSceneId(context.scene_id);
+    });
+  }, []);
+
+  // Rend le focus au déclencheur mémorisé ; à défaut, à la première affordance ✦
+  // visible (le raccourci Ctrl+K n'a pas de bouton propre), sinon au viewport.
+  const restoreAiFocus = useCallback(() => {
+    const trigger = aiTriggerRef.current;
+    aiTriggerRef.current = null;
+    window.setTimeout(() => {
+      if (trigger && trigger.isConnected) {
+        trigger.focus();
+        return;
+      }
+      const sparkle = document.querySelector<HTMLElement>('[data-testid^="ai-sparkle"]');
+      if (sparkle) {
+        sparkle.focus();
+        return;
+      }
+      document.querySelector<HTMLElement>('[data-testid="canvas-viewport"]')?.focus();
+    }, 0);
+  }, []);
+
+  const closeAiEdit = useCallback((restoreFocus = false) => {
+    setIsAiBarOpen(false);
+    setAiFieldHint(null);
+    setLastOpenedLayer(prev => (prev === 'ai' ? null : prev));
+    if (restoreFocus) restoreAiFocus();
+  }, [restoreAiFocus]);
+
+  useEffect(() => {
+    void getAudioSettings().then(settings => {
+      setAudioState({ volume: settings.volume, muted: settings.muted });
+    });
+  }, []);
+
+  const applyAudio = useCallback((volume: number, muted: boolean) => {
+    setAudioState({ volume, muted });
+    void setAudioSettings(volume, muted).then(settings => {
+      setAudioState({ volume: settings.volume, muted: settings.muted });
+    });
+  }, []);
+
+  const handleAiApplied = useCallback((report: AiApplyReport) => {
+    setLastAiTransaction(report.transaction_id);
+    // Fermeture applicative (pas via Échap) : pas de vol de focus, la barre disparaît.
+    closeAiEdit(false);
+    refresh();
+    pushToast(
+      `${report.changes.length} modification(s) appliquée(s) · Ctrl+Z pour annuler`,
+      'success'
+    );
+  }, [closeAiEdit, refresh, pushToast]);
 
   // Préchauffe la 3D (chunk three.js + sonde GPU) en tâche de fond : n'affecte pas
   // l'ouverture, mais rend la première bascule 3D quasi immédiate.
@@ -152,6 +277,36 @@ export function App() {
     setCurrentMode(mode);
   }, []);
 
+  // --- Sauvegarde / reprise de partie (panneau « Sauvegardes ») -------------
+
+  const handleGameSaved = useCallback((slot: number, message: string) => {
+    pushToast(
+      message || `Échec de la sauvegarde du slot ${slot + 1}.`,
+      message ? 'success' : 'error'
+    );
+  }, [pushToast]);
+
+  const handleGameLoaded = useCallback((slot: number, ok: boolean) => {
+    if (!ok) {
+      pushToast(`Slot ${slot + 1} vide ou illisible.`, 'error');
+      return;
+    }
+    closeSavePanel(false);
+    refresh();
+    pushToast(`Slot ${slot + 1} chargé : niveau et variables restaurés.`, 'success');
+  }, [closeSavePanel, refresh, pushToast]);
+
+  const handleGameResumed = useCallback((ok: boolean) => {
+    if (!ok) {
+      pushToast('Aucune sauvegarde récente à reprendre.', 'error');
+      return;
+    }
+    closeSavePanel(false);
+    applyMode('play');
+    refresh();
+    pushToast('Dernière sauvegarde reprise — retour en mode jeu.', 'success');
+  }, [applyMode, closeSavePanel, refresh, pushToast]);
+
   // Validation ou Rollback du Patch IA
   const handleAcceptAi = useCallback(() => {
     void acceptAiPatch();
@@ -171,10 +326,72 @@ export function App() {
     }));
   }, []);
 
-  // Gestion des raccourcis clavier globaux conformes aux spécifications
+  // Gestion des raccourcis clavier globaux conformes aux spécifications.
+  // Écoute en phase **capture** : le handler passe avant le listener Échap local de
+  // la barre IA (InlineAiBar), sinon l'ordre de fermeture serait décidé par l'ordre
+  // d'enregistrement des listeners au lieu de la pile des couches.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (['input', 'textarea'].includes((e.target as HTMLElement)?.tagName?.toLowerCase())) {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      // Les champs de saisie gardent leurs raccourcis ; Échap, lui, doit toujours
+      // pouvoir fermer la couche ouverte, même quand le focus est dans un champ.
+      if (['input', 'textarea'].includes(tag ?? '') && e.key !== 'Escape') {
+        return;
+      }
+
+      // 0. Échap + pile des couches ancrées : la plus récemment ouverte d'abord.
+      // `lastOpenedLayer` mémorise le sommet ; l'état réel (`is*Open`) évite de
+      // consommer un Échap sur une couche déjà fermée (ex. fermée au clic).
+      if (e.key === 'Escape') {
+        if (lastOpenedLayer === 'save' && isSavePanelOpen) {
+          e.preventDefault();
+          closeSavePanel(true);
+          return;
+        }
+        if (lastOpenedLayer === 'ai' && isAiBarOpen) {
+          e.preventDefault();
+          closeAiEdit(true);
+          return;
+        }
+        // Repli : le sommet est retombé à null mais une couche reste ouverte.
+        if (isSavePanelOpen) {
+          e.preventDefault();
+          closeSavePanel(true);
+          return;
+        }
+        if (isAiBarOpen) {
+          e.preventDefault();
+          closeAiEdit(true);
+          return;
+        }
+      }
+
+      // 0bis. Édition IA inline : Ctrl/⌘ K ouvre la barre ancrée (jamais une modale).
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        if (isAiBarOpen) {
+          closeAiEdit(true);
+          return;
+        }
+        // La barre n'est rendue qu'en mode Édition : sans ce basculement, Ctrl+K
+        // ouvrait l'état sans rien afficher quand on était en mode Jouer.
+        if (currentMode !== 'edit') applyMode('edit');
+        openAiEdit(null);
+        return;
+      }
+
+      // 0ter. Annulation de la dernière édition IA (une intention = une transaction).
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey && lastAiTransaction) {
+        e.preventDefault();
+        const transaction = lastAiTransaction;
+        setLastAiTransaction(null);
+        void undoAiEdit(transaction).then(ok => {
+          refresh();
+          pushToast(
+            ok ? 'Édition IA annulée.' : 'Annulation IA indisponible (session expirée).',
+            ok ? 'info' : 'error'
+          );
+        });
         return;
       }
 
@@ -210,6 +427,8 @@ export function App() {
       } else if (e.key === 'w' || e.key === 'W') {
         setIsWizardOpen(prev => !prev);
       } else if (e.key === 'Escape') {
+        // Les couches ancrées ont déjà été traitées en 0 : il ne reste que le
+        // bandeau de révision IA, puis les modales.
         if (pendingAiPatch) {
           handleRejectAi();
         } else {
@@ -241,9 +460,10 @@ export function App() {
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentMode, pendingAiPatch, handleAcceptAi, handleRejectAi, refresh, applyMode]);
+    // Capture : Échap doit passer avant les listeners locaux des couches ancrées.
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [currentMode, pendingAiPatch, handleAcceptAi, handleRejectAi, refresh, applyMode, isAiBarOpen, openAiEdit, closeAiEdit, lastAiTransaction, pushToast, isSavePanelOpen, closeSavePanel, lastOpenedLayer]);
 
   // --- Handlers d'édition connectés au moteur natif -------------------------
 
@@ -252,6 +472,8 @@ export function App() {
   }, [refresh]);
 
   const handleUpdateTransform = useCallback((id: number, x: number, y: number, w: number, h: number) => {
+    // Une édition manuelle désarme l'annulation IA : Ctrl+Z ne doit plus viser l'IA.
+    setLastAiTransaction(null);
     void updateEntityTransform(id, x, y, w, h, true).then(() => {
       refresh();
       pushToast('Position enregistrée (Ctrl+Z pour annuler).', 'success');
@@ -259,12 +481,14 @@ export function App() {
   }, [refresh, pushToast]);
 
   const handleDuplicate = useCallback((id: number) => {
+    setLastAiTransaction(null);
     void selectEntity(id)
       .then(() => duplicateSelectedEntity())
       .then(() => refresh());
   }, [refresh]);
 
   const handleDelete = useCallback((id: number) => {
+    setLastAiTransaction(null);
     void selectEntity(id)
       .then(() => deleteSelectedEntity())
       .then(ok => {
@@ -284,7 +508,10 @@ export function App() {
     void setBrushTile(tileId).then(() => refresh());
   }, [refresh]);
 
-  const handleUndo = useCallback(() => { void undo().then(() => refresh()); }, [refresh]);
+  const handleUndo = useCallback(() => {
+    setLastAiTransaction(null);
+    void undo().then(() => refresh());
+  }, [refresh]);
   const handleRedo = useCallback(() => { void redo().then(() => refresh()); }, [refresh]);
 
   const handleSave = useCallback(() => {
@@ -383,11 +610,23 @@ export function App() {
   };
 
   // Export Standalone HTML5 Universel (Commandement 9)
-  const handleExportStandalone = () => {
+  // Export précédé du **pré-vol** : un jeu incomplet est refusé avec la liste exacte,
+  // jamais exporté en silence.
+  const handleExportStandalone = async () => {
+    const preflight = await getExportPreflight();
+    if (!preflight.ok) {
+      pushToast(`Export refusé — ${preflight.summary || 'pré-vol en échec'}`, 'error');
+      setMetrics(prev => ({ ...prev, status: `⛔ Export refusé : ${preflight.summary}` }));
+      return;
+    }
+    const warnings = preflight.issues.filter(issue => issue.severity === 'warning');
+    if (warnings.length > 0) {
+      pushToast(`${warnings.length} avertissement(s) : ${warnings[0].message}`, 'info');
+    }
     void downloadStandaloneGame("MonJeuKaractiRage", "Créateur KaractiRage");
     setMetrics(prev => ({
       ...prev,
-      status: "📦 Fichier HTML5 Standalone téléchargé avec succès ! Jouable sans serveur ni compte."
+      status: "📦 Export HTML5 téléchargé (données + écrans). Runtime jouable embarqué : prévu en P6."
     }));
   };
 
@@ -399,7 +638,7 @@ export function App() {
         onModeChange={applyMode}
         onOpenHub={() => setIsHubOpen(true)}
         onOpenAiAssistant={() => setIsAiModalOpen(true)}
-        onExportStandalone={handleExportStandalone}
+        onExportStandalone={() => { void handleExportStandalone(); }}
       />
 
       {/* 2. Bandeau Flottant de Révision IA (Boucle de Confiance & Rollback en 1 clic) */}
@@ -412,7 +651,7 @@ export function App() {
           <div className="flex items-center gap-1.5 ml-2">
             <button
               onClick={handleAcceptAi}
-              className="flex items-center gap-1 px-3 py-1 bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold rounded-full transition shadow"
+              className="flex items-center gap-1 px-3 py-1 bg-[#047857] hover:bg-[#065f46] text-white text-xs font-bold rounded-full transition shadow"
               title="Valider définitivement (Entrée)"
             >
               <Check size={13} />
@@ -486,6 +725,23 @@ export function App() {
             </>
           )}
           </ErrorBoundary>
+
+          {/* Barre d'édition IA ancrée : le viewport reste visible et interactif. */}
+          {currentMode === 'edit' && (
+            <InlineAiBar
+              key={`${isAiBarOpen ? 'open' : 'closed'}-${aiFieldHint ?? 'none'}`}
+              open={isAiBarOpen}
+              fieldHint={aiFieldHint}
+              entity={selectedEntity}
+              sceneId={aiSceneId}
+              onClose={() => closeAiEdit(true)}
+              onApplied={handleAiApplied}
+              onOpenAssistant={() => {
+                closeAiEdit();
+                setIsAiModalOpen(true);
+              }}
+            />
+          )}
         </main>
 
         {/* Panneau Droit : Inspecteur (Visible en mode Studio) */}
@@ -495,17 +751,68 @@ export function App() {
             onUpdateTransform={handleUpdateTransform}
             onDuplicate={handleDuplicate}
             onDelete={handleDelete}
+            onAiEdit={openAiEdit}
           />
         )}
       </div>
 
       {/* 4. Barre de Statut Inférieure */}
-      <footer className="flex items-center justify-between gap-3 px-4 py-1.5 bg-[#0d0819] border-t border-[#2d1b4e] text-xs text-[#94a3b8] shrink-0">
+      <footer className="relative flex items-center justify-between gap-3 px-4 py-1.5 bg-[#0d0819] border-t border-[#2d1b4e] text-xs text-[#94a3b8] shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <span className="w-2 h-2 rounded-full bg-[#34d399] animate-pulse shrink-0" />
           <span className="font-medium text-[#cbd5e1] truncate">{metrics.status}</span>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          <button
+            ref={saveButtonRef}
+            onClick={toggleSavePanel}
+            className={`flex items-center justify-center w-6 h-6 rounded-[var(--radius-4)] transition ${
+              isSavePanelOpen
+                ? 'text-[#a855f7] bg-[#1e1338]'
+                : 'text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338]'
+            }`}
+            title={isSavePanelOpen ? 'Fermer les sauvegardes (Échap)' : 'Sauvegardes de partie'}
+            aria-label="Sauvegarde"
+            aria-haspopup="dialog"
+            aria-expanded={isSavePanelOpen}
+          >
+            <Save size={13} aria-hidden="true" />
+          </button>
+          {/* Panneau Sauvegardes (non modal) : juste après le bouton pour l'ordre de tabulation. */}
+          {isSavePanelOpen && (
+            <SaveSlotsPanel
+              isOpen={isSavePanelOpen}
+              onClose={() => closeSavePanel(true)}
+              onSaved={handleGameSaved}
+              onLoaded={handleGameLoaded}
+              onResumed={handleGameResumed}
+            />
+          )}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => applyAudio(audio.volume, !audio.muted)}
+              className="flex items-center justify-center w-6 h-6 rounded-[var(--radius-4)] text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338] transition"
+              title={audio.muted ? 'Réactiver le son' : 'Couper le son'}
+              aria-label={audio.muted ? 'Réactiver le son' : 'Couper le son'}
+              aria-pressed={audio.muted}
+            >
+              {audio.muted ? <VolumeX size={13} aria-hidden="true" /> : <Volume2 size={13} aria-hidden="true" />}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={Math.round(audio.volume * 100)}
+              onChange={event => applyAudio(Number(event.target.value) / 100, audio.muted)}
+              className="w-20 h-1 accent-[#a855f7] cursor-pointer"
+              aria-label="Volume général"
+              title={`Volume ${Math.round(audio.volume * 100)} %`}
+            />
+            <span className="text-[10px] text-[#94a3b8] w-7 tabular-nums" aria-hidden="true">
+              {Math.round(audio.volume * 100)}%
+            </span>
+          </div>
           <button
             onClick={() => setIsHelpOpen(true)}
             className="flex items-center gap-1 px-2 py-1 rounded-md text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338] transition"
@@ -515,7 +822,7 @@ export function App() {
             <HelpCircle size={13} />
             Aide clavier
           </button>
-          <span className="text-[#a855f7] font-semibold">KaractiRage Studio v0.2.0</span>
+          <span className="text-[#a855f7] font-semibold">KaractiRage Studio v{__APP_VERSION__}</span>
         </div>
       </footer>
 
@@ -537,6 +844,7 @@ export function App() {
             </div>
             <div className="p-4 text-xs text-[#94a3b8] font-mono space-y-1.5">
               <div className="flex justify-between"><span>Changer de mode</span><kbd>Ctrl+1…5</kbd></div>
+              <div className="flex justify-between"><span>Éditer avec l'IA (sélection)</span><kbd>Ctrl+K</kbd></div>
               <div className="flex justify-between"><span>Mode suivant</span><kbd>F6</kbd></div>
               <div className="flex justify-between"><span>Hub / IA / Recette</span><kbd>H / I / W</kbd></div>
               <div className="flex justify-between"><span>Outils sélection / pinceau / gomme</span><kbd>V / B / X</kbd></div>

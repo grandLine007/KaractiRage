@@ -8,7 +8,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { safeInvokeJson } from './ipc';
+import { safeInvoke, safeInvokeJson } from './ipc';
 
 export interface EngineBootStatus {
   state: 'booting' | 'ready' | 'failed';
@@ -231,6 +231,57 @@ export async function getEditorState(): Promise<StudioEditorState> {
   });
 }
 
+export interface ExportPreflightIssue {
+  severity: 'blocking' | 'warning';
+  code: string;
+  message: string;
+}
+
+export interface ExportPreflight {
+  ok: boolean;
+  issues: ExportPreflightIssue[];
+  summary: string;
+}
+
+/**
+ * Pré-vol d'export : liste les blocages (script/asset manquant) et les budgets.
+ * En cas d'indisponibilité, on **refuse** l'export (échec fermé) plutôt que de
+ * laisser passer un jeu potentiellement incomplet.
+ */
+export async function getExportPreflight(): Promise<ExportPreflight> {
+  const report = await safeInvokeJson<ExportPreflight>('engine_export_preflight', undefined, {
+    ok: false,
+    issues: [],
+    summary: 'pré-vol indisponible (moteur injoignable)',
+  });
+  return {
+    ok: report.ok === true,
+    issues: Array.isArray(report.issues) ? report.issues : [],
+    summary: typeof report.summary === 'string' ? report.summary : '',
+  };
+}
+
+export interface AudioSettings {
+  volume: number;
+  muted: boolean;
+}
+
+/** Réglages audio persistants (hors sauvegarde de partie). */
+export async function getAudioSettings(): Promise<AudioSettings> {
+  return await safeInvokeJson<AudioSettings>('engine_audio_settings', undefined, {
+    volume: 0.5,
+    muted: false,
+  });
+}
+
+export async function setAudioSettings(volume: number, muted: boolean): Promise<AudioSettings> {
+  return await safeInvokeJson<AudioSettings>(
+    'engine_set_audio_settings',
+    { volume, muted },
+    { volume, muted },
+  );
+}
+
 export async function selectEntity(id: number): Promise<boolean> {
   return await invoke('engine_select_entity', { id });
 }
@@ -276,6 +327,51 @@ export async function spawnEntityAtScreen(preset: string, sx: number, sy: number
 
 export async function saveScene(): Promise<boolean> {
   return await invoke('engine_save_scene');
+}
+
+// ---------------------------------------------------------------------------
+// Sauvegarde / reprise de partie (niveau + variables) — panneau « Sauvegardes »
+// ---------------------------------------------------------------------------
+
+/** Nombre de slots proposés par l'interface (0, 1, 2). */
+export const SAVE_SLOT_COUNT = 3;
+
+/**
+ * Sauvegarde l'état de jeu courant (niveau + variables) dans `slot`.
+ * Renvoie le chemin écrit, ou une chaîne vide si l'IPC échoue (mock / moteur absent).
+ */
+export async function saveGame(slot: number): Promise<string> {
+  try {
+    const path = await safeInvoke<string>('engine_save_game', { slot });
+    return typeof path === 'string' && path.length > 0 ? path : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Charge un slot de sauvegarde. `false` si l'IPC échoue ou si le slot est vide.
+ */
+export async function loadGame(slot: number): Promise<boolean> {
+  try {
+    const loaded = await safeInvoke<boolean>('engine_load_game', { slot });
+    return loaded === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reprend la sauvegarde la plus récente (projet, niveau et variables restaurés).
+ * `false` si aucune sauvegarde n'est disponible ou si l'IPC échoue.
+ */
+export async function resumeGame(): Promise<boolean> {
+  try {
+    const resumed = await safeInvoke<boolean>('engine_resume_game');
+    return resumed === true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

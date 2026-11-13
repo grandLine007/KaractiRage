@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::SystemTime;
 
 use crate::project::KaractiProject;
 use crate::recipe::{GameDimension, GameGenre};
@@ -264,29 +266,57 @@ struct RegistryFile {
     recent: Vec<String>,
 }
 
+/// Nom du répertoire de données relatif à l'utilisateur (`.karactirage`).
+///
+/// Constante partagée par les deux replis : le chemin relatif sous wasm et le
+/// chemin absolu sous les cibles natives.
+const FALLBACK_HOME_NAME: &str = ".karactirage";
+
+/// Repli de [`ProjectRegistry::home_dir`] quand `$KARACTI_HOME` est absent.
+///
+/// Sous `wasm32-unknown-unknown` il n'existe **ni** variable d'environnement
+/// exploitable **ni** répertoire temporaire : `std::env::temp_dir()` y panique
+/// (`RuntimeError: unreachable`, fonction non implémentée). Comme aucun accès
+/// disque n'est possible de toute façon, on renvoie un chemin **relatif inerte** :
+/// les lectures (`fs::read_to_string`, `Path::exists`, …) échouent proprement
+/// (`io::ErrorKind::Unsupported`) et les appelants retombent sur leurs défauts
+/// embarqués (`AudioSettings::default`, scène `include_str!`, etc.).
+#[cfg(target_arch = "wasm32")]
+fn fallback_home_dir() -> PathBuf {
+    PathBuf::from(FALLBACK_HOME_NAME)
+}
+
+/// Repli natif : `$HOME` (ou `$APPDATA`/`$USERPROFILE` sous Windows), puis le
+/// répertoire temporaire du système — comportement historique conservé.
+#[cfg(not(target_arch = "wasm32"))]
+fn fallback_home_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    let base = std::env::var("APPDATA")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from);
+    #[cfg(not(target_os = "windows"))]
+    let base = std::env::var("HOME").map(PathBuf::from);
+
+    match base {
+        Ok(b) if !b.as_os_str().is_empty() => b.join(FALLBACK_HOME_NAME),
+        _ => std::env::temp_dir().join(FALLBACK_HOME_NAME),
+    }
+}
+
 impl ProjectRegistry {
     /// Résout le répertoire de données KaractiRage.
     ///
     /// Priorité : `$KARACTI_HOME` → `$HOME/.karactirage` (ou `$APPDATA`/`$USERPROFILE`
-    /// sous Windows) → répertoire temporaire (repli sans écriture système).
+    /// sous Windows) → répertoire temporaire. Sous **wasm32**, il n'y a ni `$HOME`
+    /// ni `temp_dir()` : le repli est le chemin relatif `.karactirage` (voir
+    /// [`fallback_home_dir`]), ce qui rend l'initialisation du moteur sûre.
     pub fn home_dir() -> PathBuf {
         if let Ok(dir) = std::env::var("KARACTI_HOME") {
             if !dir.trim().is_empty() {
                 return PathBuf::from(dir);
             }
         }
-
-        #[cfg(target_os = "windows")]
-        let base = std::env::var("APPDATA")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .map(PathBuf::from);
-        #[cfg(not(target_os = "windows"))]
-        let base = std::env::var("HOME").map(PathBuf::from);
-
-        match base {
-            Ok(b) if !b.as_os_str().is_empty() => b.join(".karactirage"),
-            _ => std::env::temp_dir().join(".karactirage"),
-        }
+        fallback_home_dir()
     }
 
     /// Ouvre (ou initialise) le registre dans le répertoire par défaut.
@@ -349,6 +379,15 @@ impl ProjectRegistry {
     /// Découvre les projets et scènes de démonstration dans les sources par défaut.
     pub fn scan_default_sources(&self) -> Vec<ProjectEntry> {
         let mut dirs: Vec<PathBuf> = scene_source_dirs();
+        // Projets livrés avec le dépôt (jeu de référence P1, modèles, tutoriels).
+        for candidate in [
+            PathBuf::from("assets/projects"),
+            PathBuf::from(format!("{}/../../assets/projects", env!("CARGO_MANIFEST_DIR"))),
+        ] {
+            if candidate.exists() && !dirs.contains(&candidate) {
+                dirs.push(candidate);
+            }
+        }
         let home_projects = self.home.join("projects");
         if !dirs.contains(&home_projects) {
             dirs.push(home_projects);
@@ -606,11 +645,23 @@ pub fn slugify(input: &str) -> String {
     }
 }
 
+/// Horodatage UNIX courant (secondes).
+///
+/// Sous `wasm32-unknown-unknown`, `SystemTime::now()` **panique** (aucune horloge
+/// système dans la std) : un horodatage nul est préférable à un crash. Ce chemin
+/// n'est pas atteint au démarrage (il ne sert qu'à la création de projet).
 fn now_epoch_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
 }
 
 /// Formate une taille en octets de manière lisible (« 36 Ko », « 1.2 Mo »).
@@ -664,9 +715,59 @@ mod tests {
         dir
     }
 
+    /// Sérialise l'unique test qui manipule une variable d'environnement globale.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `home_dir()` doit rester utilisable quand le disque (et `temp_dir`) est
+    /// indisponible : `KARACTI_HOME` est prioritaire, et le repli wasm est un
+    /// chemin relatif constant — jamais `std::env::temp_dir()`, qui panique sur
+    /// `wasm32-unknown-unknown`.
     #[test]
-    fn test_slugify() {
-        assert_eq!(slugify("Mon Projet — Édition Finale!"), "mon-projet-édition-finale");
+    fn home_dir_ne_depend_pas_du_repertoire_temporaire() {
+        let _garde = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let ancien = std::env::var("KARACTI_HOME").ok();
+
+        std::env::set_var("KARACTI_HOME", "/tmp/karacti_home_override");
+        assert_eq!(
+            ProjectRegistry::home_dir(),
+            PathBuf::from("/tmp/karacti_home_override"),
+            "KARACTI_HOME doit court-circuiter le repli"
+        );
+
+        // Branche wasm : chemin relatif inerte, aucun appel à `temp_dir()`.
+        // Sous wasm le repli est sélectionné dès que `KARACTI_HOME` est absent.
+        assert_eq!(FALLBACK_HOME_NAME, ".karactirage");
+        #[cfg(target_arch = "wasm32")]
+        {
+            std::env::remove_var("KARACTI_HOME");
+            assert_eq!(ProjectRegistry::home_dir(), PathBuf::from(".karactirage"));
+        }
+
+        match ancien {
+            Some(valeur) => std::env::set_var("KARACTI_HOME", valeur),
+            None => std::env::remove_var("KARACTI_HOME"),
+        }
+    }
+
+    #[test]
+    fn default_sources_expose_the_shipped_reference_game() {
+        let home = temp_home("reference_scan");
+        let registry = ProjectRegistry::open_at(home.clone());
+        let entries = registry.scan_default_sources();
+
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.path.contains("jeu_reference.karacti")),
+            "le jeu de référence livré doit apparaître dans le Hub : {:?}",
+            entries.iter().map(|entry| entry.path.clone()).collect::<Vec<_>>()
+        );
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn test_slugify() {        assert_eq!(slugify("Mon Projet — Édition Finale!"), "mon-projet-édition-finale");
         assert_eq!(slugify("   "), "projet");
         assert_eq!(slugify("Odyssée 2D"), "odyssée-2d");
     }
@@ -815,6 +916,34 @@ mod tests {
         assert_eq!(m.status, EntryStatus::Missing);
 
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn new_project_config_accepte_le_payload_du_studio() {
+        // Contrat exact entre le Studio (services/projectBridge.ts) et le moteur.
+        // Ce test aurait attrapé « unknown variant 2D » au lieu de le laisser à l'utilisateur.
+        let payload = r#"{
+            "title": "Mon Jeu",
+            "genre": "adventure",
+            "dimension": "two_d",
+            "archetype": null,
+            "destination_dir": "",
+            "default_mode": "edit"
+        }"#;
+        let config: NewProjectConfig = serde_json::from_str(payload).expect("payload canonique");
+        assert_eq!(config.dimension, GameDimension::TwoD);
+        assert_eq!(config.genre, GameGenre::Adventure);
+
+        let historique = r#"{
+            "title": "Mon Jeu",
+            "genre": "adventure",
+            "dimension": "2D",
+            "destination_dir": "",
+            "default_mode": "edit"
+        }"#;
+        let legacy: NewProjectConfig =
+            serde_json::from_str(historique).expect("ancienne étiquette 2D acceptée par alias");
+        assert_eq!(legacy.dimension, GameDimension::TwoD);
     }
 }
 // __CHUNK_END__

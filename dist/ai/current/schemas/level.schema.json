@@ -243,6 +243,8 @@
     "AiGeneratedKvlAction": {
       "properties": {
         "action": {
+          "default": "",
+          "description": "Souvent omis par les petits modèles, qui placent l'effet dans `on_true_action`.",
           "type": "string"
         },
         "condition": {
@@ -285,8 +287,7 @@
         }
       },
       "required": [
-        "event",
-        "action"
+        "event"
       ],
       "type": "object"
     },

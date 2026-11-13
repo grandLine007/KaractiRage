@@ -77,7 +77,9 @@ function SceneThumbnail({ entry }: { entry: ProjectEntry }) {
   const bars = useMemo(() => {
     const n = Math.min(10, 4 + (entry.entity_count % 7));
     return Array.from({ length: n }, (_, i) => {
-      const h = 10 + ((seed >> (i % 16)) % 42);
+      // Décalage NON signé : `seed` est un u32, `>>` peut produire un négatif et
+      // donner une hauteur < 0 (SVG refusée, 9 erreurs console à l'ouverture du hub).
+      const h = 10 + ((seed >>> (i % 16)) % 42);
       return { x: 6 + i * 11, y: 62 - h, h };
     });
   }, [seed, entry.entity_count]);

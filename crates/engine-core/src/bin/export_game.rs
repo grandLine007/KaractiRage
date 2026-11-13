@@ -1,0 +1,119 @@
+//! Export d'un projet `.karacti` en HTML5, avec pré-vol bloquant.
+//!
+//! Usage :
+//! ```bash
+//! cargo run -p engine-core --bin export_game -- assets/projects/jeu_reference.karacti /tmp/jeu.html
+//! ```
+//!
+//! Sortie 0 = fichier écrit ; 1 = export refusé par le pré-vol (la liste est affichée) ;
+//! 2 = argument invalide. Utilisé par `apps/studio/scripts/export-smoke.mjs`.
+
+use std::process::ExitCode;
+
+use karactirage_engine::exporter::{
+    default_runtime_dir, load_runtime_manifest, StandaloneExporter,
+};
+use karactirage_engine::game::GameState;
+use karactirage_engine::project::KaractiProject;
+
+/// Scène de base servant à construire un `GameState` avant `load_project`.
+fn base_scene() -> &'static str {
+    if std::path::Path::new("assets/scenes/level_01.scene.json").exists() {
+        "assets/scenes/level_01.scene.json"
+    } else {
+        "../../assets/scenes/level_01.scene.json"
+    }
+}
+
+fn main() -> ExitCode {
+    let mut args = std::env::args().skip(1);
+    let (Some(project_path), Some(out_path)) = (args.next(), args.next()) else {
+        eprintln!("usage : export_game <projet.karacti> <sortie.html>");
+        return ExitCode::from(2);
+    };
+
+    let project = match KaractiProject::load_from_file(&project_path) {
+        Ok(project) => project,
+        Err(error) => {
+            eprintln!("projet illisible ({project_path}) : {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let title = project.metadata.title.clone();
+    let author = project.metadata.author.clone();
+
+    let mut game = match GameState::load_from_scene(base_scene()) {
+        Ok(game) => game,
+        Err(error) => {
+            eprintln!("scène de base illisible : {error}");
+            return ExitCode::from(2);
+        }
+    };
+    game.load_project(project);
+
+    let report = StandaloneExporter::preflight(&game);
+    for issue in &report.issues {
+        eprintln!("[{}] {} — {}", if issue.severity == karactirage_engine::exporter::PreflightSeverity::Blocking { "blocage" } else { "avertissement" }, issue.code, issue.message);
+    }
+    if !report.ok {
+        eprintln!("export refusé : {}", report.summary());
+        return ExitCode::from(1);
+    }
+
+    let html = match StandaloneExporter::export_html_checked(&game, &title, &author) {
+        Ok(html) => html,
+        Err(report) => {
+            eprintln!("export refusé : {}", report.summary());
+            return ExitCode::from(1);
+        }
+    };
+
+    if let Some(parent) = std::path::Path::new(&out_path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(error) = std::fs::write(&out_path, &html) {
+        eprintln!("écriture impossible ({out_path}) : {error}");
+        return ExitCode::from(2);
+    }
+
+    // Le runtime embarqué est ce qui rend le fichier jouable en file:// ; on
+    // l'annonce avec sa version et l'empreinte de son wasm, lues dans
+    // `runtime_manifest.json`. Sans manifeste, la ligne le dit explicitement
+    // plutôt que de laisser croire à un runtime à jour.
+    let runtime_embarque = html.contains("id=\"runtime-glue\"");
+    let manifeste = load_runtime_manifest(&default_runtime_dir());
+    let details_runtime = if runtime_embarque {
+        match &manifeste {
+            Some(manifeste) => {
+                let version = manifeste.engine_version.as_deref().unwrap_or("inconnue");
+                match manifeste.wasm_sha256.as_deref() {
+                    Some(sha) => format!("embarqué (moteur v{version}, wasm sha256 {sha})"),
+                    None => format!("embarqué (moteur v{version}, sha wasm inconnu)"),
+                }
+            }
+            None => "embarqué (version inconnue : manifeste absent, relancez scripts/build_wasm.sh)"
+                .to_string(),
+        }
+    } else {
+        "absent".to_string()
+    };
+    // Le paquet peut contenir plusieurs scènes : compter sur lui, pas sur l'état
+    // courant (sinon le résumé annonçait « 9 entités » pour un jeu à 3 niveaux).
+    let package = StandaloneExporter::create_package(&game, &title, &author);
+    let niveaux = package.scenes.len().max(1);
+    let entites: usize = if package.scenes.is_empty() {
+        package.entities.len()
+    } else {
+        package.scenes.iter().map(|scene| scene.entities.len()).sum()
+    };
+    println!(
+        "export OK — {} niveau(x), {} entités, {} graphes KVL, {} Ko, runtime {}, empreinte {}",
+        niveaux,
+        entites,
+        package.kvl_graphs.len(),
+        html.len() / 1024,
+        details_runtime,
+        StandaloneExporter::export_fingerprint(&html)
+    );
+    ExitCode::SUCCESS
+}

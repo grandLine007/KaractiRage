@@ -81,17 +81,33 @@
   outline-offset: 2px;
 }
 
-body {
-  background-color: var(--bg-deep);
-  color: var(--text-main);
-  overflow: hidden;
-  user-select: none;
-  font-size: 13px;
-  line-height: 1.4;
-  -webkit-font-smoothing: antialiased;
+/* Corps du document — dans `base` : `<body>` n'a aucune classe aujourd'hui, donc
+   aucun rendu ne change, mais un futur `text-*`/`bg-*`/`overflow-*` sur `<body>`
+   ne sera plus silencieusement ignoré (règle hors couche = gagnante sur utilities). */
+@layer base {
+  body {
+    background-color: var(--bg-deep);
+    color: var(--text-main);
+    overflow: hidden;
+    user-select: none;
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+  }
 }
 
-/* Titres : Space Grotesk, line-height 1,2 (UX-101). */
+/* Titres : Space Grotesk, interlignage serré 1,2 (UX-101).
+   VOLONTAIREMENT HORS COUCHE — décision mesurée, pas un oubli.
+   Cette règle masque bien `leading-*` et `tracking-*` sur les titres, mais la déplacer
+   dans `base` change le rendu actuel : les 32 titres portent un `text-xs/sm/base/lg`
+   (qui fixe aussi `line-height` via la valeur appariée) et 6 portent `tracking-wide`.
+   Mesure audit (35 captures, baseline inchangée) : 18 captures > 0,5 %, jusqu'à
+   +5,35 % (hub 1024×720, 4 titres qui grandissent), +0,79 % sur édition, et le
+   titre du header passe de 14 px/1,2 à 14 px/1,43 avec `tracking-wide` (+8 px de
+   large) → la nav se décale. Un simple `--tw-leading: 1.2` annule la dérive de
+   line-height mais pas celle de `tracking-wide`.
+   → À traiter comme une passe typographique délibérée (desserrer les titres,
+   régénérer la baseline), pas comme un correctif de cascade silencieux. */
 h1, h2, h3, h4, h5, h6 {
   font-family: 'Space Grotesk', 'Outfit', ui-sans-serif, sans-serif;
   line-height: 1.2;
@@ -114,66 +130,83 @@ h1, h2, h3, h4, h5, h6 {
   background: var(--accent-purple);
 }
 
-/* Badges & interactions */
-.badge-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+/* Badge « tag » : classe de composant, donc `@layer components` (déclarée par
+   `@import "tailwindcss"` avant `utilities`). Les 16 usages réels la combinent
+   uniquement avec `bg-*`/`text-*`/`border-*`/`truncate`/`max-w-*`, qui ne touchent
+   aucune des propriétés ci-dessous → rendu identique aujourd'hui, mais un futur
+   `text-[10px]`, `rounded-full` ou `px-3` sur un badge sera enfin respecté.
+   (Laissée hors couche, elle resterait ingérable : le hors couche gagne sur tout
+   utilitaire, donc les composants ne pourraient plus l'ajuster.) */
+@layer components {
+  .badge-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
 }
 
-button {
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  color: inherit;
-  font-family: inherit;
-  transition: all 0.15s ease-in-out;
+/* Resets de contrôles natifs — IMPÉRATIVEMENT dans `@layer base` (correctif couches).
+   Cause : Tailwind v4 émet notre CSS d'auteur APRÈS `@layer utilities`, donc une règle
+   non layerée est « hors couche » et gagne sur TOUT utilitaire (`bg-*`, `text-*`,
+   `border-*`, y compris les variantes `hover:`/`disabled:`), quelle que soit sa
+   spécificité — une déclaration hors couche bat toute déclaration d'une couche.
+   Ici, base est déclarée AVANT utilities par `@import "tailwindcss"` : le rendu par
+   défaut reste identique (fond transparent, bordure nulle, cursor pointer, focus
+   visible) mais les utilitaires reprennent la main dès qu'ils sont présents.
+   À conserver : `cursor`, `transition`, `:active` et le reset de bordure servent à
+   neutraliser l'apparence native des boutons macOS/Chrome. */
+@layer base {
+  button {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    transition: all 0.15s ease-in-out;
+  }
+
+  button:active {
+    transform: scale(0.98);
+  }
+
+  input, textarea, select {
+    font-family: inherit;
+    color: inherit;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  input:focus, textarea:focus, select:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.4);
+  }
 }
 
-button:active {
-  transform: scale(0.98);
-}
+/* Animations : AUCUNE définition locale de `.animate-spin` / `.animate-pulse`.
+   Ces noms sont déjà des utilitaires Tailwind v4 (`--animate-spin: spin 1s linear
+   infinite`, `--animate-pulse: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite`), émis
+   dans `@layer utilities`. Nos copies hors couche étaient strictement identiques mais
+   gagnaient sur les utilitaires : `motion-reduce:animate-none`, `duration-*` ou
+   `[animation-delay:*]` étaient inopérants. Supprimées → même `animation` calculée
+   (vérifié : « 1s linear infinite spin » / « 2s cubic-bezier(...) infinite pulse »),
+   cache-cache avec `@keyframes` évité (Tailwind émet `spin`/`pulse` à l'usage).
+   `.animate-bounce` (App.tsx) venait déjà de Tailwind. */
 
-input, textarea, select {
-  font-family: inherit;
-  color: inherit;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.15s ease;
-}
-
-input:focus, textarea:focus, select:focus {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.4);
-}
-
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-/* Mouvement réduit (UX-407) — désactive les animations quand le système le demande. */
+/* Mouvement réduit (UX-407) — désactive les animations quand le système le demande.
+   Cible les noms de classes présents dans le DOM (utilitaires Tailwind compris) ; le
+   `!important` hors couche est volontaire : c'est un plancher d'accessibilité, pas un
+   style de composant. */
 @media (prefers-reduced-motion: reduce) {
   .animate-spin,
   .animate-pulse,

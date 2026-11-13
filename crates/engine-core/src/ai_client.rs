@@ -163,11 +163,11 @@ pub struct AiGeneratedGamePayload {
     pub terrain: Option<AiGeneratedTerrain>,
     #[serde(default)]
     pub gameplay_loop: Option<AiGeneratedGameplayLoop>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_vec_or_default")]
     pub entities: Vec<AiGeneratedEntity>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_vec_or_default")]
     pub kvl_actions: Vec<AiGeneratedKvlAction>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_variables_tolerantes")]
     pub variables: Option<std::collections::HashMap<String, String>>,
 }
 
@@ -176,9 +176,9 @@ pub struct AiGeneratedGamePayload {
 pub struct AiGeneratedTerrain {
     #[serde(default = "default_theme")]
     pub theme: String, // "dungeon", "cyber", "forest", "lava_cave", "castle"
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_vec_or_default")]
     pub platforms: Vec<AiGeneratedPlatform>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_vec_or_default")]
     pub hazards: Vec<AiGeneratedHazard>,
 }
 
@@ -217,11 +217,11 @@ pub struct AiGeneratedHazard {
 /// Boucle de gameplay complète (Objectif, Condition de Victoire, Défaite)
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedGameplayLoop {
-    #[serde(default = "default_objective")]
+    #[serde(default = "default_objective", deserialize_with = "de_objective_or_default")]
     pub objective: String,
-    #[serde(default = "default_win_condition")]
+    #[serde(default = "default_win_condition", deserialize_with = "de_win_condition_or_default")]
     pub win_condition: String, // "CollectAllKeysThenExit", "DefeatBoss", "ReachGoal"
-    #[serde(default = "default_lose_condition")]
+    #[serde(default = "default_lose_condition", deserialize_with = "de_lose_condition_or_default")]
     pub lose_condition: String, // "PlayerHealthZero"
     #[serde(default)]
     pub target_item_name: Option<String>,
@@ -237,6 +237,37 @@ fn default_hazard_damage() -> f32 { 35.0 }
 fn default_objective() -> String { "Explorer et triompher de l'épreuve".to_string() }
 fn default_win_condition() -> String { "CollectAllKeysThenExit".to_string() }
 fn default_lose_condition() -> String { "PlayerHealthZero".to_string() }
+
+/// Tolère `null` (fréquent chez les petits LLM) en retombant sur la valeur par défaut.
+fn de_objective_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_else(default_objective))
+}
+
+fn de_win_condition_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_else(default_win_condition))
+}
+
+fn de_lose_condition_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_else(default_lose_condition))
+}
+
+/// Tolère `null` pour les tableaux (`entities`, `kvl_actions`, `platforms`, `hazards`).
+fn de_vec_or_default<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedEntity {
@@ -293,22 +324,216 @@ pub struct AiGeneratedEntity {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiGeneratedKvlAction {
     pub event: String,
+    /// Souvent omis par les petits modèles, qui placent l'effet dans `on_true_action`.
+    #[serde(default)]
     pub action: String,
     #[serde(default)]
     pub target_entity: Option<String>,
     #[serde(default)]
     pub condition: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_action_option_tolerante")]
     pub on_true_action: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_action_option_tolerante")]
     pub on_false_action: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_action_option_tolerante")]
     pub second_action: Option<String>,
 }
 
 fn default_zero() -> f32 { 0.0 }
 fn default_size() -> f32 { 32.0 }
 fn default_health() -> f32 { 3.0 }
+
+/// Plateforme minimale construite à partir d'un simple nom (réparation LLM).
+fn platform_from_name(name: &str) -> serde_json::Value {
+    serde_json::json!({ "name": name, "width": 400.0, "height": 24.0, "is_solid": true })
+}
+
+/// Piège minimal construit à partir d'un simple nom (réparation LLM).
+fn hazard_from_name(name: &str) -> serde_json::Value {
+    serde_json::json!({ "name": name, "width": 60.0, "height": 20.0, "damage": 35.0 })
+}
+
+/// Entité minimale construite à partir d'un simple nom (réparation LLM).
+fn entity_from_name(name: &str, index: usize) -> serde_json::Value {
+    let kind = if index == 0 { "player" } else { "item" };
+    serde_json::json!({ "name": name, "kind": kind })
+}
+
+/// Remplace un tableau de chaînes par un tableau d'objets (si au moins une chaîne).
+fn strings_to_objects(list: &mut serde_json::Value, build: impl Fn(&str) -> serde_json::Value) {
+    let Some(arr) = list.as_array() else { return };
+    let rebuilt: Vec<serde_json::Value> = arr
+        .iter()
+        .filter_map(|v| v.as_str())
+        .map(build)
+        .collect();
+    if !rebuilt.is_empty() {
+        *list = serde_json::Value::Array(rebuilt);
+    }
+}
+
+/// Répare les écarts de forme fréquents des petits LLM avant la désérialisation :
+/// - `terrain` en tableau de chaînes → objet `{ platforms, hazards }` ;
+/// - `platforms` / `hazards` en tableau de chaînes → tableau d'objets ;
+/// - `entities` en tableau de chaînes → tableau d'objets ;
+/// - `variables` en tableau `{name, type}` (ou de chaînes) → objet `{ name: "0" }`.
+/// Normalise une action KVL qui peut arriver sous deux formes selon le modèle :
+/// - une chaîne (`"SetVariable:score:1"`),
+/// - un objet (`{"event":"SetVariable","name":"score","value":1}`).
+///
+/// Les petits modèles produisent très souvent la seconde : la refuser faisait échouer
+/// tout le payload (« invalid type: map, expected a string »).
+fn action_value_to_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Object(obj) => {
+            if let Some(action) = obj.get("action").and_then(|v| v.as_str()) {
+                return Some(action.to_string());
+            }
+            let event = obj.get("event").and_then(|v| v.as_str())?;
+            let name = obj.get("name").and_then(|v| v.as_str());
+            let argument = obj.get("value").map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            });
+            Some(match (name, argument) {
+                (Some(n), Some(v)) => format!("{event}:{n}:{v}"),
+                (Some(n), None) => format!("{event}:{n}"),
+                (None, Some(v)) => format!("{event}:{v}"),
+                (None, None) => event.to_string(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Désérialise une action optionnelle en acceptant chaîne **ou** objet.
+fn de_action_option_tolerante<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.as_ref().and_then(action_value_to_string))
+}
+
+/// Désérialise `variables` en acceptant nombres, booléens et chaînes.
+fn de_variables_tolerantes<'de, D>(
+    deserializer: D,
+) -> Result<Option<std::collections::HashMap<String, String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(serde_json::Value::Object(map)) = value else {
+        return Ok(None);
+    };
+    let mut out = std::collections::HashMap::new();
+    for (key, raw) in map {
+        let text = match raw {
+            serde_json::Value::String(s) => s,
+            serde_json::Value::Null => continue,
+            other => other.to_string(),
+        };
+        out.insert(key, text);
+    }
+    Ok(Some(out))
+}
+
+pub fn repair_llm_payload(value: &mut serde_json::Value) {
+    let Some(root) = value.as_object_mut() else { return };
+
+    if let Some(terrain) = root.get_mut("terrain") {
+        if let Some(arr) = terrain.as_array() {
+            let platforms: Vec<serde_json::Value> = arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(platform_from_name)
+                .collect();
+            *terrain = serde_json::json!({ "platforms": platforms, "hazards": [] });
+        } else if let Some(t) = terrain.as_object_mut() {
+            if let Some(platforms) = t.get_mut("platforms") {
+                strings_to_objects(platforms, platform_from_name);
+            }
+            if let Some(hazards) = t.get_mut("hazards") {
+                strings_to_objects(hazards, hazard_from_name);
+            }
+        }
+    }
+
+    if let Some(entities) = root.get_mut("entities") {
+        if let Some(arr) = entities.as_array() {
+            let rebuilt: Vec<serde_json::Value> = arr
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| v.as_str().map(|name| entity_from_name(name, i)))
+                .collect();
+            if !rebuilt.is_empty() {
+                *entities = serde_json::Value::Array(rebuilt);
+            }
+        }
+    }
+
+    if let Some(actions) = root.get_mut("kvl_actions") {
+        if let Some(arr) = actions.as_array_mut() {
+            for action in arr.iter_mut() {
+                let Some(obj) = action.as_object_mut() else { continue };
+                for key in ["on_true_action", "on_false_action", "second_action"] {
+                    if let Some(nested) = obj.get(key).cloned() {
+                        if nested.is_object() {
+                            if let Some(text) = action_value_to_string(&nested) {
+                                obj.insert(key.to_string(), serde_json::Value::String(text));
+                            }
+                        }
+                    }
+                }
+                // Si `action` manque (cas fréquent : l'effet est dans on_true_action),
+                // on le dérive pour que le graphe KVL ait une action par défaut.
+                let action_vide = obj
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true);
+                if action_vide {
+                    let derivee = obj
+                        .get("on_true_action")
+                        .and_then(|v| action_value_to_string(v))
+                        .or_else(|| obj.get("second_action").and_then(|v| action_value_to_string(v)));
+                    if let Some(texte) = derivee {
+                        obj.insert("action".to_string(), serde_json::Value::String(texte));
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(variables) = root.get_mut("variables") {
+        // Un modèle écrit souvent `{"score": 0}` (nombre) alors que le schéma attend
+        // des chaînes : on convertit les scalaires au lieu de rejeter le payload.
+        if let Some(map) = variables.as_object_mut() {
+            let conversions: Vec<(String, serde_json::Value)> = map
+                .iter()
+                .filter(|(_, v)| !v.is_string() && !v.is_array())
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.to_string())))
+                .collect();
+            for (key, value) in conversions {
+                map.insert(key, value);
+            }
+        }
+        if let Some(arr) = variables.as_array() {
+            let mut map = serde_json::Map::new();
+            for item in arr {
+                if let Some(name) = item.as_str() {
+                    map.insert(name.to_string(), serde_json::Value::String("0".into()));
+                } else if let Some(name) = item.get("name").and_then(|n| n.as_str()) {
+                    map.insert(name.to_string(), serde_json::Value::String("0".into()));
+                }
+            }
+            if !map.is_empty() {
+                *variables = serde_json::Value::Object(map);
+            }
+        }
+    }
+}
 
 /// Spécification de référence universelle KaractiRage intégrée à la compilation
 pub const KARACTI_AI_SPECIFICATION_EMBEDDED: &str = include_str!("../../../KARACTI_AI_SPEC.md");
@@ -328,19 +553,20 @@ pub fn get_karactirage_system_prompt() -> String {
 /// Prompt système haute densité et ultra-rapide optimisé pour les modèles locaux (LM Studio, Ollama)
 pub fn get_karactirage_compact_system_prompt() -> String {
     r##"You are the Lead Game Architect & Technical Artist for KaractiRage 2D engine.
-CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdown, no ```json codeblocks) conforming strictly to this schema:
+CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdown, no ```json codeblocks) conforming strictly to this schema. NEVER output null for any string field — always use the default string values shown in the example.
 {
   "title": "Level Title",
   "description": "Short narrative description",
   "primary_genre": "Platformer",
   "terrain": {
+    "theme": "dungeon",
     "platforms": [{"x": -200, "y": -100, "width": 400, "height": 24, "color_hex": "#334155"}],
     "hazards": [{"x": 0, "y": -150, "width": 60, "height": 20, "kind": "lava", "color_hex": "#EF4444"}]
   },
   "gameplay_loop": {
     "objective": "Mission objective text",
     "win_condition": "DefeatBoss",
-    "loss_condition": "PlayerHealthZero"
+    "lose_condition": "PlayerHealthZero"
   },
   "entities": [
     {
@@ -380,14 +606,15 @@ CRITICAL: Keep internal thinking under 30 words. Output ONLY raw JSON (no markdo
       "action": "PlaySound:victory_bell",
       "target_entity": "Boss_Demon"
     }
-  ]
+  ],
+  "variables": { "score": "0", "objective": "Mission objective text" }
 }
 
 Available sprite_archetype values: "ninja", "knight", "drone", "slime", "skull", "boss", "chest", "key", "potion", "portal", "coin", "spikes".
 Available sprite_asset values (pixel-art pxl prégénéré): "coin", "potion", "key", "chest", "door", "platform", "spikes", "crate", "plate", "boss", "wall". Use "sprite_frame" (ex: "coin") with "sprite_asset":"chars" to pick a frame from the atlas.
 Available movement values: "patrol", "chase", "none".
 Available win_condition values: "DefeatBoss", "CollectAllKeysThenExit", "SurviveTimer".
-Available loss_condition values: "PlayerHealthZero", "TimeOut".
+Available lose_condition values: "PlayerHealthZero", "TimeOut".
 Output raw JSON only."##.to_string()
 }
 
@@ -681,7 +908,8 @@ impl AiClient {
         Ok(content.to_string())
     }
 
-    /// Nettoie les balises markdown (```json ... ```) et extrait le JSON valide
+    /// Nettoie les balises markdown (```json ... ```), répare les écarts de forme
+    /// des petits LLM, puis désérialise le payload.
     pub fn parse_llm_json_response(raw: &str) -> Result<AiGeneratedGamePayload, String> {
         let trimmed = raw.trim();
         let json_str = if let Some(start) = trimmed.find('{') {
@@ -694,7 +922,10 @@ impl AiClient {
             trimmed
         };
 
-        serde_json::from_str::<AiGeneratedGamePayload>(json_str)
+        let mut value: serde_json::Value = serde_json::from_str(json_str)
+            .map_err(|e| format!("JSON du modèle syntaxiquement invalide : {} (Extrait: '{}')", e, json_str))?;
+        repair_llm_payload(&mut value);
+        serde_json::from_value::<AiGeneratedGamePayload>(value)
             .map_err(|e| format!("Échec de parsing JSON du modèle : {} (Extrait: '{}')", e, json_str))
     }
 
@@ -994,7 +1225,7 @@ Good luck!
     #[test]
     fn test_compact_prompt_has_no_ghost_values() {
         let prompt = get_karactirage_compact_system_prompt();
-        for ghost in ["OnEntityDefeated", "WinGame", "\"jump\"", "SetObjective"] {
+        for ghost in ["OnEntityDefeated", "WinGame", "\"jump\"", "SetObjective", "loss_condition"] {
             assert!(
                 !prompt.contains(ghost),
                 "valeur fantôme encore dans le prompt compact : {ghost}"
@@ -1003,6 +1234,60 @@ Good luck!
         assert!(prompt.contains("PlayerHealthZero"));
         assert!(prompt.contains("OnBossDefeated"));
         assert!(prompt.contains("PlaySound:victory_bell"));
+        // Le champ du schéma est bien `lose_condition` (et l'exemple inclut `variables`).
+        assert!(prompt.contains("lose_condition"));
+        assert!(prompt.contains("\"variables\""));
+    }
+
+    #[test]
+    fn parse_llm_json_response_tolerates_null_gameplay_loop_fields() {
+        // Un petit LLM émet souvent `null` au lieu des valeurs par défaut : on ne doit
+        // pas échouer, mais retomber sur les défauts (objective/win/lose).
+        let raw = r#"{
+            "title": "Wanderer",
+            "description": "A simple 2D platform.",
+            "gameplay_loop": {
+                "objective": null,
+                "win_condition": null,
+                "lose_condition": null
+            },
+            "entities": [],
+            "kvl_actions": []
+        }"#;
+        let parsed = AiClient::parse_llm_json_response(raw).expect("parsing tolérant au null");
+        let loop_spec = parsed.gameplay_loop.expect("gameplay_loop présent");
+        assert_eq!(loop_spec.objective, "Explorer et triompher de l'épreuve");
+        assert_eq!(loop_spec.win_condition, "CollectAllKeysThenExit");
+        assert_eq!(loop_spec.lose_condition, "PlayerHealthZero");
+    }
+
+    #[test]
+    fn parse_llm_json_response_repairs_string_arrays_and_variables() {
+        // Formes approximatives fréquentes : `platforms: ["grass"]`,
+        // `entities: ["Player", …]`, `variables: [{"name","type"}]`.
+        let raw = r#"{
+            "title": "Garden of Whispers",
+            "description": "Explore a lush garden.",
+            "terrain": { "platforms": ["grass", "stone"], "hazards": [] },
+            "entities": ["Player", "Flower", "Base"],
+            "variables": [ { "name": "collected_flowers", "type": "int" }, { "name": "score", "type": "int" } ],
+            "kvl_actions": []
+        }"#;
+        let parsed = AiClient::parse_llm_json_response(raw).expect("parsing avec réparation");
+
+        let terrain = parsed.terrain.expect("terrain présent");
+        assert_eq!(terrain.platforms.len(), 2);
+        assert_eq!(terrain.platforms[0].name, "grass");
+        assert_eq!(terrain.platforms[0].width, 400.0);
+
+        assert_eq!(parsed.entities.len(), 3);
+        assert_eq!(parsed.entities[0].name, "Player");
+        assert_eq!(parsed.entities[0].kind, "player");
+        assert_eq!(parsed.entities[1].kind, "item");
+
+        let vars = parsed.variables.expect("variables réparées");
+        assert_eq!(vars.get("collected_flowers").map(String::as_str), Some("0"));
+        assert_eq!(vars.len(), 2);
     }
 
     #[test]
@@ -1187,6 +1472,52 @@ mod contract_tests {
 
         assert!(checked >= 2, "Au moins 2 fixtures attendues dans {FIXTURES_DIR}");
         println!("[contrat] {checked} fixtures validées (moteur + sandbox)");
+    }
+
+    #[test]
+    fn parse_le_payload_reel_d_un_petit_modele() {
+        // Payload exact rapporté par l'utilisateur : actions en objets et variables
+        // numériques. Il échouait avec « invalid type: map, expected a string ».
+        let raw = r#"{
+  "title": "Gold Placement",
+  "description": "Collect and place gold pieces to complete the level.",
+  "primary_genre": "puzzle",
+  "terrain": ["platforms", "spikes"],
+  "gameplay_loop": {
+    "objective": "collect all GoldPiece",
+    "win_condition": "score >= 10",
+    "lose_condition": "health <= 0 or time limit reached"
+  },
+  "entities": ["GoldPiece", "Player", "Enemy"],
+  "kvl_actions": [
+    { "event": "OnItemUse", "action": "GiveItem:gold_piece:1" },
+    { "event": "AddScore", "condition": "score < 10", "on_true_action": { "event": "SetVariable", "name": "score", "value": 1 } },
+    { "event": "DamagePlayer", "condition": "enemy_attacked_player", "on_true_action": { "event": "SetVariable", "name": "health", "value": 0 } }
+  ],
+  "variables": { "score": 0, "health": 30 }
+}"#;
+
+        let payload = AiClient::parse_llm_json_response(raw).expect("le payload doit être accepté");
+        assert_eq!(payload.title, "Gold Placement");
+
+        let variables = payload.variables.expect("variables présentes");
+        assert_eq!(variables.get("score").map(String::as_str), Some("0"));
+        assert_eq!(variables.get("health").map(String::as_str), Some("30"));
+
+        assert_eq!(payload.kvl_actions.len(), 3);
+        assert_eq!(payload.kvl_actions[0].action, "GiveItem:gold_piece:1");
+        assert_eq!(
+            payload.kvl_actions[1].on_true_action.as_deref(),
+            Some("SetVariable:score:1"),
+            "une action objet doit être aplatie en action KVL"
+        );
+        assert_eq!(
+            payload.kvl_actions[2].on_true_action.as_deref(),
+            Some("SetVariable:health:0")
+        );
+        // `action` était absente dans le JSON du modèle : elle est dérivée de la branche VRAI.
+        assert_eq!(payload.kvl_actions[1].action, "SetVariable:score:1");
+        assert_eq!(payload.kvl_actions[2].action, "SetVariable:health:0");
     }
 }
 

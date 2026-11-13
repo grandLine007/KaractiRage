@@ -61,6 +61,12 @@ pub struct KaractiProject {
     pub settings: ProjectSettings,
     pub recipe: Option<KaractiGameRecipe>,
     pub scene: SceneData,
+    /// Niveaux embarqués du jeu, dans l'ordre de jeu.
+    ///
+    /// `scenes[0]` reflète toujours `scene` (compatibilité des projets mono-scène).
+    /// Un projet exporté reste ainsi **auto-porteur** : aucun chemin de fichier externe.
+    #[serde(default)]
+    pub scenes: Vec<SceneData>,
     pub kvl_graphs: HashMap<String, kvl_core::Graph>,
     #[serde(default)]
     pub kvl_variables: HashMap<String, kvl_core::Value>,
@@ -76,6 +82,12 @@ pub struct KaractiProject {
     pub lights: Vec<crate::subsystems::Light3DData>,
     #[serde(default)]
     pub levels: Vec<String>,
+    /// Manifeste d'assets du projet (P2.1) : provenance, hash et budget.
+    ///
+    /// `None` pour les projets antérieurs ou sans assets déclarés, qui restent
+    /// lisibles et exportables.
+    #[serde(default)]
+    pub assets: Option<crate::assets_manifest::AssetsManifest>,
 }
 
 impl KaractiProject {
@@ -174,6 +186,7 @@ impl KaractiProject {
             metadata,
             settings,
             recipe: None,
+            scenes: vec![scene.clone()],
             scene,
             kvl_graphs,
             kvl_variables,
@@ -183,6 +196,7 @@ impl KaractiProject {
             camera3d: None,
             lights: Vec::new(),
             levels: Vec::new(),
+            assets: None,
         }
     }
 
@@ -224,6 +238,7 @@ impl KaractiProject {
             metadata,
             settings,
             recipe: Some(recipe),
+            scenes: vec![scene.clone()],
             scene,
             kvl_graphs,
             kvl_variables,
@@ -233,6 +248,7 @@ impl KaractiProject {
             camera3d: None,
             lights: Vec::new(),
             levels: Vec::new(),
+            assets: None,
         }
     }
 
@@ -265,9 +281,31 @@ impl KaractiProject {
         serde_json::to_string_pretty(self)
     }
 
-    /// Désérialise un projet depuis une chaîne JSON
+    /// Désérialise un projet depuis une chaîne JSON.
+    ///
+    /// Les projets antérieurs à `scenes` (mono-scène) sont normalisés à la lecture :
+    /// `scenes` reçoit alors le niveau `scene`.
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+        let mut project: Self = serde_json::from_str(json)?;
+        project.normalize_levels();
+        Ok(project)
+    }
+
+    /// Garantit la cohérence entre `scene` et `scenes`.
+    ///
+    /// - `scenes` vide → il reçoit `scene` (projet mono-scène) ;
+    /// - sinon `scenes[0]` reflète `scene`, qui reste le niveau courant éditable.
+    pub fn normalize_levels(&mut self) {
+        if self.scenes.is_empty() {
+            self.scenes.push(self.scene.clone());
+        } else {
+            self.scenes[0] = self.scene.clone();
+        }
+    }
+
+    /// Nombre de niveaux du projet (au moins 1).
+    pub fn level_count(&self) -> usize {
+        self.scenes.len().max(1)
     }
 
     /// Sauvegarde le projet complet dans un fichier `.karacti`
@@ -305,6 +343,9 @@ impl KaractiProject {
             scene_name: self.scene.name.clone(),
             scene_objective: self.scene.objective.clone(),
             entities: self.scene.entities.clone(),
+            // Tous les niveaux voyagent dans le paquet : l'export HTML ne se
+            // limite plus à `scene`, qui reste la scène courante éditable.
+            scenes: self.scenes.clone(),
             kvl_graphs: self.kvl_graphs.clone(),
             initial_variables: self.kvl_variables.clone(),
             sprite_assets: std::collections::HashMap::new(),
@@ -314,7 +355,12 @@ impl KaractiProject {
 
     /// Génère le package standalone HTML5 souverain autonome du projet.
     pub fn to_standalone_html(&self) -> String {
-        self.to_game_package().generate_standalone_html()
+        // Même contrat que `StandaloneExporter::export_html` : si les artefacts wasm
+        // sont présents (`dist/pkg` ou `$KARACTI_RUNTIME_DIR`), l'export est jouable.
+        let runtime =
+            crate::exporter::load_embedded_runtime(&crate::exporter::default_runtime_dir());
+        self.to_game_package()
+            .generate_standalone_html_with_runtime(runtime.as_ref())
     }
 
     /// Exporte le projet selon une cible d'export (consomme `export_target`).
@@ -367,6 +413,50 @@ mod tests {
             assert!(p.scene.entities.iter().any(|e| e.tag == "player"), "L'archétype {} doit avoir un joueur", arch);
             assert!(p.recipe.is_some(), "L'archétype {} doit contenir sa recette déclarative", arch);
         }
+    }
+
+    #[test]
+    fn test_project_roundtrip_preserves_assets_manifest() {
+        let mut project = KaractiProject::new_empty("Manifeste", "Auteur", GameGenre::Platformer);
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "hero_idle".to_string(),
+                kind: crate::assets_manifest::AssetKind::Sprite,
+                path: "assets/sprites/hero.png".to_string(),
+                bytes: 12,
+                hash: crate::ai_dictionary::hash_text(b"png-hero-idle"),
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".to_string()),
+                    created_at: "2026-11-11".to_string(),
+                },
+                dimensions: Some((32, 48)),
+                duration_ms: None,
+            })
+            .expect("entrée acceptée");
+        project.assets = Some(manifeste.clone());
+
+        let json = project.to_json().expect("sérialisation JSON");
+        let loaded = KaractiProject::from_json(&json).expect("désérialisation JSON");
+        assert_eq!(loaded.assets, Some(manifeste), "le manifeste traverse le JSON");
+    }
+
+    #[test]
+    fn test_project_without_assets_field_stays_readable() {
+        let project = KaractiProject::new_empty("Héritage", "Auteur", GameGenre::Platformer);
+        let mut valeur: serde_json::Value =
+            serde_json::to_value(&project).expect("projet sérialisable");
+        valeur
+            .as_object_mut()
+            .expect("objet JSON")
+            .remove("assets");
+
+        let loaded = KaractiProject::from_json(&valeur.to_string()).expect("projet relu");
+        assert!(
+            loaded.assets.is_none(),
+            "un projet sans manifeste reste lisible (None)"
+        );
     }
 
     #[test]
