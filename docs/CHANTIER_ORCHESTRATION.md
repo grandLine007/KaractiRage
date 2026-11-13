@@ -161,6 +161,15 @@ est vide — le monde est figé sans surcouche de départ.
 rectangles colorés. `from_scene_data` résout `SvgRef` sur disque, échoue en wasm, et met
 `vector_sprite = None`. Le paquet n'embarque aucune source SVG.
 
+## 3duodecies. Vague 12 — en cours (finitions export + performance)
+
+| Agent | Tâche | Périmètre | Critère de sortie |
+|---|---|---|---|
+| agent-5 | Embarquer les `.anim.json` des sprites SVG | `vector.rs`, `exporter.rs`, `game.rs` | un clip personnalisé survit à l'import et aux reconstructions |
+| agent-6 | Instrumenter le temps de frame et ajouter `--expect-fps` | `standalone_template.html`, `export-smoke.mjs` | le jeu exporté est mesuré à ≥ 55 FPS, ou le smoke échoue avec la valeur réelle |
+
+**Réseau** : `crates.io` toujours en 403 — Tiled/Kira restent bloqués.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
