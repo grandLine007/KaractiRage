@@ -15,6 +15,7 @@
 | v0.3.6 | P1 (contenu) | Boss qui combat, export des 3 niveaux, pré-vol multi-niveaux | [RAPPORT_v0.3.6](RAPPORTS/RAPPORT_v0.3.6.md) | **prêt, non taguée** |
 | v0.3.7 | P1 (export) | Réinjection graphes/assets après niveau, ré-export des images | [RAPPORT_v0.3.7](RAPPORTS/RAPPORT_v0.3.7.md) | **prêt, non taguée** |
 | v0.3.8 | P1 (export) | Écrans d'interface embarqués, menu rendu, indicateur de niveau | [RAPPORT_v0.3.8](RAPPORTS/RAPPORT_v0.3.8.md) | **prêt, non taguée** |
+| v0.3.9 | P1 (UI jeu) | Menu/overlays recalculés, contrastes mesurés, HUD prouvé inchangé | [RAPPORT_v0.3.9](RAPPORTS/RAPPORT_v0.3.9.md) | **prêt, non taguée** |
 | v0.4.0 | P2 | Import Tiled, audio par fichiers, rechargement à chaud | à écrire | **bloqué réseau** |
 | v0.5.0 | P3 | Packs image/audio locaux (endpoint compatible OpenAI) | à écrire | à venir |
 | v0.6.0 | P4 | glTF, 3D déclarative, 2.5D, Blender MCP | à écrire | à venir |
