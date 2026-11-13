@@ -142,7 +142,7 @@ contenait 9 entités (niveau 1) alors que le jeu en compte 3.
 l'union du paquet. Le jeu de référence n'est pas touché, mais un jeu exporté avec des
 sprites importés perd ses images au niveau 2.
 
-## 3decies. Vague 10 — en cours (le jeu exporté a une interface)
+## 3decies. Vague 10 — terminée (le jeu exporté a une interface)
 
 | Agent | Tâche | Critère de sortie |
 |---|---|---|

@@ -39,19 +39,23 @@
  * `n` niveaux (`window.__karacti_levels`, posé par le template après l'import
  * du paquet). L'option implique `--expect-runtime`.
  *
+ * Avec `--expect-screens <n>`, le test vérifie que l'export embarque exactement
+ * `n` écrans UI déclaratifs (`window.__karacti_screens`, posé par le template
+ * après l'import du paquet). L'option implique `--expect-runtime`.
+ *
  * Usage :
  *   node scripts/export-smoke.mjs <chemin-vers-html> [--json] [--timeout <ms>]
  *                                 [--expect-runtime] [--expect-input]
- *                                 [--expect-levels <n>]
+ *                                 [--expect-levels <n>] [--expect-screens <n>]
  *   node scripts/export-smoke.mjs --help
  *
  * Options :
  *   --json           sort un objet JSON machine (rien d'autre sur stdout) :
  *                    { ok, entities, consoleErrors, pageErrors,
  *                      networkRequests, runtime, expectedRuntime, levels,
- *                      expectedLevels, nonBlackPixels, canvasColors,
- *                      expectedInput, inputDelta, inputPixelsBefore,
- *                      inputPixelsAfter, problems }
+ *                      expectedLevels, screens, expectedScreens,
+ *                      nonBlackPixels, canvasColors, expectedInput, inputDelta,
+ *                      inputPixelsBefore, inputPixelsAfter, problems }
  *   --timeout <ms>   délai global (défaut : 30 000 ms), pour ne jamais
  *                    suspendre un CI.
  *   --expect-runtime exige que le runtime WASM embarqué démarre et rende des
@@ -59,6 +63,7 @@
  *   --expect-input   exige que le clavier pilote le moteur : variation de
  *                    pixels > 2000 après un appui simulé sur `ArrowRight`.
  *   --expect-levels <n> exige que l'export embarque exactement `n` niveaux.
+ *   --expect-screens <n> exige que l'export embarque exactement `n` écrans UI.
  *   -h, --help       affiche cette aide.
  *
  * Codes de sortie :
@@ -111,8 +116,9 @@ erreur console, avec un paquet embarqué valide et un canvas.
 Options :
   --json           sortie JSON machine { ok, entities, consoleErrors, pageErrors,
                    networkRequests, runtime, expectedRuntime, levels,
-                   expectedLevels, nonBlackPixels, canvasColors, expectedInput,
-                   inputDelta, inputPixelsBefore, inputPixelsAfter, problems }
+                   expectedLevels, screens, expectedScreens, nonBlackPixels,
+                   canvasColors, expectedInput, inputDelta, inputPixelsBefore,
+                   inputPixelsAfter, problems }
   --timeout <ms>   délai global en millisecondes (défaut : ${DEFAULT_TIMEOUT_MS})
   --expect-runtime exige que le runtime WASM embarqué démarre (runtime=running)
                    et rende des pixels dans le canvas
@@ -120,6 +126,8 @@ Options :
                    et vérifie que plus de ${INPUT_DIFF_MIN_PIXELS} pixels changent
   --expect-levels <n> exige que l'export embarque exactement n niveaux
                    (window.__karacti_levels) ; implique --expect-runtime
+  --expect-screens <n> exige que l'export embarque exactement n écrans UI
+                   (window.__karacti_screens) ; implique --expect-runtime
   -h, --help       affiche cette aide
 
 Codes de sortie :
@@ -132,6 +140,7 @@ Exemples :
   node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime
   node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime --expect-input
   node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime --expect-levels 3
+  node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime --expect-levels 3 --expect-screens 4
   node scripts/export-smoke.mjs ./jeu-standalone.html --json
 `;
 
@@ -147,6 +156,7 @@ function parseArgs(args) {
     expectRuntime: false,
     expectInput: false,
     expectLevels: null,
+    expectScreens: null,
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -170,6 +180,20 @@ function parseArgs(args) {
         return { error: `valeur invalide pour --expect-levels : ${raw} (entier >= 1 attendu)` };
       }
       opts.expectLevels = n;
+    } else if (arg === '--expect-screens') {
+      const raw = args[++i];
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 0) {
+        return { error: `valeur invalide pour --expect-screens : ${raw ?? '(absente)'} (entier >= 0 attendu)` };
+      }
+      opts.expectScreens = n;
+    } else if (arg.startsWith('--expect-screens=')) {
+      const raw = arg.slice('--expect-screens='.length);
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 0) {
+        return { error: `valeur invalide pour --expect-screens : ${raw} (entier >= 0 attendu)` };
+      }
+      opts.expectScreens = n;
     } else if (arg === '-h' || arg === '--help') {
       opts.help = true;
     } else if (arg === '--timeout') {
@@ -204,13 +228,14 @@ function isLocalUrl(url) {
 }
 
 /** Sortie d'erreur d'usage / d'environnement : message clair + exit 2. */
-function usageError(message, json, expectRuntime = false, expectInput = false, expectLevels = null) {
+function usageError(message, json, expectRuntime = false, expectInput = false, expectLevels = null, expectScreens = null) {
   if (json) {
     const payload = {
       ...emptyResult(),
       expectedRuntime: expectRuntime,
       expectedInput: expectInput,
       expectedLevels: expectLevels,
+      expectedScreens: expectScreens,
       problems: [message],
     };
     process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
@@ -240,6 +265,8 @@ function emptyResult() {
     expectedRuntime: false,
     levels: null,
     expectedLevels: null,
+    screens: null,
+    expectedScreens: null,
     nonBlackPixels: null,
     canvasColors: null,
     expectedInput: false,
@@ -286,6 +313,16 @@ async function readRuntimeState(page) {
 async function readLevels(page) {
   return await page.evaluate(() =>
     Number.isInteger(window.__karacti_levels) ? window.__karacti_levels : null,
+  );
+}
+
+/**
+ * Lit `window.__karacti_screens` (nombre d'écrans UI embarqués), posé par le
+ * template après un import de paquet réussi. `null` si absent ou invalide.
+ */
+async function readScreens(page) {
+  return await page.evaluate(() =>
+    Number.isInteger(window.__karacti_screens) ? window.__karacti_screens : null,
   );
 }
 
@@ -576,11 +613,12 @@ async function runInputProbe(page, startedAt, timeoutMs) {
 }
 
 /** Exécute le test de fumée. Renvoie l'objet résultat + un code de sortie. */
-async function runSmoke(filePath, timeoutMs, expectRuntime = false, expectInput = false, expectLevels = null) {
+async function runSmoke(filePath, timeoutMs, expectRuntime = false, expectInput = false, expectLevels = null, expectScreens = null) {
   const result = emptyResult();
   result.expectedRuntime = expectRuntime;
   result.expectedInput = expectInput;
   result.expectedLevels = expectLevels;
+  result.expectedScreens = expectScreens;
   const url = pathToFileURL(filePath).href;
   const startedAt = Date.now();
   let browser = null;
@@ -731,6 +769,25 @@ async function runSmoke(filePath, timeoutMs, expectRuntime = false, expectInput 
             );
           }
 
+          // --- Écrans UI embarqués (contrat du template) -------------------
+          // Le template pose `window.__karacti_screens` après un import réussi.
+          // Sans `--expect-screens`, la valeur est seulement publiée dans le
+          // JSON ; avec l'option, elle doit être exactement celle demandée.
+          const screens = await readScreens(page).catch(() => null);
+          result.screens = screens;
+          if (screens === null) {
+            result.problems.push(
+              'window.__karacti_screens jamais défini après un import réussi ' +
+                '(HTML produit par un ancien moteur ?)',
+            );
+          } else if (screens < 0) {
+            result.problems.push(`window.__karacti_screens = ${screens} : valeur négative`);
+          } else if (expectScreens !== null && screens !== expectScreens) {
+            result.problems.push(
+              `--expect-screens : ${screens} écran(s) embarqué(s), ${expectScreens} attendu(s)`,
+            );
+          }
+
           const budgetPixels = Math.max(
             2_000,
             Math.min(5_000, timeoutMs - (Date.now() - startedAt) - 1_000),
@@ -818,6 +875,12 @@ function printReport(filePath, result) {
       : result.expectedRuntime
         ? `, niveaux=${result.levels ?? 'indéfini'}`
         : '';
+  const screensSuffix =
+    result.expectedScreens !== null
+      ? `, écrans=${result.screens ?? 'indéfini'}/${result.expectedScreens}`
+      : result.expectedRuntime
+        ? `, écrans=${result.screens ?? 'indéfini'}`
+        : '';
   const pixelsSuffix =
     result.expectedRuntime && result.nonBlackPixels !== null
       ? `, ${result.nonBlackPixels} pixels non noirs (${result.canvasColors} couleurs)`
@@ -833,7 +896,7 @@ function printReport(filePath, result) {
     const plural = result.entities === 1 ? '' : 's';
     console.log(
       `[export-smoke] OK — ${result.entities} entité${plural}, 0 erreur, 0 requête réseau` +
-        `${runtimeSuffix}${levelsSuffix}${pixelsSuffix}${inputSuffix}`,
+        `${runtimeSuffix}${levelsSuffix}${screensSuffix}${pixelsSuffix}${inputSuffix}`,
     );
     return;
   }
@@ -842,7 +905,7 @@ function printReport(filePath, result) {
   console.error(
     `[export-smoke] résumé : ${result.entities ?? 0} entité(s), ` +
       `${errors} erreur(s) console/page, ${result.networkRequests.length} requête(s) réseau non-file://` +
-      runtimeSuffix + levelsSuffix + inputSuffix,
+      runtimeSuffix + levelsSuffix + screensSuffix + inputSuffix,
   );
 }
 
@@ -853,25 +916,28 @@ const JSON_OUTPUT = Boolean(parsed.json);
 async function main() {
   const expectInput = Boolean(parsed.expectInput);
   const expectLevels = parsed.expectLevels ?? null;
-  // Prouver l'entrée ou le nombre de niveaux suppose un moteur qui tourne :
-  // --expect-input et --expect-levels impliquent --expect-runtime (un fichier
+  const expectScreens = parsed.expectScreens ?? null;
+  // Prouver l'entrée, le nombre de niveaux ou le nombre d'écrans suppose un
+  // moteur qui tourne : ces options impliquent --expect-runtime (un fichier
   // sans runtime échoue proprement, sans crash).
-  const expectRuntime = Boolean(parsed.expectRuntime || expectInput || expectLevels !== null);
-  if (parsed.error) usageError(parsed.error, JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
+  const expectRuntime = Boolean(
+    parsed.expectRuntime || expectInput || expectLevels !== null || expectScreens !== null,
+  );
+  if (parsed.error) usageError(parsed.error, JSON_OUTPUT, expectRuntime, expectInput, expectLevels, expectScreens);
   if (parsed.help) {
     // L'aide documente l'usage ; code 2 (aucun test exécuté).
     process.stdout.write(USAGE);
     process.exit(2);
   }
-  if (!parsed.file) usageError('chemin du fichier HTML manquant', JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
+  if (!parsed.file) usageError('chemin du fichier HTML manquant', JSON_OUTPUT, expectRuntime, expectInput, expectLevels, expectScreens);
 
   const filePath = path.resolve(process.cwd(), parsed.file);
-  if (!existsSync(filePath)) usageError(`fichier introuvable : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
-  if (!statSync(filePath).isFile()) usageError(`ce n'est pas un fichier : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
+  if (!existsSync(filePath)) usageError(`fichier introuvable : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput, expectLevels, expectScreens);
+  if (!statSync(filePath).isFile()) usageError(`ce n'est pas un fichier : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput, expectLevels, expectScreens);
 
   let result;
   try {
-    result = await runSmoke(filePath, parsed.timeoutMs, expectRuntime, expectInput, expectLevels);
+    result = await runSmoke(filePath, parsed.timeoutMs, expectRuntime, expectInput, expectLevels, expectScreens);
   } catch (err) {
     // Erreur d'environnement (navigateur indisponible, sandbox…) : exit 2.
     const message = String(err?.message ?? err).split('\n')[0];
@@ -881,6 +947,7 @@ async function main() {
         expectedRuntime: expectRuntime,
         expectedInput: expectInput,
         expectedLevels: expectLevels,
+        expectedScreens: expectScreens,
         problems: [message],
       };
       process.stdout.write(JSON.stringify(failed, null, 2) + '\n');

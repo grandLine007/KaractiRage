@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use crate::entity::{Entity, ShapeKind};
 use crate::game::GameState;
 use crate::scene::SceneData;
+use crate::subsystems::UiScreen;
 use kvl_core::{Graph, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -392,6 +393,15 @@ pub struct KaractiGamePackage {
     /// `scenes` est vide et l'import conserve alors le comportement mono-scène.
     #[serde(default)]
     pub scenes: Vec<SceneData>,
+    /// Écrans UI déclaratifs du projet (HUD, menu, pause, défaite, victoire).
+    ///
+    /// Sans eux, un HTML autonome importé restait figé sur l'écran `Menu` mais
+    /// n'avait aucun menu à dessiner : le joueur voyait le monde sans interface
+    /// de départ. `#[serde(default)]` garde les anciens paquets lisibles : le
+    /// champ absent devient un `Vec` vide et l'import conserve son comportement
+    /// historique (aucun écran déclaré, monde jouable immédiatement).
+    #[serde(default)]
+    pub ui_screens: Vec<UiScreen>,
     /// Table de tous les graphes KVL associés aux entités (tous niveaux confondus)
     pub kvl_graphs: HashMap<String, Graph>,
     /// Variables globales initiales de contexte
@@ -725,12 +735,17 @@ impl StandaloneExporter {
         // Union des graphes : scène courante + scripts des niveaux 2/3.
         let kvl_graphs = collecter_graphes_kvl(game);
 
+        // Écrans UI du projet : sans eux, l'import forcerait l'écran `Menu`
+        // alors qu'aucun menu ne serait dessinable (monde figé sans interface).
+        let ui_screens = game.ui_screens.clone();
+
         KaractiGamePackage {
             metadata,
             scene_name: game.scene_name.clone(),
             scene_objective: game.scene_objective.clone(),
             entities: game.entities.clone(),
             scenes,
+            ui_screens,
             kvl_graphs,
             initial_variables: initial_vars,
             sprite_assets,
@@ -1023,12 +1038,15 @@ impl StandaloneExporter {
     ///
     /// **Paquet multi-niveaux** (`scenes` non vide) : reconstruit un jeu complet
     /// à partir du niveau 1 (`scenes[0]`), installe tous les niveaux, l'union
-    /// des graphes KVL, les variables initiales et les assets embarqués, puis
-    /// place le joueur sur l'écran `Menu` (il lance la partie avec `Entrée`).
+    /// des graphes KVL, les variables initiales, les assets embarqués et les
+    /// écrans UI déclaratifs, puis place le joueur sur l'écran `Menu` (il lance
+    /// la partie avec `Entrée`).
     ///
     /// **Ancien paquet** (`scenes` vide, champ absent) : comportement historique
     /// inchangé — la scène du paquet remplace l'état courant et l'éditeur passe
-    /// en mode Jeu, sans forcer d'écran.
+    /// en mode Jeu, sans forcer d'écran. Les écrans du paquet sont installés
+    /// s'il en transporte ; un paquet d'avant `ui_screens` laisse ceux de
+    /// l'instance cible intacts (champ absent = `Vec` vide).
     #[allow(dead_code)]
     pub fn import_package(game: &mut GameState, package: &KaractiGamePackage) {
         // --- Format multi-niveaux ------------------------------------------
@@ -1040,6 +1058,13 @@ impl StandaloneExporter {
                 nouveau.level_index = 0;
                 nouveau.scene_name = premiere.name.clone();
                 nouveau.scene_objective = premiere.objective.clone();
+                // Les écrans voyagent avec le paquet comme les niveaux : l'état
+                // reconstruit part d'une scène nue (`ui_screens` vide), il faut
+                // donc les y recopier. Les reconstructions suivantes de
+                // `start_game`, `next_level` et `reload` recopient à leur tour
+                // `ui_screens` depuis l'état courant (même traitement que
+                // `levels`/`project_id`), donc ils survivent au jeu.
+                nouveau.ui_screens = package.ui_screens.clone();
                 // Union calculée à l'export : elle couvre aussi les niveaux que
                 // le disque local ne peut pas résoudre (cas wasm/navigateur).
                 nouveau.kvl_graphs = package.kvl_graphs.clone();
@@ -1065,6 +1090,11 @@ impl StandaloneExporter {
                 // Le joueur voit le menu, puis `Entrée` démarre le niveau 1.
                 nouveau.screen = crate::screens::GameScreen::Menu;
                 nouveau.sync_screen_variables();
+
+                // Le mode embarqué est une propriété de session (comme l'audio) :
+                // dans le HTML autonome, l'instance est embarquée et l'import ne
+                // doit pas réafficher le chrome du Studio autour du jeu.
+                nouveau.editor.embedded_mode = game.editor.embedded_mode;
 
                 // L'audio et le replay sont des ressources de session : on garde
                 // le même périphérique et la même session qu'avant l'import.
@@ -1092,6 +1122,12 @@ impl StandaloneExporter {
         game.scene_objective = package.scene_objective.clone();
         game.entities = package.entities.clone();
         game.kvl_graphs = package.kvl_graphs.clone();
+        // Les écrans d'un ancien paquet qui les transporte sont réinstallés.
+        // Un paquet antérieur au champ (`ui_screens` vide) ne doit pas effacer
+        // les écrans de l'instance cible : on ne remplace que s'il en fournit.
+        if !package.ui_screens.is_empty() {
+            game.ui_screens = package.ui_screens.clone();
+        }
 
         for (k, v) in &package.initial_variables {
             game.kvl_context.set_var(k.clone(), v.clone());
@@ -1241,6 +1277,7 @@ mod tests {
             scene_objective: Some("Trouver la clé et vaincre le gardien".to_string()),
             entities: Vec::new(),
             scenes: Vec::new(),
+            ui_screens: Vec::new(),
             kvl_graphs: graphs,
             initial_variables: HashMap::new(),
             sprite_assets: HashMap::new(),
@@ -1273,6 +1310,7 @@ mod tests {
             scene_objective: None,
             entities: Vec::new(),
             scenes: Vec::new(),
+            ui_screens: Vec::new(),
             kvl_graphs: HashMap::new(),
             initial_variables: HashMap::new(),
             sprite_assets: HashMap::new(),
@@ -1357,6 +1395,41 @@ mod tests {
             .expect("désérialisation");
         assert_eq!(relu.scenes.len(), 3, "scenes traverse le JSON");
         assert_eq!(relu.kvl_graphs.len(), SCRIPTS_REFERENCE.len());
+        assert_eq!(relu.ui_screens.len(), 4, "ui_screens traverse le JSON");
+    }
+
+    #[test]
+    fn test_paquet_jeu_reference_embarque_les_ecrans_ui() {
+        let jeu = jeu_reference_projet();
+        let package = StandaloneExporter::create_package(&jeu, "Référence", "Testeur");
+
+        assert!(
+            !package.ui_screens.is_empty(),
+            "le paquet doit embarquer les écrans ui_screens du projet"
+        );
+        assert_eq!(
+            package.ui_screens.len(),
+            4,
+            "menu, pause, game_over et victory : {:?}",
+            package
+                .ui_screens
+                .iter()
+                .map(|screen| screen.kind)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            package.ui_screens,
+            jeu.ui_screens,
+            "les écrans du paquet sont ceux du projet, dans le même ordre"
+        );
+        // Le menu doit voyager : sans lui, l'import forcerait `Menu` sans rien
+        // pouvoir dessiner.
+        let menu = package
+            .ui_screens
+            .iter()
+            .find(|screen| screen.kind == crate::subsystems::UiScreenKind::Menu)
+            .expect("l'écran Menu est embarqué");
+        assert_eq!(menu.title.as_deref(), Some("LES ÉMERAUDES DU TEMPLE"));
     }
 
     #[test]
@@ -1365,26 +1438,47 @@ mod tests {
         let package = StandaloneExporter::create_package(&jeu, "Ancien format", "Testeur");
         assert!(package.scenes.is_empty(), "scène isolée : aucun niveau embarqué");
 
-        // Simule un ancien paquet : le champ `scenes` est totalement absent.
+        // Simule un ancien paquet : les champs `scenes` et `ui_screens` sont
+        // totalement absents (format antérieur aux deux fonctionnalités).
         let mut valeur = serde_json::to_value(&package).expect("package en JSON");
         let objet = valeur.as_object_mut().expect("objet JSON");
         assert!(objet.remove("scenes").is_some(), "champ scenes présent avant retrait");
+        assert!(objet.remove("ui_screens").is_some(), "champ ui_screens présent avant retrait");
         let json_ancien = serde_json::to_string(&valeur).expect("JSON compact");
         assert!(!json_ancien.contains("\"scenes\""), "vieux format sans scenes");
+        assert!(!json_ancien.contains("\"ui_screens\""), "vieux format sans ui_screens");
 
         let ancien = KaractiGamePackage::from_json(&json_ancien)
             .expect("un ancien paquet reste importable");
         assert!(ancien.scenes.is_empty(), "#[serde(default)] remplit avec un Vec vide");
+        assert!(
+            ancien.ui_screens.is_empty(),
+            "#[serde(default)] remplit ui_screens avec un Vec vide"
+        );
 
         // Import dans un état neuf : comportement historique (mono-scène, mode Jeu).
         let mut cible = jeu_reference();
         cible.levels.clear();
         cible.screen = crate::screens::GameScreen::Playing;
+        // Écran préexistant de l'instance cible : un vieux paquet ne doit pas
+        // l'effacer (champ absent = aucun écran transporté).
+        cible.ui_screens = vec![crate::subsystems::UiScreen {
+            id: "menu_cible".to_string(),
+            kind: crate::subsystems::UiScreenKind::Menu,
+            title: Some("MENU DE L'INSTANCE".to_string()),
+            elements: Vec::new(),
+        }];
         StandaloneExporter::import_package(&mut cible, &ancien);
         assert_eq!(cible.entities.len(), package.entities.len());
         assert_eq!(cible.scene_name, package.scene_name);
         assert_eq!(cible.kvl_graphs.len(), package.kvl_graphs.len());
         assert_eq!(cible.editor.mode, crate::editor::EditorMode::Play);
+        assert_eq!(
+            cible.ui_screens.len(),
+            1,
+            "un ancien paquet sans ui_screens laisse les écrans de la cible intacts"
+        );
+        assert_eq!(cible.ui_screens[0].id, "menu_cible");
         assert_eq!(
             cible.screen,
             crate::screens::GameScreen::Playing,
@@ -1400,8 +1494,14 @@ mod tests {
         // Instance neuve, comme au démarrage du runtime wasm.
         let mut neuf = jeu_reference();
         assert!(neuf.levels.is_empty());
+        neuf.editor.embedded_mode = true; // HTML autonome : pas de chrome Studio
 
         StandaloneExporter::import_package(&mut neuf, &package);
+
+        assert!(
+            neuf.editor.embedded_mode,
+            "le mode embarqué de la session survit à l'import (HTML autonome)"
+        );
 
         assert_eq!(neuf.levels.len(), 3, "les 3 niveaux sont installés");
         assert_eq!(neuf.level_index, 0);
@@ -1416,22 +1516,117 @@ mod tests {
             package.kvl_graphs.len(),
             "l'union des graphes du paquet est installée"
         );
+        assert_eq!(
+            neuf.ui_screens, package.ui_screens,
+            "les écrans UI du paquet sont installés dans l'instance neuve"
+        );
+        assert!(!neuf.ui_screens.is_empty(), "l'instance importée a bien des écrans");
         assert_eq!(neuf.screen, crate::screens::GameScreen::Menu);
         assert_eq!(neuf.editor.mode, crate::editor::EditorMode::Play);
 
-        // `Entrée` sur le menu → niveau 1 en jeu.
+        // `Entrée` sur le menu → niveau 1 en jeu. Les écrans survivent à la
+        // reconstruction de `start_game` (recopiés comme `levels`/`project_id`).
         neuf.start_game();
         assert_eq!(neuf.screen, crate::screens::GameScreen::Playing);
         assert_eq!(neuf.level_index, 0);
         assert_eq!(neuf.scene_name, "Niveau 1 : Salle des Émeraudes");
+        assert!(
+            neuf.editor.embedded_mode,
+            "start_game conserve le mode embarqué (pas de chrome Studio dans l'export)"
+        );
+        assert_eq!(
+            neuf.ui_screens, package.ui_screens,
+            "start_game conserve les écrans UI"
+        );
 
         // Les niveaux suivants restent disponibles (le jeu est complet).
         assert!(neuf.next_level(), "passage au niveau 2");
         assert_eq!(neuf.level_index, 1);
+        assert!(
+            neuf.editor.embedded_mode,
+            "next_level conserve le mode embarqué"
+        );
+        assert_eq!(
+            neuf.ui_screens, package.ui_screens,
+            "next_level conserve les écrans UI"
+        );
         assert!(neuf.next_level(), "passage au niveau 3");
         assert_eq!(neuf.level_index, 2);
         assert_eq!(neuf.scene_name, "Niveau 3 : Arène du Titan");
         assert!(!neuf.next_level(), "dernier niveau : plus de suivant");
+    }
+
+    #[test]
+    fn test_rendu_apres_import_dessine_le_menu() {
+        use crate::screens::GameScreen;
+
+        let source = jeu_reference_projet();
+        let package = StandaloneExporter::create_package(&source, "Référence", "Testeur");
+        let mut neuf = jeu_reference();
+        neuf.editor.embedded_mode = true; // comme le runtime du HTML autonome
+        StandaloneExporter::import_package(&mut neuf, &package);
+        assert_eq!(neuf.screen, GameScreen::Menu);
+        assert!(!neuf.ui_screens.is_empty());
+
+        // Canvas factice : le rendu ne doit pas paniquer et doit réellement
+        // dessiner le menu (voile + panneau + titre + entrées).
+        let mut canvas = crate::renderer::Canvas::new(1200, 800);
+        neuf.render(&mut canvas);
+
+        let premiere = canvas.buffer[0];
+        assert!(
+            canvas.buffer.iter().any(|&pixel| pixel != premiere),
+            "le rendu après import doit produire des pixels non uniformes (menu dessiné)"
+        );
+        let couleurs: HashSet<u32> = canvas.buffer.iter().copied().collect();
+        assert!(
+            couleurs.len() > 8,
+            "le menu doit écrire plusieurs couleurs (titre, entrées, voile), trouvé {}",
+            couleurs.len()
+        );
+        // Le voile de l'overlay recouvre tout le viewport : preuve que l'écran
+        // courant est bien dessiné depuis `ui_screens`.
+        let voile = canvas
+            .buffer
+            .iter()
+            .filter(|&&pixel| pixel == 0x00060911)
+            .count();
+        assert!(voile > 100_000, "voile du menu attendu, trouvé {voile} pixels");
+    }
+
+    #[test]
+    fn test_paquet_multi_niveaux_sans_ui_screens_reste_importable() {
+        use crate::screens::GameScreen;
+
+        let source = jeu_reference_projet();
+        let package = StandaloneExporter::create_package(&source, "Ancien format", "Testeur");
+        assert!(!package.scenes.is_empty());
+
+        // Simule un paquet multi-niveaux d'avant `ui_screens`.
+        let mut valeur = serde_json::to_value(&package).expect("package en JSON");
+        valeur
+            .as_object_mut()
+            .expect("objet JSON")
+            .remove("ui_screens")
+            .expect("champ ui_screens présent avant retrait");
+        let ancien = KaractiGamePackage::from_json(&serde_json::to_string(&valeur).expect("JSON"))
+            .expect("un ancien paquet multi-niveaux reste importable");
+        assert!(ancien.ui_screens.is_empty());
+
+        let mut neuf = jeu_reference();
+        StandaloneExporter::import_package(&mut neuf, &ancien);
+        assert_eq!(neuf.levels.len(), 3, "les niveaux restent importés");
+        assert!(
+            neuf.ui_screens.is_empty(),
+            "aucun écran n'est inventé pour un ancien paquet"
+        );
+        assert_eq!(neuf.screen, GameScreen::Menu, "l'import force toujours Menu");
+        // Aucun écran à dessiner : le rendu ne doit pas paniquer.
+        let mut canvas = crate::renderer::Canvas::new(1200, 800);
+        neuf.render(&mut canvas);
+        neuf.start_game();
+        assert_eq!(neuf.screen, GameScreen::Playing);
+        assert!(neuf.ui_screens.is_empty());
     }
 
     /// Script volontairement absent du disque : seul le paquet le fournit.
@@ -1544,6 +1739,7 @@ mod tests {
             scene_objective: scenes[0].objective.clone(),
             entities: scenes[0].to_entities(),
             scenes,
+            ui_screens: Vec::new(),
             kvl_graphs,
             initial_variables,
             sprite_assets,

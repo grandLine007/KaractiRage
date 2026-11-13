@@ -521,6 +521,21 @@
         const niveaux = Array.isArray(gamePackage.scenes) ? gamePackage.scenes.length : 0;
         window.__karacti_levels = niveaux > 0 ? niveaux : 1;
 
+        // Diagnostic d'export : nombre d'écrans UI déclaratifs embarqués dans le
+        // paquet (menu, pause, défaite, victoire, HUD). Un ancien paquet sans
+        // `ui_screens` vaut 0 : le runtime reste jouable, mais n'affiche aucune
+        // surcouche de menu.
+        const ecrans = Array.isArray(gamePackage.ui_screens) ? gamePackage.ui_screens.length : 0;
+        window.__karacti_screens = ecrans;
+
+        // Niveau courant exposé aux outils. L'import de paquet replace toujours
+        // le joueur sur le niveau 1 (index 0), et le runtime n'expose pas
+        // d'accesseur de niveau au template : on publie donc ce point de départ
+        // sous la forme attendue (index + 1), sans prétendre suivre les
+        // changements de niveau ultérieurs.
+        const niveauCourant = 0;
+        window.__karacti_level = niveauCourant + 1;
+
         // WebAssembly.Memory exposé par le module (--target web n'exporte pas
         // __wbindgen_memory). On relit .buffer à chaque frame : une croissance
         // du tas wasm détache les anciens ArrayBuffer.

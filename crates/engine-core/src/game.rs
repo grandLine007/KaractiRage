@@ -1375,6 +1375,9 @@ impl GameState {
         let index = self.level_index;
         let project_id = self.project_id.clone();
         let assets_manifest = self.assets_manifest.clone();
+        // Le mode embarqué (HTML autonome) est une propriété de session : un
+        // rechargement ne doit pas réafficher le chrome du Studio.
+        let embedded_mode = self.editor.embedded_mode;
         let rebuilt = match levels.get(index) {
             Some(scene) => Self::from_scene_data(scene.clone(), &format!("projet:niveau_{}", index + 1)),
             None => Self::load_from_scene(&self.scene_path),
@@ -1385,6 +1388,7 @@ impl GameState {
             new_state.level_index = index;
             new_state.project_id = project_id;
             new_state.assets_manifest = assets_manifest;
+            new_state.editor.embedded_mode = embedded_mode;
             // Même périphérique audio et mêmes réglages après un hot-reload.
             std::mem::swap(&mut new_state.audio, &mut self.audio);
             std::mem::swap(&mut new_state.replay, &mut self.replay);
@@ -1418,6 +1422,7 @@ impl GameState {
         let inventory = self.inventory.clone();
         let project_id = self.project_id.clone();
         let assets_manifest = self.assets_manifest.clone();
+        let embedded_mode = self.editor.embedded_mode;
         let Ok(mut fresh) = Self::from_scene_data(scene, &format!("projet:niveau_{}", next_index + 1))
         else {
             return false;
@@ -1429,6 +1434,7 @@ impl GameState {
         fresh.project_id = project_id;
         fresh.assets_manifest = assets_manifest;
         fresh.inventory = inventory;
+        fresh.editor.embedded_mode = embedded_mode;
         fresh.screen = crate::screens::GameScreen::Playing;
         fresh.editor.mode = EditorMode::Play;
         // Graphes/variables/assets du paquet : ils ne vivent pas dans la scène
@@ -2072,6 +2078,24 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
     }
 }
 
+    /// Compteur de progression du niveau courant pour le HUD, par exemple `"1/3"`.
+    ///
+    /// Renvoie `None` quand le jeu n'a qu'un seul niveau (ou aucun) :
+    /// l'indicateur n'apporte rien sans progression multi-niveaux et alourdirait
+    /// le HUD des scènes isolées. L'index est borné au nombre de niveaux pour
+    /// qu'un état incohérent (index hors limites) n'affiche jamais `"4/3"`.
+    ///
+    /// Fonction publique et testable : le rendu ne fait que l'appeler, il ne
+    /// code aucun texte de niveau en dur.
+    pub fn level_counter(&self) -> Option<String> {
+        let total = self.levels.len();
+        if total <= 1 {
+            return None;
+        }
+        let courant = (self.level_index + 1).min(total);
+        Some(format!("{courant}/{total}"))
+    }
+
     /// Vrai si le projet déclare un écran de ce type.
     fn has_screen(&self, kind: crate::subsystems::UiScreenKind) -> bool {
         self.ui_screens.iter().any(|screen| screen.kind == kind)
@@ -2095,6 +2119,9 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         let levels = self.levels.clone();
         let project_id = self.project_id.clone();
         let assets_manifest = self.assets_manifest.clone();
+        // Le mode embarqué (HTML autonome) est une propriété de session : lancer
+        // la partie ne doit pas réafficher le chrome du Studio.
+        let embedded_mode = self.editor.embedded_mode;
         let rebuilt = match levels.first() {
             Some(first) => Self::from_scene_data(first.clone(), "projet:niveau_1"),
             None => Self::load_from_scene(&self.scene_path),
@@ -2105,6 +2132,7 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             fresh.level_index = 0;
             fresh.project_id = project_id;
             fresh.assets_manifest = assets_manifest;
+            fresh.editor.embedded_mode = embedded_mode;
             // Une nouvelle partie reconstruit le niveau 1 depuis la scène : les
             // graphes et assets venus du paquet doivent y être réinjectés.
             fresh.inherit_exported_package(self);
@@ -6898,6 +6926,25 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                     hx += 10;
                     canvas.draw_text(hx, hud_y + 10, text, 0x006EE7B7, 1);
                 }
+            }
+        }
+
+        // Indicateur de progression « NIVEAU X/N » : badge compact dans la
+        // colonne de droite du viewport. Quand le radar est affiché, il se place
+        // juste dessous (le radar occupe le coin haut-droit, 175×110) ; sinon il
+        // prend sa place. Affiché uniquement en multi-niveaux : une scène isolée
+        // conserve exactement le HUD historique, sans badge.
+        if !is_edit_mode {
+            if let Some(compteur) = self.level_counter() {
+                let label = format!("NIVEAU {compteur}");
+                let badge_w = (canvas.measure_text(&label, 1).0 + 20).max(78) as u32;
+                let badge_h = 26u32;
+                let badge_x = vx + vw - badge_w as i32 - 14;
+                let badge_y = vy + 12 + if self.show_minimap { 118 } else { 0 };
+                canvas.draw_rect(badge_x, badge_y, badge_w, badge_h, 0x000F172A);
+                canvas.draw_rect_outline(badge_x, badge_y, badge_w, badge_h, 0x0038BDF8, 1);
+                canvas.draw_corner_brackets(badge_x, badge_y, badge_w, badge_h, 6, 0x0038BDF8);
+                canvas.draw_text(badge_x + 10, badge_y + 9, &label, 0x00F8FAFC, 1);
             }
         }
 
@@ -11909,6 +11956,47 @@ mod tests {
         state.ui_screens = screens_fixture();
         state.editor.mode = EditorMode::Play;
         state
+    }
+
+    #[test]
+    fn level_counter_reports_progress_only_for_multi_level_projects() {
+        let mut state =
+            GameState::load_from_scene("assets/scenes/level_01.scene.json").expect("Scène chargée");
+
+        // Scène isolée : aucun indicateur, le HUD reste exactement l'historique.
+        assert_eq!(state.level_counter(), None, "une scène seule n'affiche pas de niveau");
+
+        // Projet à trois niveaux : compteur « courant/total », jamais codé en dur
+        // dans le rendu.
+        let scene = state.export_current_project().scene;
+        state.levels = vec![scene.clone(), scene.clone(), scene];
+        state.level_index = 0;
+        assert_eq!(state.level_counter().as_deref(), Some("1/3"));
+        state.level_index = 1;
+        assert_eq!(state.level_counter().as_deref(), Some("2/3"));
+        state.level_index = 2;
+        assert_eq!(state.level_counter().as_deref(), Some("3/3"));
+
+        // État incohérent (index hors limites) : borné au dernier niveau.
+        state.level_index = 99;
+        assert_eq!(state.level_counter().as_deref(), Some("3/3"));
+    }
+
+    #[test]
+    fn multi_level_hud_renders_without_panic() {
+        let mut state =
+            GameState::load_from_scene("assets/scenes/level_01.scene.json").expect("Scène chargée");
+        let scene = state.export_current_project().scene;
+        state.levels = vec![scene.clone(), scene.clone(), scene];
+        state.level_index = 2;
+        state.editor.mode = EditorMode::Play;
+
+        let mut canvas = Canvas::new(1200, 800);
+        state.render(&mut canvas);
+        assert!(
+            canvas.buffer.iter().any(|&pixel| pixel != canvas.buffer[0]),
+            "le HUD multi-niveaux doit produire du contenu"
+        );
     }
 
     /// Fait avancer `frames` pas en imitant la boucle réelle (entrées transitoires purgées).
