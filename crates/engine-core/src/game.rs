@@ -267,6 +267,14 @@ pub struct GameState {
     pub embedded_sprites: HashMap<String, Vec<u8>>,
     /// Assets spritesheet embarqués du paquet (`id -> (PNG brut, JSON)`), idem.
     pub embedded_sheets: HashMap<String, (Vec<u8>, String)>,
+    /// Sources SVG embarquées du paquet (`id -> source SVG`).
+    ///
+    /// Même rôle que [`Self::embedded_sprites`] pour les sprites vectoriels :
+    /// sous wasm, `SvgCache::get_or_load` ne peut pas lire le disque, ces
+    /// sources sont donc le seul moyen de rastériser `ShapeKind::SvgRef`.
+    /// Conservées pour être réinstallées après `start_game`, `next_level` et
+    /// `reload`, qui repartent tous d'une scène nue.
+    pub embedded_svg_assets: HashMap<String, String>,
     /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
     pub camera3d: Option<crate::subsystems::Camera3DData>,
     /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
@@ -329,6 +337,56 @@ fn resolve_script_content(script_path: &str) -> Option<String> {
         Some(include_str!("../../../assets/scripts/ref_boss_verrou.kvl.json").to_string())
     } else {
         None
+    }
+}
+
+/// Résout le sprite vectoriel d'une entité (`ShapeKind::SvgRef`) dans le cache.
+///
+/// **Règle de non-destruction** : si la source est introuvable (cas wasm sans
+/// source embarquée) mais que l'entité porte déjà un `vector_sprite` pour le
+/// **même** asset, on le conserve au lieu de le remettre à `None`. C'est ce qui
+/// permet à une scène déjà résolue (import de paquet, scène cuite) de survivre
+/// à un rechargement où le disque est absent.
+fn resoudre_sprite_vectoriel(ent: &mut Entity, cache: &mut crate::vector::SvgCache) {
+    let Some(asset) = ent.renderable.as_ref().and_then(|rend| match &rend.shape {
+        ShapeKind::SvgRef { asset } => Some(asset.clone()),
+        _ => None,
+    }) else {
+        return;
+    };
+    match cache.get_or_load(&asset) {
+        Ok(loaded) => {
+            // Clip par défaut : premier clip du rig (« idle » pour un rig sans
+            // animation JSON), sinon « idle » — le rendu retombe alors sur
+            // l'image statique du rig si ce clip n'existe pas.
+            let default_clip = loaded
+                .rig
+                .as_ref()
+                .and_then(|r| r.clips.first())
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "idle".to_string());
+            ent.vector_sprite = Some(VectorSprite {
+                asset,
+                image: loaded.image.clone(),
+                rig: loaded.rig.clone(),
+                clip: default_clip,
+                time: 0.0,
+                speed: 1.0,
+                playing: true,
+            });
+        }
+        Err(_) => {
+            // Repli visuel non bloquant : `rend.color` sert de rectangle teinté
+            // au rendu. On ne détruit un sprite déjà résolu que s'il concerne
+            // un autre asset (la scène a changé de référence).
+            let deja_resolu = ent
+                .vector_sprite
+                .as_ref()
+                .is_some_and(|sprite| sprite.asset == asset);
+            if !deja_resolu {
+                ent.vector_sprite = None;
+            }
+        }
     }
 }
 
@@ -1007,34 +1065,7 @@ impl GameState {
         // (rastérisation à l'import, mise en cache par identifiant).
         let mut svg_cache = crate::vector::SvgCache::new();
         for ent in entities.iter_mut() {
-            if let Some(rend) = &ent.renderable {
-                if let ShapeKind::SvgRef { asset } = &rend.shape {
-                    match svg_cache.get_or_load(asset) {
-                        Ok(loaded) => {
-                            let default_clip = loaded
-                                .rig
-                                .as_ref()
-                                .and_then(|r| r.clips.first())
-                                .map(|c| c.name.clone())
-                                .unwrap_or_else(|| "idle".to_string());
-                            ent.vector_sprite = Some(VectorSprite {
-                                asset: asset.clone(),
-                                image: loaded.image.clone(),
-                                rig: loaded.rig.clone(),
-                                clip: default_clip,
-                                time: 0.0,
-                                speed: 1.0,
-                                playing: true,
-                            });
-                        }
-                        Err(_) => {
-                            // Repli visuel non bloquant : `rend.color` sert de
-                            // rectangle teinté au rendu (voir `ShapeKind::SvgRef`).
-                            ent.vector_sprite = None;
-                        }
-                    }
-                }
-            }
+            resoudre_sprite_vectoriel(ent, &mut svg_cache);
         }
 
         // Résolution des sprites pixel-art PNG (générés par pxl) : décodage à
@@ -1191,6 +1222,7 @@ impl GameState {
             exported_initial_variables: HashMap::new(),
             embedded_sprites: HashMap::new(),
             embedded_sheets: HashMap::new(),
+            embedded_svg_assets: HashMap::new(),
             camera3d: None,
             lights: Vec::new(),
             save_config: crate::subsystems::SaveConfig::default(),
@@ -1251,6 +1283,27 @@ impl GameState {
         }
     }
 
+    /// Installe les sources SVG embarquées d'un paquet, puis re-résout les
+    /// `ShapeKind::SvgRef` des entités courantes.
+    ///
+    /// Prioritaire sur le disque (voir [`crate::vector::SvgCache::install_embedded`]) :
+    /// c'est le seul chemin qui fournit encore un sprite vectoriel sous wasm. Le
+    /// cache n'est pas conservé sur l'état (comme à l'import d'une scène) : le
+    /// rendu lit `Entity::vector_sprite`, déjà rastérisé.
+    pub fn apply_embedded_svg(&mut self, sources: HashMap<String, String>) {
+        self.embedded_svg_assets = sources.clone();
+        if sources.is_empty() {
+            // Paquet historique : ne rien réinitialiser, un sprite déjà résolu
+            // sur disque (Studio natif) doit rester en place.
+            return;
+        }
+        let mut svg_cache = crate::vector::SvgCache::new();
+        svg_cache.install_embedded(sources);
+        for ent in self.entities.iter_mut() {
+            resoudre_sprite_vectoriel(ent, &mut svg_cache);
+        }
+    }
+
     /// Réinjecte la mémoire d'un paquet importé dans un état reconstruit.
     ///
     /// `start_game`, `next_level` et `reload` repartent d'une scène nue via
@@ -1260,20 +1313,29 @@ impl GameState {
     /// retomberaient en rectangles colorés.
     ///
     /// Ordre exact, imposé par la priorité au disque et à la scène :
-    /// 1. assets embarqués (caches + re-résolution des entités de la scène) ;
+    /// 1. assets embarqués (PNG, spritesheets puis sources SVG : caches +
+    ///    re-résolution des entités de la scène) ;
     /// 2. graphes du paquet absents de l'état frais, puis leurs variables
     ///    initiales — un graphe résolu sur disque n'est jamais écrasé ;
     /// 3. variables initiales du paquet, uniquement si encore absentes.
     ///
-    /// Hors import de paquet, les quatre sources sont vides : aucun effet, donc
+    /// Hors import de paquet, les sources sont toutes vides : aucun effet, donc
     /// le comportement natif du Studio reste strictement inchangé.
     fn restore_exported_package(&mut self) {
-        if !self.embedded_sprites.is_empty() || !self.embedded_sheets.is_empty() {
+        if !self.embedded_sprites.is_empty()
+            || !self.embedded_sheets.is_empty()
+            || !self.embedded_svg_assets.is_empty()
+        {
             // `apply_embedded_assets` prend les maps par valeur : on clone la
             // mémoire du paquet pour pouvoir la réinstaller au niveau suivant.
             let sprites = self.embedded_sprites.clone();
             let sheets = self.embedded_sheets.clone();
+            let sources_svg = self.embedded_svg_assets.clone();
             self.apply_embedded_assets(sprites, sheets);
+            // Les SVG sont re-résolus après les PNG/spritesheets : les deux
+            // caches sont indépendants, l'ordre n'a d'incidence que sur le
+            // moment où `vector_sprite` est renseigné.
+            self.apply_embedded_svg(sources_svg);
         }
 
         for (path, graph) in &self.exported_kvl_graphs {
@@ -1307,6 +1369,7 @@ impl GameState {
         self.exported_initial_variables = source.exported_initial_variables.clone();
         self.embedded_sprites = source.embedded_sprites.clone();
         self.embedded_sheets = source.embedded_sheets.clone();
+        self.embedded_svg_assets = source.embedded_svg_assets.clone();
         self.restore_exported_package();
     }
 
@@ -2107,6 +2170,14 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
             .set_var("menu_active", Value::Bool(self.screen == crate::screens::GameScreen::Menu));
         self.kvl_context
             .set_var("paused", Value::Bool(self.screen == crate::screens::GameScreen::Paused));
+    }
+
+    /// Numéro affichable du niveau courant (`level_index + 1`).
+    ///
+    /// Source unique du diagnostic `wasm_get_level()` et de
+    /// `window.__karacti_level` : le niveau 1 vaut 1, jamais 0.
+    pub fn current_level(&self) -> u32 {
+        (self.level_index + 1) as u32
     }
 
     /// Démarre (ou redémarre) une partie : scène rechargée, écran `Playing`.
@@ -12399,6 +12470,22 @@ mod tests {
 
         assert_eq!(state.level_index, 0, "une nouvelle partie repart du niveau 1");
         assert_eq!(state.scene_name, "NIVEAU 1");
+    }
+
+    /// `wasm_get_level()` (exposé par la cible wasm) s'appuie sur
+    /// [`GameState::current_level`] : le niveau 1 doit valoir 1, pas 0.
+    #[test]
+    fn current_level_renvoie_le_numero_du_niveau() {
+        let mut state = state_with_screens();
+        state.levels = vec![level_scene("NIVEAU 1"), level_scene("NIVEAU 2")];
+
+        assert_eq!(state.level_index, 0);
+        assert_eq!(state.current_level(), 1, "le niveau 1 vaut 1, jamais 0");
+        assert_eq!(state.current_level(), state.level_index as u32 + 1);
+
+        assert!(state.next_level(), "le niveau 2 est disponible");
+        assert_eq!(state.level_index, 1);
+        assert_eq!(state.current_level(), 2);
     }
 
     /// Chemin du jeu de référence livré (robuste au répertoire courant des tests).

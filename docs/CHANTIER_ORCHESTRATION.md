@@ -151,7 +151,7 @@ sprites importés perd ses images au niveau 2.
 **Dette visée** (rapport v0.3.7 §5.1) : l'import force `screen = Menu` mais `ui_screens`
 est vide — le monde est figé sans surcouche de départ.
 
-## 3undecies. Vague 11 — en cours (les sprites arrivent dans l'export)
+## 3undecies. Vague 11 — terminée (les sprites arrivent dans l'export)
 
 | Agent | Tâche | Critère de sortie |
 |---|---|---|

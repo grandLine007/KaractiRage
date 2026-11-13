@@ -528,13 +528,13 @@
         const ecrans = Array.isArray(gamePackage.ui_screens) ? gamePackage.ui_screens.length : 0;
         window.__karacti_screens = ecrans;
 
-        // Niveau courant exposé aux outils. L'import de paquet replace toujours
-        // le joueur sur le niveau 1 (index 0), et le runtime n'expose pas
-        // d'accesseur de niveau au template : on publie donc ce point de départ
-        // sous la forme attendue (index + 1), sans prétendre suivre les
-        // changements de niveau ultérieurs.
-        const niveauCourant = 0;
-        window.__karacti_level = niveauCourant + 1;
+        // Niveau courant exposé aux outils. La valeur est relue à chaque frame
+        // via `wasm_get_level()` (index + 1) : elle suit donc les changements de
+        // niveau, contrairement à l'ancien point de départ figé à 1. Repli sur 1
+        // si le runtime embarqué ne fournit pas l'accesseur (artefacts anciens).
+        window.__karacti_level = typeof wasmModule.wasm_get_level === 'function'
+          ? wasmModule.wasm_get_level()
+          : 1;
 
         // WebAssembly.Memory exposé par le module (--target web n'exporte pas
         // __wbindgen_memory). On relit .buffer à chaque frame : une croissance
@@ -555,6 +555,13 @@
           const dt = Math.min((now - lastTime) / 1000.0, 0.1);
           lastTime = now;
           wasmModule.wasm_render_frame(dt);
+
+          // Diagnostic de niveau : rafraîchi à chaque frame pour suivre les
+          // passages de niveau (`next_level`). `typeof` protège les exports
+          // construits avec d'anciens artefacts wasm dépourvus de l'accesseur.
+          if (typeof wasmModule.wasm_get_level === 'function') {
+            window.__karacti_level = wasmModule.wasm_get_level();
+          }
 
           const ptr = wasmModule.wasm_get_framebuffer_ptr();
           if (ptr !== 0) {

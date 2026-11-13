@@ -197,6 +197,12 @@ impl AnimClip {
 #[derive(Default)]
 pub struct SvgCache {
     assets: HashMap<String, Arc<LoadedSvg>>,
+    /// Sources SVG embarquées (export autonome / import de paquet) : id -> source.
+    ///
+    /// Elles sont prioritaires sur le disque, exactement comme les PNG de
+    /// [`PngCache::install_embedded`] : sous wasm, aucune lecture de fichier
+    /// n'est possible et c'est le seul chemin qui fournit encore un sprite.
+    embedded: HashMap<String, String>,
 }
 
 impl SvgCache {
@@ -204,12 +210,21 @@ impl SvgCache {
         Self::default()
     }
 
-    /// Récupère un asset déjà rastérisé, ou le charge/rasterise à la demande.
+    /// Installe des sources SVG embarquées, prioritaires sur le disque.
+    pub fn install_embedded(&mut self, sources: HashMap<String, String>) {
+        self.embedded = sources;
+    }
+
+    /// Récupère un asset déjà rastérisé, ou le charge/rasterise à la demande
+    /// (source embarquée d'abord, disque ensuite).
     pub fn get_or_load(&mut self, id: &str) -> Result<Arc<LoadedSvg>, SvgError> {
         if let Some(loaded) = self.assets.get(id) {
             return Ok(loaded.clone());
         }
-        let src = load_svg_source(id)?;
+        let src = match self.embedded.get(id) {
+            Some(source) => source.clone(),
+            None => load_svg_source(id)?,
+        };
         let tree = parse_svg(&src)?;
         let image = rasterize_tree(&tree, None)?;
         let rig = extract_rig(&tree).map(|mut r| {
@@ -226,6 +241,15 @@ impl SvgCache {
         self.assets.insert(id.to_string(), arc.clone());
         Ok(arc)
     }
+}
+
+/// Lit la source SVG brute d'un asset identifié (`None` si introuvable).
+///
+/// Même résolution que [`SvgCache::get_or_load`] côté disque, y compris les
+/// replis embarqués compilés dans le binaire : l'export autonome s'en sert
+/// pour embarquer les sources sans dépendre du répertoire courant.
+pub fn read_svg_source(id: &str) -> Option<String> {
+    load_svg_source(id).ok()
 }
 
 /// Lit la source SVG d'un asset : disque (cwd racine ou `apps/studio`), puis repli embarqué.
@@ -685,6 +709,23 @@ mod tests {
         let b = cache.get_or_load("decor_torch").unwrap();
         assert!(Arc::ptr_eq(&a, &b), "même Arc pour le même id");
         assert!(a.width > 0 && a.height > 0);
+    }
+
+    #[test]
+    fn install_embedded_fournit_une_source_absente_du_disque() {
+        // Identifiant inexistant sur disque : seul le chemin embarqué peut le
+        // résoudre (c'est la situation du runtime wasm).
+        let id = "svg_embarque_test_unitaire";
+        assert!(read_svg_source(id).is_none(), "l'asset ne doit pas exister sur disque");
+
+        let mut sources = HashMap::new();
+        sources.insert(id.to_string(), SQUARE.to_string());
+        let mut cache = SvgCache::new();
+        cache.install_embedded(sources);
+
+        let loaded = cache.get_or_load(id).expect("source embarquée rastérisée");
+        assert_eq!((loaded.width, loaded.height), (16, 16));
+        assert_eq!(loaded.image.pixels[(8 * 16 + 8) as usize], 0xFFFF0000);
     }
 
     #[test]

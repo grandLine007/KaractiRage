@@ -128,6 +128,21 @@ mod wasm_api {
         karactirage_engine::native_api::CANVAS_HEIGHT as u32
     }
 
+    /// Numéro du niveau courant (index + 1, donc 1 au premier niveau).
+    ///
+    /// Le template HTML l'interroge à chaque frame pour tenir
+    /// `window.__karacti_level` à jour, y compris après un changement de niveau.
+    /// Renvoie 0 tant que le moteur n'est pas initialisé : aucune valeur ne
+    /// permet alors de croire à un niveau chargé.
+    #[wasm_bindgen]
+    pub fn wasm_get_level() -> u32 {
+        ENGINE
+            .lock()
+            .ok()
+            .and_then(|engine| engine.as_ref().map(|e| e.game.current_level()))
+            .unwrap_or(0)
+    }
+
     /// Expose le `WebAssembly.Memory` (nécessaire avec `--target web`, qui n'exporte
     /// pas `__wbindgen_memory`).
     #[wasm_bindgen]

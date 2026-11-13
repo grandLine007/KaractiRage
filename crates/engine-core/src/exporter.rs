@@ -412,6 +412,14 @@ pub struct KaractiGamePackage {
     /// Spritesheets embarquées (id -> atlas PNG base64 + JSON), pour l'export autonome.
     #[serde(default)]
     pub sheet_assets: HashMap<String, SheetAssetExport>,
+    /// Sources SVG embarquées (id -> source SVG), pour l'export autonome.
+    ///
+    /// Le runtime wasm ne peut pas lire le disque : sans ces sources,
+    /// `ShapeKind::SvgRef` retombait sur le rectangle teinté. Le texte est
+    /// léger et conserve rigs/animations (rastérisés à l'import par `usvg`).
+    /// `#[serde(default)]` garde lisibles les paquets produits avant ce champ.
+    #[serde(default)]
+    pub svg_assets: HashMap<String, String>,
 }
 
 impl KaractiGamePackage {
@@ -695,6 +703,7 @@ impl StandaloneExporter {
         // Tous les niveaux sont couverts : un sprite du niveau 3 doit voyager aussi.
         let mut sprite_assets = HashMap::new();
         let mut sheet_assets = HashMap::new();
+        let mut svg_assets: HashMap<String, String> = HashMap::new();
         for ent in entites_exportees(game) {
             if let Some(rend) = &ent.renderable {
                 match &rend.shape {
@@ -709,6 +718,14 @@ impl StandaloneExporter {
                                 png: STANDARD.encode(&png),
                                 json,
                             });
+                        }
+                    }
+                    ShapeKind::SvgRef { asset } => {
+                        // Même résolution que le Studio (disque + replis
+                        // `include_str!`) : la source part dans le paquet pour
+                        // que le runtime wasm puisse la rastériser sans disque.
+                        if let Some(source) = crate::vector::read_svg_source(asset) {
+                            svg_assets.entry(asset.clone()).or_insert(source);
                         }
                     }
                     _ => {}
@@ -731,6 +748,11 @@ impl StandaloneExporter {
                     json: json.clone(),
                 });
         }
+        // Idem pour les sources SVG d'un état importé : elles ne sont pas
+        // forcément sur disque (export → import → ré-export).
+        for (id, source) in &game.embedded_svg_assets {
+            svg_assets.entry(id.clone()).or_insert_with(|| source.clone());
+        }
 
         // Union des graphes : scène courante + scripts des niveaux 2/3.
         let kvl_graphs = collecter_graphes_kvl(game);
@@ -750,6 +772,7 @@ impl StandaloneExporter {
             initial_variables: initial_vars,
             sprite_assets,
             sheet_assets,
+            svg_assets,
         }
     }
 
@@ -1082,6 +1105,10 @@ impl StandaloneExporter {
                 nouveau.embedded_sprites = sprites.clone();
                 nouveau.embedded_sheets = sheets.clone();
                 nouveau.apply_embedded_assets(sprites, sheets);
+                // Sources SVG : `from_scene_data` les a cherchées sur disque
+                // (échec garanti sous wasm) ; on les réinstalle depuis le
+                // paquet pour que les `SvgRef` soient rastérisés malgré tout.
+                nouveau.apply_embedded_svg(package.svg_assets.clone());
 
                 // Réinitialise la caméra et la sélection du Studio.
                 nouveau.editor.selected = crate::editor::SelectedEntity::None;
@@ -1143,6 +1170,10 @@ impl StandaloneExporter {
         game.embedded_sprites = sprites.clone();
         game.embedded_sheets = sheets.clone();
         game.apply_embedded_assets(sprites, sheets);
+        // Même installation des sources SVG que le format multi-niveaux : un
+        // ancien paquet sans `svg_assets` laisse simplement la mémoire vide et
+        // les sprites déjà résolus sur disque intacts.
+        game.apply_embedded_svg(package.svg_assets.clone());
 
         // Réinitialise la caméra et la sélection du Studio
         game.editor.selected = crate::editor::SelectedEntity::None;
@@ -1282,6 +1313,7 @@ mod tests {
             initial_variables: HashMap::new(),
             sprite_assets: HashMap::new(),
             sheet_assets: HashMap::new(),
+            svg_assets: HashMap::new(),
         };
 
         let json = package.to_json_pretty().expect("Sérialisation package");
@@ -1315,6 +1347,7 @@ mod tests {
             initial_variables: HashMap::new(),
             sprite_assets: HashMap::new(),
             sheet_assets: HashMap::new(),
+            svg_assets: HashMap::new(),
         };
 
         let html = package.generate_standalone_html();
@@ -1744,6 +1777,7 @@ mod tests {
             initial_variables,
             sprite_assets,
             sheet_assets,
+            svg_assets: HashMap::new(),
         }
     }
 
@@ -1756,6 +1790,7 @@ mod tests {
         assert!(jeu.exported_initial_variables.is_empty());
         assert!(jeu.embedded_sprites.is_empty());
         assert!(jeu.embedded_sheets.is_empty());
+        assert!(jeu.embedded_svg_assets.is_empty());
     }
 
     #[test]
@@ -1898,6 +1933,7 @@ mod tests {
         assert!(jeu.exported_initial_variables.is_empty());
         assert!(jeu.embedded_sprites.is_empty());
         assert!(jeu.embedded_sheets.is_empty());
+        assert!(jeu.embedded_svg_assets.is_empty());
 
         jeu.start_game();
         assert!(!jeu.kvl_graphs.contains_key(SCRIPT_PAQUET));
@@ -2644,5 +2680,279 @@ mod tests {
             package.sheet_assets.contains_key("atlas_importe"),
             "l'atlas embarqué doit être ré-exporté"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Sources SVG embarquées (option A) : le runtime wasm n'a pas de disque.
+    // -----------------------------------------------------------------------
+
+    /// Identifiant volontairement absent du disque : seule la source embarquée
+    /// du paquet peut le résoudre. C'est exactement la situation du wasm.
+    const SVG_PREUVE: &str = "svg_preuve_embarquee_absente_du_disque";
+    const SVG_PREUVE_SOURCE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" fill="#ff00ff"/></svg>"##;
+    /// Couleur du rectangle de repli : elle ne doit pas apparaître quand le SVG
+    /// est résolu (le test de rendu la distingue du magenta du sprite).
+    const COULEUR_REPLI: u32 = 0x00123456;
+
+    /// Charge une scène du dépôt indépendamment du répertoire courant des tests.
+    fn scene_depuis_depot(rel: &str) -> SceneData {
+        let chemin = format!("{}/../../{rel}", env!("CARGO_MANIFEST_DIR"));
+        SceneData::load_from_file(&chemin)
+            .unwrap_or_else(|e| panic!("scène {rel} illisible ({chemin}) : {e}"))
+    }
+
+    /// Projet de preuve SVG (hors dépôt à l'export) : niveau 1 = `level_01`
+    /// (torches + caisse en `SvgRef`), niveau 2 = démo SVG (héros `hero`).
+    fn jeu_preuve_svg() -> GameState {
+        let niveau_1 = scene_depuis_depot("assets/scenes/level_01.scene.json");
+        let niveau_2 = scene_depuis_depot("assets/scenes/svg_demo_01.scene.json");
+        let mut jeu = GameState::from_scene_data(niveau_1.clone(), "preuve:niveau_1")
+            .expect("état de preuve SVG");
+        jeu.levels = vec![niveau_1, niveau_2];
+        jeu
+    }
+
+    /// Scène minimale ne référençant qu'un SVG fourni par le paquet.
+    fn scene_svg_preuve(nom: &str) -> SceneData {
+        use crate::entity::{Entity, Renderable2D, Transform2D};
+
+        let mut rendu = Renderable2D::svg_ref(SVG_PREUVE, 10);
+        rendu.color = COULEUR_REPLI;
+        SceneData {
+            name: nom.to_string(),
+            description: String::new(),
+            objective: None,
+            entities: vec![
+                Entity::new(1, "Joueur SVG", "player", Transform2D::new(100.0, 100.0, 32.0, 32.0))
+                    .with_renderable(rendu),
+            ],
+            player: None,
+            coins: Vec::new(),
+            doors: Vec::new(),
+            walls: Vec::new(),
+            enemies: Vec::new(),
+        }
+    }
+
+    /// Paquet multi-niveaux dont le SVG n'existe que dans `svg_assets`.
+    fn paquet_svg_embarque() -> KaractiGamePackage {
+        let scenes = vec![
+            scene_svg_preuve("NIVEAU SVG 1"),
+            scene_svg_preuve("NIVEAU SVG 2"),
+        ];
+        let mut svg_assets = HashMap::new();
+        svg_assets.insert(SVG_PREUVE.to_string(), SVG_PREUVE_SOURCE.to_string());
+        KaractiGamePackage {
+            metadata: PackageMetadata {
+                title: "Preuve SVG".to_string(),
+                ..PackageMetadata::default()
+            },
+            scene_name: scenes[0].name.clone(),
+            scene_objective: None,
+            entities: scenes[0].to_entities(),
+            scenes,
+            ui_screens: Vec::new(),
+            kvl_graphs: HashMap::new(),
+            initial_variables: HashMap::new(),
+            sprite_assets: HashMap::new(),
+            sheet_assets: HashMap::new(),
+            svg_assets,
+        }
+    }
+
+    /// (a) Le paquet embarque les sources SVG de **toutes** les scènes.
+    #[test]
+    fn test_paquet_preuve_svg_embarque_les_sources_de_tous_les_niveaux() {
+        let jeu = jeu_preuve_svg();
+        let package = StandaloneExporter::create_package(&jeu, "Preuve SVG", "Testeur");
+
+        assert_eq!(package.scenes.len(), 2, "les deux niveaux voyagent");
+        for attendu in ["decor_torch", "decor_crate", "hero"] {
+            let source = package
+                .svg_assets
+                .get(attendu)
+                .unwrap_or_else(|| panic!("source SVG « {attendu} » absente du paquet"));
+            assert!(
+                source.contains("<svg"),
+                "la source de « {attendu} » doit être du SVG brut"
+            );
+        }
+        assert!(
+            package.svg_assets.len() >= 3,
+            "au moins les 3 assets SVG référencés, trouvés : {:?}",
+            package.svg_assets.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// (b) Import dans une instance neuve : `vector_sprite` résolu, y compris
+    /// après `start_game` et `next_level` (reconstructions depuis la scène nue).
+    #[test]
+    fn test_import_paquet_svg_resout_et_survit_aux_reconstructions() {
+        let package = StandaloneExporter::create_package(&jeu_preuve_svg(), "Preuve SVG", "Testeur");
+
+        // Instance neuve : aucun SVG résolu au départ.
+        let mut neuf = GameState::from_scene_data(
+            scene_depuis_depot("assets/scenes/level_01.scene.json"),
+            "test:neuf",
+        )
+        .expect("état neuf");
+
+        StandaloneExporter::import_package(&mut neuf, &package);
+        assert_eq!(neuf.levels.len(), 2);
+        assert!(
+            !neuf.embedded_svg_assets.is_empty(),
+            "les sources SVG sont mémorisées pour les reconstructions"
+        );
+        assert!(
+            neuf.entities.iter().any(|e| e.vector_sprite.is_some()),
+            "le niveau 1 importé doit résoudre ses décors SVG"
+        );
+
+        neuf.start_game();
+        assert!(
+            neuf.entities
+                .iter()
+                .filter(|e| matches!(e.renderable.as_ref().map(|r| &r.shape), Some(ShapeKind::SvgRef { .. })))
+                .all(|e| e.vector_sprite.is_some()),
+            "start_game ne doit pas détruire les sprites SVG du niveau 1"
+        );
+
+        assert!(neuf.next_level(), "le niveau 2 est disponible");
+        let heros = neuf
+            .entities
+            .iter()
+            .find(|e| e.tag == "player")
+            .expect("héros du niveau 2");
+        let sprite = heros
+            .vector_sprite
+            .as_ref()
+            .expect("next_level doit conserver le sprite SVG du héros");
+        assert_eq!(sprite.asset, "hero");
+
+        // `reload` repart aussi d'une scène nue : même exigence.
+        neuf.reload();
+        assert!(
+            neuf.entities.iter().any(|e| e.vector_sprite.is_some()),
+            "reload doit réinstaller les sources SVG du paquet"
+        );
+    }
+
+    /// (b bis + d) Un SVG **absent du disque** mais embarqué est rastérisé :
+    /// c'est la preuve du chemin wasm. Le rendu contient alors la couleur du
+    /// sprite, jamais celle du rectangle de repli.
+    #[test]
+    fn test_svg_embarque_absent_du_disque_est_rendu_et_non_le_repli() {
+        assert!(
+            crate::vector::read_svg_source(SVG_PREUVE).is_none(),
+            "le test n'a de sens que si l'asset est réellement absent du disque"
+        );
+        let package = paquet_svg_embarque();
+        let mut jeu = GameState::from_scene_data(scene_svg_preuve("NEUF"), "test:neuf")
+            .expect("état neuf");
+
+        StandaloneExporter::import_package(&mut jeu, &package);
+        let sprite = jeu.entities[0]
+            .vector_sprite
+            .as_ref()
+            .expect("la source embarquée doit résoudre le sprite");
+        assert_eq!(sprite.asset, SVG_PREUVE);
+        assert!(sprite.image.width > 0 && sprite.image.height > 0);
+
+        let compter = |jeu: &mut GameState, couleur: u32| {
+            let mut canvas = crate::renderer::Canvas::new(1200, 800);
+            jeu.render(&mut canvas);
+            canvas.buffer.iter().filter(|&&p| p == couleur).count()
+        };
+
+        let magenta = 0x00FF00FF;
+        assert!(
+            compter(&mut jeu, magenta) > 100,
+            "le sprite SVG (magenta) doit produire des pixels"
+        );
+
+        // Témoin : sans `vector_sprite`, le rendu retombe sur le rectangle teinté.
+        jeu.entities[0].vector_sprite = None;
+        assert_eq!(
+            compter(&mut jeu, magenta),
+            0,
+            "sans sprite, aucune couleur SVG ne doit apparaître"
+        );
+    }
+
+    /// (c) Ancien paquet sans `svg_assets` : désérialisable, inoffensif.
+    #[test]
+    fn test_ancien_paquet_sans_svg_assets_reste_importable() {
+        let package = paquet_svg_embarque();
+        let mut valeur = serde_json::to_value(&package).expect("paquet JSON");
+        valeur
+            .as_object_mut()
+            .expect("objet JSON")
+            .remove("svg_assets")
+            .expect("champ svg_assets présent avant retrait");
+
+        let ancien = KaractiGamePackage::from_json(&serde_json::to_string(&valeur).expect("JSON"))
+            .expect("un ancien paquet sans svg_assets reste lisible");
+        assert!(ancien.svg_assets.is_empty());
+
+        let mut neuf = jeu_reference();
+        StandaloneExporter::import_package(&mut neuf, &ancien);
+        assert_eq!(neuf.levels.len(), 2, "les niveaux restent importés");
+        assert!(
+            neuf.embedded_svg_assets.is_empty(),
+            "aucune source inventée pour un ancien paquet"
+        );
+        // Import valide : le rendu ne panique pas.
+        neuf.start_game();
+        let mut canvas = crate::renderer::Canvas::new(1200, 800);
+        neuf.render(&mut canvas);
+    }
+
+    /// Le non-écrasement vaut aussi pour une scène qui porte déjà son sprite.
+    #[test]
+    fn test_scene_deja_resolue_conserve_son_vector_sprite() {
+        use crate::entity::{Entity, Renderable2D, Transform2D};
+
+        let mut entite = Entity::new(
+            1,
+            "Torche déjà résolue",
+            "decor",
+            Transform2D::new(100.0, 100.0, 32.0, 64.0),
+        )
+        .with_renderable(Renderable2D::svg_ref(SVG_PREUVE, 5));
+        let image = std::sync::Arc::new(crate::vector::RasterImage {
+            width: 1,
+            height: 1,
+            pixels: vec![0x00FF00FF],
+        });
+        entite.vector_sprite = Some(crate::entity::VectorSprite {
+            asset: SVG_PREUVE.to_string(),
+            image,
+            rig: None,
+            clip: "idle".to_string(),
+            time: 0.0,
+            speed: 1.0,
+            playing: true,
+        });
+        let scene = SceneData {
+            name: "Scène déjà résolue".to_string(),
+            description: String::new(),
+            objective: None,
+            entities: vec![entite],
+            player: None,
+            coins: Vec::new(),
+            doors: Vec::new(),
+            walls: Vec::new(),
+            enemies: Vec::new(),
+        };
+
+        // La source est introuvable (ni disque ni embarqué) : le sprite existant
+        // doit survivre au lieu d'être remis à `None`.
+        let etat = GameState::from_scene_data(scene, "test:deja_resolue")
+            .expect("état sur scène déjà résolue");
+        let sprite = etat.entities[0]
+            .vector_sprite
+            .as_ref()
+            .expect("le vector_sprite de la scène ne doit pas être détruit");
+        assert_eq!(sprite.asset, SVG_PREUVE);
     }
 }
