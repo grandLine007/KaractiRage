@@ -220,6 +220,16 @@ cpal, symphonia…) n'est pas caché et crates.io est bloqué. Un décodeur WAV 
 PCM) couvre le besoin sans aucune dépendance ; OGG/MP3 restent à faire (vendoring ou
 réseau).
 
+## 3octodecies. Vague 17 — en cours (P2.4 : rechargement à chaud)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| agent-11 | Veilleur de fichiers sans dépendance + commande Tauri + intervalle UI | modifier une scène sur disque la recharge en < 1 s, avec un toast |
+
+**Décision de meneur** : pas de crate `notify` (crates.io bloqué, backends par
+plateforme). Un veilleur par interrogation de mtime, testable, suffit pour un
+rechargement sous la seconde.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
