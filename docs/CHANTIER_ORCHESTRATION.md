@@ -185,6 +185,18 @@ optionnelles lourdes (zstd, ggez, sfml) ont été retirées du Cargo.toml vendor
 **Conséquence assumée** : les cartes compressées en zstd ne sont pas lisibles ; l'import
 v1 couvre les couches d'objets, les couches de tuiles sont aplaties.
 
+## 3quaterdecies. Vague 14 — en cours (Tiled dans le Studio)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| agent-8 | Déposer un `.tmx` dans le Studio → projet créé et ouvert | commande Tauri, zone de dépôt, projet relu par le moteur, tests moteur |
+
+**Contrainte** : aucune dépendance nouvelle (pas de plugin dialog) — on utilise le
+glisser-déposer intégré de Tauri v2 via `@tauri-apps/api/webview`.
+
+**Vague 15 prévue** : tilesets → composant `Tilemap` (une entité par couche, atlas de
+tuiles), pour que les couches de tuiles cessent d'être des aplats.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
