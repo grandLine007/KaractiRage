@@ -2200,6 +2200,9 @@ fn shape_label(shape: Option<&ShapeKind>) -> String {
         Some(ShapeKind::ImageRef { asset }) => format!("ImageRef({asset})"),
         Some(ShapeKind::SheetRef { asset, frame }) => format!("SheetRef({asset}:{frame})"),
         Some(ShapeKind::AnimRef { asset }) => format!("AnimRef({asset})"),
+        Some(ShapeKind::Tilemap { asset, tiles, .. }) => {
+            format!("Tilemap({asset}:{} tuiles)", tiles.len())
+        }
     }
 }
 

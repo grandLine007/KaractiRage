@@ -724,6 +724,14 @@ impl StandaloneExporter {
                             sprite_assets.entry(asset.clone()).or_insert_with(|| STANDARD.encode(&bytes));
                         }
                     }
+                    ShapeKind::Tilemap { asset, .. } => {
+                        // L'atlas de tuiles voyage dans `sprite_assets`, comme
+                        // les sprites PNG : le runtime wasm n'a pas de disque et
+                        // dessinerait sinon des cases vides.
+                        if let Some(bytes) = crate::vector::read_png_source(asset) {
+                            sprite_assets.entry(asset.clone()).or_insert_with(|| STANDARD.encode(&bytes));
+                        }
+                    }
                     ShapeKind::SheetRef { asset, .. } | ShapeKind::AnimRef { asset } => {
                         if let Some((png, json)) = crate::sheet::read_sheet_source(asset) {
                             sheet_assets.entry(asset.clone()).or_insert_with(|| SheetAssetExport {
@@ -919,6 +927,13 @@ impl StandaloneExporter {
                     game.sprite_cache.get(asset).is_none()
                         && crate::vector::read_png_source(asset).is_none()
                 }
+                ShapeKind::Tilemap { asset, .. } => {
+                    // Même règle que les sprites PNG : présent si le cache l'a
+                    // décodé (scène native ou paquet importé) ou si le fichier
+                    // source est lisible sur disque.
+                    game.sprite_cache.get(asset).is_none()
+                        && crate::vector::read_png_source(asset).is_none()
+                }
                 ShapeKind::SheetRef { asset, .. } | ShapeKind::AnimRef { asset } => {
                     game.sheet_cache.get(asset).is_none()
                         && crate::sheet::read_sheet_source(asset).is_none()
@@ -928,6 +943,7 @@ impl StandaloneExporter {
             if asset_absent {
                 let (reference, libelle) = match &rend.shape {
                     ShapeKind::SvgRef { asset } | ShapeKind::ImageRef { asset } => (asset, "sprite"),
+                    ShapeKind::Tilemap { asset, .. } => (asset, "tileset"),
                     ShapeKind::SheetRef { asset, .. } | ShapeKind::AnimRef { asset } => {
                         (asset, "spritesheet")
                     }
@@ -1275,6 +1291,7 @@ fn entites_referencent_des_assets(game: &GameState) -> bool {
                         | ShapeKind::ImageRef { .. }
                         | ShapeKind::SheetRef { .. }
                         | ShapeKind::AnimRef { .. }
+                        | ShapeKind::Tilemap { .. }
                 )
             })
     })

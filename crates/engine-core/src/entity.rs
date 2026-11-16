@@ -106,6 +106,27 @@ pub enum ShapeKind {
     SheetRef { asset: String, frame: String },
     /// Animation par frames pxl (bande d'images + durées), lue en boucle.
     AnimRef { asset: String },
+    /// Carte de tuiles Tiled : un atlas PNG découpé en une grille régulière.
+    ///
+    /// - `asset` : identifiant de l'atlas (résolu par `GameState::sprite_cache`) ;
+    /// - `tile_w`/`tile_h` : taille d'une tuile dans l'atlas (pixels) ;
+    /// - `columns` : nombre de colonnes de l'atlas (pour retrouver ligne/colonne) ;
+    /// - `tiles` : indices de tuiles, ligne par ligne (Y vers le bas, comme Tiled).
+    ///   `0` = cellule vide ; une valeur `n > 0` désigne la tuile locale `n - 1`
+    ///   du tileset (indice relatif au `firstgid`, décalé de 1 pour réserver `0`
+    ///   à la cellule vide). Les tuiles d'animation sont figées sur leur première
+    ///   image et les retournements/rotations ne sont pas appliqués (v1).
+    ///
+    /// La grille fait `transform.w / tile_w` colonnes : l'importeur fixe
+    /// `transform.w`/`transform.h` à `colonnes_grille × tile_w` et
+    /// `lignes_grille × tile_h`, donc les tuiles sont rendues à leur taille native.
+    Tilemap {
+        asset: String,
+        tile_w: u32,
+        tile_h: u32,
+        columns: u32,
+        tiles: Vec<u32>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -181,6 +202,33 @@ impl Renderable2D {
         Self {
             shape: ShapeKind::AnimRef { asset: asset.into() },
             color: 0x00FFFFFF,
+            outline_color: None,
+            outline_width: 0,
+            z_index,
+            visible: true,
+        }
+    }
+
+    /// Carte de tuiles Tiled : atlas PNG + grille d'indices locaux (0 = vide).
+    ///
+    /// `color` sert uniquement de repli si l'atlas est introuvable.
+    pub fn tilemap(
+        asset: impl Into<String>,
+        tile_w: u32,
+        tile_h: u32,
+        columns: u32,
+        tiles: Vec<u32>,
+        z_index: i32,
+    ) -> Self {
+        Self {
+            shape: ShapeKind::Tilemap {
+                asset: asset.into(),
+                tile_w,
+                tile_h,
+                columns,
+                tiles,
+            },
+            color: 0x00334155,
             outline_color: None,
             outline_width: 0,
             z_index,

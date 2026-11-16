@@ -620,7 +620,12 @@ fn default_clips(parts: &[RigPart]) -> Vec<AnimClip> {
 pub fn decode_png(bytes: &[u8]) -> Result<RasterImage, SvgError> {
     const MAX_DIM: u32 = 4096;
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    // `normalize_to_color8` seul ne convertit pas RGB -> RGBA : le tampon restait à
+    // 3 octets/pixel et `chunks_exact(4)` produisait une image corrompue (dimensions
+    // fausses, couleurs décalées). `ALPHA` force l'expansion en RGBA.
+    decoder.set_transformations(
+        png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
+    );
     let mut reader = decoder.read_info().map_err(|e| SvgError(e.to_string()))?;
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).map_err(|e| SvgError(e.to_string()))?;
@@ -631,8 +636,17 @@ pub fn decode_png(bytes: &[u8]) -> Result<RasterImage, SvgError> {
         )));
     }
 
+    let attendu = (info.width as usize) * (info.height as usize) * 4;
+    if buf.len() < attendu {
+        return Err(SvgError(format!(
+            "PNG incohérent : {} octets décodés pour {}x{} (attendu {attendu})",
+            buf.len(),
+            info.width,
+            info.height
+        )));
+    }
     let mut pixels = Vec::with_capacity((info.width * info.height) as usize);
-    for px in buf.chunks_exact(4) {
+    for px in buf[..attendu].chunks_exact(4) {
         let r = px[0] as u32;
         let g = px[1] as u32;
         let b = px[2] as u32;
@@ -678,6 +692,13 @@ pub struct PngCache {
     assets: HashMap<String, Arc<RasterImage>>,
     /// Assets embarqués (export standalone / import de package) : id -> PNG brut.
     embedded: HashMap<String, Vec<u8>>,
+    /// Tuiles déjà recadrées depuis un atlas (voir [`Self::get_or_crop_tile`]) :
+    /// atlas id -> `(tile_w, tile_h, index local)` -> bitmap.
+    ///
+    /// Le découpage n'a lieu qu'une fois par tuile distincte, jamais par cellule :
+    /// une carte de 100 × 100 cellules qui réutilise 16 tuiles ne recadre que
+    /// 16 bitmaps, et le rendu ne fait plus aucune allocation.
+    tile_cache: HashMap<String, HashMap<(u32, u32, u32), Arc<RasterImage>>>,
 }
 
 impl PngCache {
@@ -688,6 +709,9 @@ impl PngCache {
     /// Installe des assets embarqués, prioritaires sur le disque.
     pub fn install_embedded(&mut self, map: HashMap<String, Vec<u8>>) {
         self.embedded = map;
+        // Un nouvel atlas peut remplacer les anciens : les tuiles recadrées
+        // deviendraient obsolètes.
+        self.tile_cache.clear();
     }
 
     /// Récupère un asset déjà décodé, ou le charge à la demande (embarqué puis disque).
@@ -708,6 +732,54 @@ impl PngCache {
     /// Accès en lecture seule (chemin de rendu) : `None` si absent ou échoué.
     pub fn get(&self, id: &str) -> Option<&Arc<RasterImage>> {
         self.assets.get(id)
+    }
+
+    /// Tuile `index` (0-based) de l'atlas `id`, recadrée à la demande puis mise
+    /// en cache. `columns` est le nombre de colonnes de l'atlas.
+    ///
+    /// `None` si l'atlas n'est pas chargé, si la tuile sort de l'image ou si les
+    /// dimensions sont invalides. Aucun accès disque : le rendu ne doit jamais
+    /// bloquer sur un I/O ; l'atlas est chargé à l'import (ou depuis les assets
+    /// embarqués du paquet).
+    pub fn get_or_crop_tile(
+        &mut self,
+        id: &str,
+        tile_w: u32,
+        tile_h: u32,
+        columns: u32,
+        index: u32,
+    ) -> Option<Arc<RasterImage>> {
+        if tile_w == 0 || tile_h == 0 || columns == 0 {
+            return None;
+        }
+        let cle = (tile_w, tile_h, index);
+        if let Some(tuile) = self
+            .tile_cache
+            .get(id)
+            .and_then(|tuiles| tuiles.get(&cle))
+        {
+            return Some(tuile.clone());
+        }
+
+        let atlas = self.assets.get(id)?.clone();
+        let colonne = (index % columns) as i64;
+        let ligne = (index / columns) as i64;
+        let x0 = colonne * tile_w as i64;
+        let y0 = ligne * tile_h as i64;
+        if x0 + tile_w as i64 > atlas.width as i64 || y0 + tile_h as i64 > atlas.height as i64 {
+            return None;
+        }
+        let image = Arc::new(atlas.crop(
+            x0 as i32,
+            y0 as i32,
+            (x0 + tile_w as i64) as i32,
+            (y0 + tile_h as i64) as i32,
+        ));
+        self.tile_cache
+            .entry(id.to_string())
+            .or_default()
+            .insert(cle, image.clone());
+        Some(image)
     }
 
     /// Identifiants déjà chargés avec succès.
@@ -958,6 +1030,29 @@ mod tests {
         let again = cache.get("coin").expect("déjà chargé");
         assert!(Arc::ptr_eq(&img, again));
         assert!(cache.get("asset_inexistant").is_none());
+    }
+
+    #[test]
+    fn decode_png_rgb_sans_alpha_produit_les_bonnes_dimensions() {
+        // Régression : `normalize_to_color8` seul laissait le tampon en RGB (3 octets
+        // par pixel) ; `chunks_exact(4)` produisait alors une image corrompue et un
+        // panic au recadrage des tuiles d'un tileset Tiled exporté en RGB.
+        const PNG_RGB_2X1: &[u8] = &[
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0,
+            1, 8, 2, 0, 0, 0, 123, 64, 232, 221, 0, 0, 0, 15, 73, 68, 65, 84, 120, 218, 99, 248,
+            207, 192, 192, 240, 159, 1, 0, 7, 255, 1, 255, 184, 4, 53, 224, 0, 0, 0, 0, 73, 69,
+            78, 68, 174, 66, 96, 130,
+        ];
+        let image = decode_png(PNG_RGB_2X1).expect("PNG RGB décodé");
+        assert_eq!((image.width, image.height), (2, 1));
+        assert_eq!(image.pixels.len(), 2, "un pixel par colonne, pas de corruption");
+        // Rouge opaque puis vert opaque (prémultiplié : alpha 255).
+        assert_eq!(image.pixels[0] >> 24, 255, "alpha du pixel rouge");
+        assert_eq!(image.pixels[1] >> 24, 255, "alpha du pixel vert");
+        let rouge = (image.pixels[0] >> 16) & 0xff;
+        let vert = (image.pixels[1] >> 8) & 0xff;
+        assert_eq!(rouge, 255, "canal rouge de la première tuile");
+        assert_eq!(vert, 255, "canal vert de la seconde tuile");
     }
 }
 

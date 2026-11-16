@@ -197,7 +197,7 @@ glisser-déposer intégré de Tauri v2 via `@tauri-apps/api/webview`.
 **Vague 15 prévue** : tilesets → composant `Tilemap` (une entité par couche, atlas de
 tuiles), pour que les couches de tuiles cessent d'être des aplats.
 
-## 3quindecies. Vague 15 — en cours (Tilemap et tilesets)
+## 3quindecies. Vague 15 — terminée (Tilemap et tilesets)
 
 | Agent | Tâche | Critère de sortie |
 |---|---|---|

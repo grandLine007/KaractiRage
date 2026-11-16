@@ -13,8 +13,15 @@
 //! - seules les cartes **orthogonales** sont acceptées (une autre orientation
 //!   produit une erreur explicite) ; les cartes **infinies** voient leurs objets
 //!   importés mais leurs couches de tuiles ignorées avec un avertissement ;
-//! - les **couches de tuiles** sont **aplaties** en une seule entité `decor`
-//!   rectangulaire : les tuiles individuelles et les tilesets ne sont pas importés ;
+//! - chaque **couche de tuiles finie** devient **une entité `Tilemap`** (atlas
+//!   PNG + indices de tuiles, voir [`ShapeKind::Tilemap`]) : les tuiles sont donc
+//!   rendues comme dans Tiled, dans l'ordre des couches (z croissant, derrière
+//!   les objets). Seul le **premier tileset** de la carte est importé ; son image
+//!   est copiée dans `tilesets/<nom>.png` à côté de la carte et référencée par
+//!   un chemin stable. Les tuiles des autres tilesets sont ignorées ;
+//! - les **tuiles retournées/rotées** sont dessinées sans transformation et les
+//!   **tuiles d'animation** sont figées sur leur première image (limites v1,
+//!   signalées par avertissement) ;
 //! - les **couches d'images**, les **groupes imbriqués** et les objets
 //!   **polygones/polylignes/texte/capsule** sont ignorés avec un avertissement ;
 //! - aucune dépendance nouvelle. La build vendorée de `tiled` n'active pas `zstd` :
@@ -43,21 +50,25 @@ const TAILLE_POINT: f32 = 16.0;
 const TAILLE_JOUEUR_POINT: f32 = 32.0;
 /// Vitesse du joueur importé (pixels/seconde).
 const VITESSE_JOUEUR: f32 = 300.0;
-/// Couleurs de fond stables attribuées aux couches de tuiles aplaties.
-const COULEURS_COUCHES: [u32; 6] = [
-    0x00334155, 0x002A3A2F, 0x003A2F2A, 0x002F2A3A, 0x003A3A2A, 0x002A3A3A,
-];
+/// Plafond de cellules d'une couche de tuiles importée (4096 × 4096) : au-delà,
+/// le vecteur d'indices dépasserait 64 Mio et la carte est ignorée avec un
+/// avertissement plutôt que de risquer une allocation démesurée.
+const MAX_CELLULES_TILEMAP: usize = 4096 * 4096;
 
 /// Rapport d'import d'une carte Tiled.
 #[derive(Debug, Clone)]
 pub struct TiledImportReport {
     /// Scène prête à être sérialisée puis chargée par `GameState`.
     pub scene: SceneData,
-    /// Avertissements non bloquants (tuiles aplaties, couches ignorées, etc.).
+    /// Avertissements non bloquants (tilesets multiples, tuiles ignorées,
+    /// couches non supportées, etc.).
     pub warnings: Vec<String>,
-    /// Nombre total d'entités produites (objets + couches de tuiles aplaties).
+    /// Nombre total d'entités produites (objets + entités `Tilemap`).
     pub entities_imported: usize,
-    /// Nombre de couches de tuiles transformées en entité de décor.
+    /// Nombre de couches de tuiles converties en entité `Tilemap`.
+    pub tile_layers_imported: usize,
+    /// Ancien compteur de couches **aplaties**. Toujours `0` depuis que les
+    /// tuiles sont importées : conservé pour ne pas casser l'IPC Studio.
     pub tile_layers_flattened: usize,
     /// Dimensions de la carte en **pixels** : `(largeur, hauteur)`.
     pub map_size: (u32, u32),
@@ -151,7 +162,8 @@ pub enum TiledImportError {
     #[error(
         "Ressource Tiled introuvable pour « {origin} » : « {chemin} » ({details}). Vérifiez que \
          les fichiers .tsx (tilesets externes) et .tx (templates) sont à côté de la carte ; \
-         l'import v1 n'importe pas les tilesets mais le parseur Tiled exige leur présence."
+         l'import v1 importe le premier tileset mais le parseur Tiled exige la présence de \
+         toutes les ressources référencées."
     )]
     RessourceManquante {
         /// Origine de la carte (chemin ou libellé).
@@ -213,15 +225,18 @@ pub enum TiledImportError {
 /// Importe une carte Tiled depuis le disque.
 ///
 /// Les tilesets externes et templates éventuels sont lus relativement au fichier
-/// `.tmx` (comportement du crate `tiled`), même s'ils ne sont pas importés dans la
-/// scène v1.
+/// `.tmx` (comportement du crate `tiled`). L'image du **premier** tileset est
+/// copiée dans `tilesets/` à côté de la carte, puis référencée par les entités
+/// `Tilemap` de la scène produite.
 pub fn import_tmx(path: &Path) -> Result<TiledImportReport, TiledImportError> {
     let xml = std::fs::read_to_string(path).map_err(|source| TiledImportError::Lecture {
         chemin: path.display().to_string(),
         source,
     })?;
     let origin = path.display().to_string();
-    import_impl(&xml, &origin, Some(path))
+    protege_du_panic(&origin, || {
+        import_impl(&compacter_csv(&xml), &origin, Some(path))
+    })
 }
 
 /// Importe une carte Tiled **et l'écrit comme projet KaractiRage prêt à ouvrir**.
@@ -235,8 +250,11 @@ pub fn import_tmx(path: &Path) -> Result<TiledImportReport, TiledImportError> {
 ///   par `KaractiProject::load_from_file` puis `GameState::load_project`.
 ///
 /// `<nom>` est le nom de la carte (nom de fichier sans extension), assaini pour
-/// rester un nom de fichier portable. Aucun fichier n'est écrit ailleurs : les
-/// assets du dépôt ne sont jamais modifiés.
+/// rester un nom de fichier portable. Les assets du dépôt ne sont jamais
+/// modifiés : la seule écriture hors sortie est la copie
+/// `tilesets/<nom-tileset>.png` **à côté de la carte**, faite par
+/// [`import_tmx`], qui rend la carte autonome une fois déplacée avec son dossier
+/// `tilesets/`.
 pub fn import_tmx_to_project(
     tmx_path: &Path,
     dest_dir: Option<&Path>,
@@ -370,8 +388,72 @@ fn ecrans_par_defaut() -> Vec<UiScreen> {
 /// `origin` sert uniquement aux messages d'erreur et au nom de la scène. Les
 /// éventuelles ressources externes sont résolues relativement au répertoire
 /// d'`origin` (ou au répertoire courant si `origin` n'a pas de parent).
+/// Compacte les blocs `<data encoding="csv">` avant de les donner au parseur.
+///
+/// Tiled exporte une ligne par rangée de la carte. Le crate `tiled` vendoré ne
+/// tolère pas les sauts de ligne dans les données CSV : une carte de plus d'une
+/// rangée échouait avec « invalid digit found in string ». On joint donc les
+/// valeurs en retirant tout espace, ce qui ne change ni l'ordre ni les valeurs.
+fn compacter_csv(xml: &str) -> String {
+    let mut sortie = String::with_capacity(xml.len());
+    let mut reste = xml;
+    while let Some(debut) = reste.find("<data") {
+        sortie.push_str(&reste[..debut]);
+        let bloc = &reste[debut..];
+        let Some(fin) = bloc.find("</data>") else {
+            sortie.push_str(bloc);
+            return sortie;
+        };
+        let entete_fin = match bloc.find('>') {
+            Some(index) => index + 1,
+            None => {
+                sortie.push_str(bloc);
+                return sortie;
+            }
+        };
+        let entete = &bloc[..entete_fin];
+        if entete.contains("encoding=\"csv\"") {
+            let contenu = &bloc[entete_fin..fin];
+            // Les rangées sont séparées par des sauts de ligne : on joint par des
+            // virgules (retirer les espaces collerait « …4 » et « 1… » en « 41 »).
+            let compacte: String = contenu
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter(|valeur| !valeur.is_empty())
+                .collect::<Vec<_>>()
+                .join(",");
+            sortie.push_str(entete);
+            sortie.push_str(&compacte);
+            sortie.push_str("</data>");
+        } else {
+            sortie.push_str(&bloc[..fin + "</data>".len()]);
+        }
+        reste = &bloc[fin + "</data>".len()..];
+    }
+    sortie.push_str(reste);
+    sortie
+}
+
+/// Exécute l'import en convertissant tout panic du parseur vendoré en erreur.
+///
+/// Le crate `tiled` panique (`index out of bounds`) sur une carte dont les données
+/// ne couvrent pas `largeur × hauteur`. Une entrée utilisateur ne doit jamais faire
+/// tomber le processus : on renvoie une `CarteInvalide` actionnable.
+fn protege_du_panic<F>(origin: &str, import: F) -> Result<TiledImportReport, TiledImportError>
+where
+    F: FnOnce() -> Result<TiledImportReport, TiledImportError>,
+{
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(import)) {
+        Ok(resultat) => resultat,
+        Err(_) => Err(TiledImportError::CarteInvalide {
+            origin: origin.to_string(),
+            details: "carte incohérente : le nombre de tuiles diffère de largeur × hauteur \
+                      (ou les données sont illisibles)".to_string(),
+        }),
+    }
+}
+
 pub fn import_tmx_str(xml: &str, origin: &str) -> Result<TiledImportReport, TiledImportError> {
-    import_impl(xml, origin, None)
+    protege_du_panic(origin, || import_impl(&compacter_csv(xml), origin, None))
 }
 
 fn import_impl(
@@ -418,7 +500,8 @@ fn import_impl(
     let mut warnings = Vec::new();
     let mut entites: Vec<Entity> = Vec::new();
     let mut prochain_id = 1usize;
-    let mut couches_tuiles_aplaties = 0usize;
+    let mut couches_tuiles_importees = 0usize;
+    let total_couches = map.layers().count();
 
     // Un joueur et un seul : vérifié avant de construire quoi que ce soit pour
     // produire l'erreur la plus directe possible.
@@ -442,10 +525,42 @@ fn import_impl(
 
     if map.infinite() {
         warnings.push(
-            "Carte Tiled infinie : les couches de tuiles ne sont pas aplaties (les objets sont \
+            "Carte Tiled infinie : les couches de tuiles ne sont pas importées (les objets sont \
              importés tels quels). Utilisez une carte finie pour obtenir un décor."
                 .to_string(),
         );
+    }
+
+    if map.tilesets().len() > 1 {
+        let premier = map
+            .tilesets()
+            .first()
+            .map(|tileset| tileset.name.as_str())
+            .filter(|nom| !nom.trim().is_empty())
+            .unwrap_or("sans nom");
+        warnings.push(format!(
+            "Carte « {origin} » : {} tilesets détectés ; seul le premier « {premier} » est importé \
+             (limite v1). Les tuiles des autres tilesets sont ignorées.",
+            map.tilesets().len()
+        ));
+    }
+
+    // Le premier tileset est préparé une seule fois : copie de l'image à côté de
+    // la carte et métadonnées de découpe partagées par toutes les couches.
+    let tileset_importe = preparer_tileset(
+        map.tilesets().first().map(|tileset| tileset.as_ref()),
+        chemin,
+        origin,
+        &mut warnings,
+    );
+    if let Some(ref infos) = tileset_importe {
+        if infos.tile_w != map.tile_width || infos.tile_h != map.tile_height {
+            warnings.push(format!(
+                "Tileset « {} » : tuiles de {}×{} px dans une carte à {}×{} px ; elles sont \
+                 rendues à leur taille native, sans étirement (limite v1).",
+                infos.nom, infos.tile_w, infos.tile_h, map.tile_width, map.tile_height
+            ));
+        }
     }
 
     for (index_couche, couche) in map.layers().enumerate() {
@@ -488,34 +603,126 @@ fn import_impl(
                     continue;
                 }
 
-                let largeur = largeur_tuiles as f32 * map.tile_width as f32;
-                let hauteur = hauteur_tuiles as f32 * map.tile_height as f32;
                 let nom_couche = if couche.name.trim().is_empty() {
                     format!("couche_{}", index_couche)
                 } else {
                     couche.name.clone()
                 };
-                let couleur = COULEURS_COUCHES[index_couche % COULEURS_COUCHES.len()];
-                let mut rendu = Renderable2D::rect(couleur, -(index_couche as i32) - 1);
-                rendu.outline_color = Some(0x00475569);
-                rendu.outline_width = 1;
+
+                let Some(ref infos) = tileset_importe else {
+                    warnings.push(format!(
+                        "Couche de tuiles « {} » ignorée : aucun tileset importable dans la carte \
+                         (seul le premier tileset avec une image est utilisé en v1).",
+                        nom_couche
+                    ));
+                    continue;
+                };
+
+                let Some(nombre_cellules) =
+                    (largeur_tuiles as usize).checked_mul(hauteur_tuiles as usize)
+                else {
+                    warnings.push(format!(
+                        "Couche de tuiles « {nom_couche} » ignorée : dimensions trop grandes."
+                    ));
+                    continue;
+                };
+                if nombre_cellules > MAX_CELLULES_TILEMAP {
+                    warnings.push(format!(
+                        "Couche de tuiles « {nom_couche} » ignorée : {nombre_cellules} cellules \
+                         dépassent le plafond de {MAX_CELLULES_TILEMAP} (limite v1)."
+                    ));
+                    continue;
+                }
+                let mut tuiles = vec![0u32; nombre_cellules];
+                let mut retournees = 0usize;
+                let mut animees = 0usize;
+                let mut autres_tilesets = 0usize;
+
+                for y in 0..hauteur_tuiles {
+                    for x in 0..largeur_tuiles {
+                        let Some(tuile) = couche_tuiles.get_tile(x as i32, y as i32) else {
+                            continue; // cellule vide
+                        };
+                        // `tileset_index` est relatif à l'ordre de la carte : seul
+                        // l'index 0 (premier tileset) est importé en v1.
+                        if tuile.tileset_index() != 0 {
+                            autres_tilesets += 1;
+                            continue;
+                        }
+                        if tuile.flip_h || tuile.flip_v || tuile.flip_d {
+                            retournees += 1;
+                        }
+                        // Tuile d'animation : on fige la première image (v1).
+                        let mut index_local = tuile.id();
+                        if let Some(definition) = tuile.get_tile() {
+                            if let Some(animation) = &definition.animation {
+                                if let Some(premiere) = animation.first() {
+                                    index_local = premiere.tile_id;
+                                    animees += 1;
+                                }
+                            }
+                        }
+                        // `0` = vide, donc l'indice local (0-based) est décalé de 1.
+                        tuiles[y as usize * largeur_tuiles as usize + x as usize] =
+                            index_local.saturating_add(1);
+                    }
+                }
+
+                if autres_tilesets > 0 {
+                    warnings.push(format!(
+                        "Couche de tuiles « {} » : {autres_tilesets} tuile(s) d'un autre tileset \
+                         ignorée(s) (seul le premier tileset est importé).",
+                        nom_couche
+                    ));
+                }
+                if retournees > 0 {
+                    warnings.push(format!(
+                        "Couche de tuiles « {} » : {retournees} tuile(s) retournée(s)/rotée(s) \
+                         dessinée(s) sans transformation (limite v1).",
+                        nom_couche
+                    ));
+                }
+                if animees > 0 {
+                    warnings.push(format!(
+                        "Couche de tuiles « {} » : {animees} tuile(s) animée(s) figée(s) sur leur \
+                         première image (limite v1).",
+                        nom_couche
+                    ));
+                }
+
+                if tuiles.iter().all(|&tuile| tuile == 0) {
+                    // Couche vide (ou uniquement composée de tuiles d'autres
+                    // tilesets) : aucune entité à créer, comme dans Tiled.
+                    continue;
+                }
+
+                // Une tuile est rendue à sa taille native ; la grille de l'entité
+                // fait donc exactement `colonnes × tile_w` par `lignes × tile_h`.
+                let largeur = largeur_tuiles as f32 * infos.tile_w as f32;
+                let hauteur = hauteur_tuiles as f32 * infos.tile_h as f32;
+                // Les couches de tuiles restent derrière les objets ; l'ordre des
+                // couches Tiled est conservé (une couche plus basse passe dessus).
+                let z_index = index_couche as i32 - total_couches as i32;
+                let rendu = Renderable2D::tilemap(
+                    infos.asset.clone(),
+                    infos.tile_w,
+                    infos.tile_h,
+                    infos.columns,
+                    tuiles,
+                    z_index,
+                );
 
                 let entite = Entity::new(
                     prochain_id,
                     format!("tiled:{}", nom_couche),
-                    "decor",
+                    "tilemap",
                     Transform2D::new(couche.offset_x, couche.offset_y, largeur, hauteur),
                 )
                 .with_renderable(rendu);
 
                 entites.push(entite);
                 prochain_id += 1;
-                couches_tuiles_aplaties += 1;
-                warnings.push(format!(
-                    "Couche de tuiles « {} » aplatie en une entité de décor — les tuiles \
-                     individuelles ne sont pas importées en v1.",
-                    nom_couche
-                ));
+                couches_tuiles_importees += 1;
             }
             LayerType::Image(_) => warnings.push(format!(
                 "Couche d'image « {} » ignorée : l'import v1 ne gère pas les images de fond.",
@@ -545,7 +752,7 @@ fn import_impl(
         name: nom_carte,
         description: format!(
             "Importée depuis « {origin} » par l'importeur Tiled v1 (couches d'objets + couches \
-             de tuiles aplaties)."
+             de tuiles Tilemap)."
         ),
         objective: None,
         entities: entites,
@@ -560,12 +767,148 @@ fn import_impl(
         entities_imported: scene.entities.len(),
         scene,
         warnings,
-        tile_layers_flattened: couches_tuiles_aplaties,
+        tile_layers_imported: couches_tuiles_importees,
+        // Plus aucune couche n'est aplatie : le champ reste à 0 pour l'IPC Studio.
+        tile_layers_flattened: 0,
         map_size: (
             map.width.saturating_mul(map.tile_width),
             map.height.saturating_mul(map.tile_height),
         ),
     })
+}
+
+/// Tileset prêt à être référencé par les entités `Tilemap`.
+struct TilesetImporte {
+    /// Nom lisible du tileset (messages d'avertissement).
+    nom: String,
+    /// Identifiant stable de l'atlas (chemin absolu du PNG copié).
+    asset: String,
+    tile_w: u32,
+    tile_h: u32,
+    columns: u32,
+}
+
+/// Prépare le premier tileset : valide ses dimensions, copie son image dans
+/// `tilesets/<nom>.png` à côté de la carte et renvoie les métadonnées de découpe.
+///
+/// `carte` vaut `None` pour un import en mémoire ([`import_tmx_str`]) : aucune
+/// copie n'est alors tentée, l'image d'origine est référencée telle quelle.
+fn preparer_tileset(
+    tileset: Option<&tiled::Tileset>,
+    carte: Option<&Path>,
+    origin: &str,
+    warnings: &mut Vec<String>,
+) -> Option<TilesetImporte> {
+    let Some(tileset) = tileset else {
+        return None;
+    };
+    let nom = nom_tileset(tileset, Path::new("tileset"));
+    if tileset.tile_width == 0 || tileset.tile_height == 0 {
+        warnings.push(format!(
+            "Tileset « {nom} » : dimensions de tuile invalides ({}×{}), il est ignoré.",
+            tileset.tile_width, tileset.tile_height,
+        ));
+        return None;
+    }
+    let Some(image) = &tileset.image else {
+        warnings.push(format!(
+            "Tileset « {nom} » : collection d'images (pas d'atlas unique) non supportée en v1 ; \
+             les couches de tuiles sont ignorées."
+        ));
+        return None;
+    };
+    let columns = if tileset.columns > 0 {
+        tileset.columns
+    } else if image.width > 0 {
+        (image.width as u32 / tileset.tile_width).max(1)
+    } else {
+        1
+    };
+    let asset = match carte {
+        Some(chemin) => copier_image_tileset(chemin, &nom, &image.source, origin, warnings),
+        None => image.source.display().to_string(),
+    };
+    Some(TilesetImporte {
+        nom,
+        asset,
+        tile_w: tileset.tile_width,
+        tile_h: tileset.tile_height,
+        columns,
+    })
+}
+
+/// Nom de fichier portable du tileset (`tuiles`, `couleurs`, …).
+fn nom_tileset(tileset: &tiled::Tileset, source_par_defaut: &Path) -> String {
+    let brut = if !tileset.name.trim().is_empty() {
+        tileset.name.trim().to_string()
+    } else {
+        source_par_defaut
+            .file_stem()
+            .map(|nom| nom.to_string_lossy().to_string())
+            .filter(|nom| !nom.trim().is_empty())
+            .unwrap_or_else(|| "tileset".to_string())
+    };
+    nom_fichier_sur(&brut)
+}
+
+/// Copie l'image d'un tileset dans `tilesets/` à côté de la carte et renvoie le
+/// chemin **absolu** du fichier copié (identifiant stable, résolvable quel que
+/// soit le répertoire courant du moteur).
+///
+/// En cas d'image introuvable ou de copie impossible, un avertissement est
+/// émis et l'image d'origine est référencée : l'import continue, le rendu
+/// retombera sur les rectangles de repli et le pré-vol d'export signalera
+/// l'asset manquant.
+fn copier_image_tileset(
+    carte: &Path,
+    nom: &str,
+    source: &Path,
+    origin: &str,
+    warnings: &mut Vec<String>,
+) -> String {
+    if !source.is_file() {
+        warnings.push(format!(
+            "Tileset « {nom} » de « {origin} » : image « {} » introuvable ; la carte sera \
+             importée avec un rendu de repli.",
+            source.display()
+        ));
+        return chemin_absolu(source);
+    }
+
+    let dossier_carte = carte
+        .parent()
+        .filter(|dossier| !dossier.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let dossier_tilesets = dossier_carte.join("tilesets");
+    let destination = dossier_tilesets.join(format!("{nom}.png"));
+
+    let deja_place = match (source.canonicalize(), destination.canonicalize()) {
+        (Ok(source), Ok(destination)) => source == destination,
+        _ => source == destination,
+    };
+    if !deja_place {
+        let resultat = std::fs::create_dir_all(&dossier_tilesets)
+            .and_then(|_| std::fs::copy(source, &destination).map(|_| ()));
+        if let Err(erreur) = resultat {
+            warnings.push(format!(
+                "Tileset « {nom} » : impossible de copier « {} » vers « {} » ({erreur}) ; la \
+                 carte référence l'image d'origine.",
+                source.display(),
+                destination.display()
+            ));
+            return chemin_absolu(source);
+        }
+    }
+    chemin_absolu(&destination)
+}
+
+/// Chemin absolu si possible, sinon chemin tel quel (jamais de panic).
+fn chemin_absolu(chemin: &Path) -> String {
+    chemin
+        .canonicalize()
+        .unwrap_or_else(|_| chemin.to_path_buf())
+        .display()
+        .to_string()
 }
 
 /// Convertit un objet Tiled en entité moteur et l'ajoute à la scène.
@@ -949,7 +1292,10 @@ fn convertir_erreur_tiled(erreur: tiled::Error, origin: &str) -> TiledImportErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entity::ShapeKind;
+    use crate::exporter::StandaloneExporter;
     use crate::game::GameState;
+    use crate::renderer::Canvas;
     use std::path::PathBuf;
 
     fn fixture(nom: &str) -> PathBuf {
@@ -957,6 +1303,18 @@ mod tests {
             .join("tests")
             .join("fixtures")
             .join(nom)
+    }
+
+    /// Copie des fixtures dans un dossier temporaire et renvoie le chemin de la
+    /// carte (premier fichier). Les imports Tiled écrivent la copie du tileset à
+    /// côté de la carte : les fixtures du dépôt doivent rester intactes.
+    fn carte_temporaire(suffixe: &str, fichiers: &[&str]) -> PathBuf {
+        let dossier = dossier_temporaire_unique(suffixe);
+        for fichier in fichiers {
+            std::fs::copy(fixture(fichier), dossier.join(fichier))
+                .unwrap_or_else(|erreur| panic!("copie de {fichier} : {erreur}"));
+        }
+        dossier.join(fichiers[0])
     }
 
     #[test]
@@ -967,6 +1325,7 @@ mod tests {
         assert_eq!(rapport.scene.entities.len(), 4);
         assert_eq!(rapport.map_size, (800, 608));
         assert_eq!(rapport.tile_layers_flattened, 0);
+        assert_eq!(rapport.tile_layers_imported, 0);
 
         let tags: Vec<&str> = rapport
             .scene
@@ -1066,39 +1425,68 @@ mod tests {
     }
 
     #[test]
-    fn test_d_couche_de_tuiles_aplatie_un_avertissement() {
-        let rapport = import_tmx(&fixture("couche_tuiles.tmx")).expect("carte tuiles");
-        assert_eq!(rapport.tile_layers_flattened, 1);
+    fn test_d_couche_de_tuiles_devient_une_entite_tilemap() {
+        let carte = carte_temporaire(
+            "couche_tuiles",
+            &["couche_tuiles.tmx", "tuiles.png"],
+        );
+        let rapport = import_tmx(&carte).expect("carte tuiles");
+        assert_eq!(rapport.tile_layers_imported, 1);
+        assert_eq!(rapport.tile_layers_flattened, 0, "plus aucune couche aplatie");
         assert_eq!(rapport.entities_imported, 2);
-        assert_eq!(
-            rapport.warnings.len(),
-            1,
+
+        // Le tileset fait 16×16 px alors que la carte est en 32×32 : les tuiles
+        // sont rendues à leur taille native, avec un avertissement explicite.
+        assert!(
+            rapport
+                .warnings
+                .iter()
+                .any(|avertissement| avertissement.contains("taille native")),
             "avertissements : {:?}",
             rapport.warnings
         );
-        assert!(rapport.warnings[0].contains("aplatie"));
-        assert!(rapport.warnings[0].contains("tuiles individuelles"));
 
-        let decor = rapport
+        let tilemap = rapport
             .scene
             .entities
             .iter()
-            .find(|entite| entite.tag == "decor")
-            .expect("entité de décor");
-        assert_eq!(decor.name, "tiled:Sol");
+            .find(|entite| entite.tag == "tilemap")
+            .expect("entité Tilemap");
+        assert_eq!(tilemap.name, "tiled:Sol");
         assert_eq!(
             (
-                decor.transform.x,
-                decor.transform.y,
-                decor.transform.w,
-                decor.transform.h
+                tilemap.transform.x,
+                tilemap.transform.y,
+                tilemap.transform.w,
+                tilemap.transform.h
             ),
-            (0.0, 0.0, 128.0, 96.0)
+            (0.0, 0.0, 64.0, 48.0),
+            "4 × 3 cellules de 16×16 px"
         );
-        assert_eq!(
-            decor.renderable.as_ref().expect("rendu").shape,
-            ShapeKind::Rect
-        );
+
+        match &tilemap.renderable.as_ref().expect("rendu").shape {
+            ShapeKind::Tilemap {
+                asset,
+                tile_w,
+                tile_h,
+                columns,
+                tiles,
+            } => {
+                assert_eq!((*tile_w, *tile_h, *columns), (16, 16, 1));
+                assert_eq!(tiles.len(), 12);
+                assert!(tiles.iter().all(|&tuile| tuile == 1), "{tiles:?}");
+                let copie = Path::new(asset.as_str());
+                assert!(copie.is_file(), "atlas copié : {asset}");
+                assert_eq!(copie.file_name().and_then(|nom| nom.to_str()), Some("tuiles.png"));
+                assert_eq!(
+                    std::fs::read(copie).expect("lecture copie"),
+                    std::fs::read(fixture("tuiles.png")).expect("lecture source")
+                );
+            }
+            autre => panic!("forme Tilemap attendue, obtenu {autre:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(carte.parent().expect("dossier temporaire"));
     }
 
     #[test]
@@ -1243,6 +1631,8 @@ mod tests {
         let dossier = dossier_temporaire_unique("destination");
         let carte = dossier.join("carte_dest.tmx");
         std::fs::copy(fixture("couche_tuiles.tmx"), &carte).expect("copie de la carte de test");
+        std::fs::copy(fixture("tuiles.png"), dossier.join("tuiles.png"))
+            .expect("copie du tileset de test");
         let destination = dossier.join("projets_crees");
 
         let importe = import_tmx_to_project(&carte, Some(&destination))
@@ -1259,12 +1649,486 @@ mod tests {
             importe.scene_path.file_name().and_then(|nom| nom.to_str()),
             Some("carte_dest.scene.json")
         );
-        assert_eq!(importe.route.tile_layers_flattened, 1);
+        assert_eq!(importe.route.tile_layers_imported, 1);
+        assert_eq!(importe.route.tile_layers_flattened, 0);
 
         let projet = KaractiProject::load_from_file(&importe.project_path).expect("projet relu");
         assert_eq!(projet.scene.entities.len(), importe.route.entities_imported);
         assert_eq!(projet.metadata.title, "carte_dest");
+        assert!(
+            projet
+                .scene
+                .entities
+                .iter()
+                .any(|entite| entite.tag == "tilemap"),
+            "la couche de tuiles est bien un Tilemap dans le projet"
+        );
 
         let _ = std::fs::remove_dir_all(&dossier);
+    }
+
+    /// Entité `Tilemap` unique d'un rapport d'import.
+    fn tilemap_de(rapport: &TiledImportReport) -> &Entity {
+        rapport
+            .scene
+            .entities
+            .iter()
+            .find(|entite| entite.tag == "tilemap")
+            .expect("une entité Tilemap attendue")
+    }
+
+    /// Importe la carte, construit l'état et rend une frame dans un canvas
+    /// 400×300 avec la caméra calée en (0, 0).
+    fn rendre_carte(carte: &Path) -> Canvas {
+        let rapport = import_tmx(carte).expect("import de la carte");
+        let mut etat = GameState::from_scene_data(
+            rapport.scene.clone(),
+            carte.to_str().expect("chemin UTF-8"),
+        )
+        .expect("état chargeable");
+        etat.editor.embedded_mode = true;
+        etat.editor.mode = crate::editor::EditorMode::Play;
+        etat.camera.x = 0.0;
+        etat.camera.y = 0.0;
+        let mut canvas = Canvas::new(400, 300);
+        etat.render(&mut canvas);
+        canvas
+    }
+
+    #[test]
+    fn test_j_import_tilemap_une_entite_par_couche_et_atlas_copie() {
+        let carte = carte_temporaire(
+            "tilemap_couleurs",
+            &["tilemap_couleurs.tmx", "tilesets_petit.png"],
+        );
+        let rapport = import_tmx(&carte).expect("carte couleurs");
+        assert_eq!(rapport.tile_layers_imported, 1);
+        assert_eq!(rapport.tile_layers_flattened, 0);
+        assert_eq!(rapport.entities_imported, 2, "joueur + tuiles");
+        assert!(
+            rapport.warnings.is_empty(),
+            "aucun avertissement attendu : {:?}",
+            rapport.warnings
+        );
+
+        let tilemap = tilemap_de(&rapport);
+        assert_eq!(tilemap.name, "tiled:Sol");
+        assert_eq!(
+            (
+                tilemap.transform.x,
+                tilemap.transform.y,
+                tilemap.transform.w,
+                tilemap.transform.h
+            ),
+            (100.0, 120.0, 4.0, 2.0),
+            "2 × 1 cellules de 2×2 px, décalage de couche conservé"
+        );
+
+        match &tilemap.renderable.as_ref().expect("rendu").shape {
+            ShapeKind::Tilemap {
+                asset,
+                tile_w,
+                tile_h,
+                columns,
+                tiles,
+            } => {
+                assert_eq!((*tile_w, *tile_h, *columns), (2, 2, 2));
+                assert_eq!(tiles, &vec![1, 2], "indices locaux décalés de 1 (0 = vide)");
+                let copie = Path::new(asset.as_str());
+                assert!(copie.is_file(), "atlas copié à côté de la carte : {asset}");
+                assert_eq!(
+                    copie.file_name().and_then(|nom| nom.to_str()),
+                    Some("couleurs.png")
+                );
+                assert_eq!(
+                    copie
+                        .parent()
+                        .and_then(Path::file_name)
+                        .and_then(|nom| nom.to_str()),
+                    Some("tilesets")
+                );
+                assert_eq!(
+                    std::fs::read(copie).expect("lecture de la copie"),
+                    std::fs::read(fixture("tilesets_petit.png")).expect("lecture de la source")
+                );
+            }
+            autre => panic!("forme Tilemap attendue, obtenu {autre:?}"),
+        }
+
+        // Sérialisation JSON : le variant `Tilemap` doit survivre à un aller-retour
+        // de scène (format lu par le Studio et par l'export).
+        let json = serde_json::to_string(&rapport.scene).expect("sérialisation de la scène");
+        let relu: SceneData = serde_json::from_str(&json).expect("scène relue");
+        assert!(
+            relu.entities.iter().any(|entite| {
+                matches!(
+                    entite.renderable.as_ref().map(|rendu| &rendu.shape),
+                    Some(ShapeKind::Tilemap { .. })
+                )
+            }),
+            "variant Tilemap désérialisé"
+        );
+
+        let _ = std::fs::remove_dir_all(carte.parent().expect("dossier temporaire"));
+    }
+
+    #[test]
+    fn test_k_tileset_externe_tsx_importe() {
+        let carte = carte_temporaire(
+            "tilemap_externe",
+            &[
+                "tilemap_externe.tmx",
+                "tileset_externe.tsx",
+                "tilesets_petit.png",
+            ],
+        );
+        let rapport = import_tmx(&carte).expect("carte à tileset externe");
+        assert_eq!(rapport.tile_layers_imported, 1);
+
+        let tilemap = tilemap_de(&rapport);
+        match &tilemap.renderable.as_ref().expect("rendu").shape {
+            ShapeKind::Tilemap {
+                asset,
+                tile_w,
+                tile_h,
+                columns,
+                tiles,
+            } => {
+                assert_eq!((*tile_w, *tile_h, *columns), (2, 2, 2));
+                assert_eq!(tiles, &vec![1, 2]);
+                assert_eq!(
+                    Path::new(asset.as_str())
+                        .file_name()
+                        .and_then(|nom| nom.to_str()),
+                    Some("externe.png"),
+                    "nom repris du .tsx externe"
+                );
+                assert!(Path::new(asset.as_str()).is_file());
+            }
+            autre => panic!("forme Tilemap attendue, obtenu {autre:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(carte.parent().expect("dossier temporaire"));
+    }
+
+    #[test]
+    fn test_l_tuiles_animees_et_retournees_signalees() {
+        let carte = carte_temporaire(
+            "tilemap_animee",
+            &["tilemap_animee.tmx", "tilesets_petit.png"],
+        );
+        let rapport = import_tmx(&carte).expect("carte animée");
+        assert_eq!(rapport.tile_layers_imported, 1);
+        assert!(
+            rapport
+                .warnings
+                .iter()
+                .any(|avertissement| avertissement.contains("animée")),
+            "avertissements : {:?}",
+            rapport.warnings
+        );
+        assert!(
+            rapport
+                .warnings
+                .iter()
+                .any(|avertissement| avertissement.contains("retournée")),
+            "avertissements : {:?}",
+            rapport.warnings
+        );
+
+        match &tilemap_de(&rapport).renderable.as_ref().expect("rendu").shape {
+            ShapeKind::Tilemap { tiles, .. } => {
+                // Les deux cellules référencent la tuile 0, qui est animée :
+                // chacune est figée sur la tuile 1 de l'animation → index 2.
+                // Sans la résolution de l'animation, on lirait l'index 1.
+                assert_eq!(tiles, &vec![2, 2]);
+            }
+            autre => panic!("forme Tilemap attendue, obtenu {autre:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(carte.parent().expect("dossier temporaire"));
+    }
+
+    #[test]
+    fn test_m_carte_sans_tileset_couche_vide_sans_tilemap() {
+        let carte = carte_temporaire("tilemap_vide", &["tilemap_vide.tmx"]);
+        let rapport = import_tmx(&carte).expect("carte sans tileset");
+        assert_eq!(rapport.tile_layers_imported, 0);
+        assert_eq!(rapport.tile_layers_flattened, 0);
+        assert_eq!(rapport.entities_imported, 1, "seul le joueur est importé");
+        assert!(
+            rapport
+                .scene
+                .entities
+                .iter()
+                .all(|entite| entite.tag != "tilemap"),
+            "aucune entité Tilemap pour une couche vide"
+        );
+        assert!(
+            rapport
+                .warnings
+                .iter()
+                .any(|avertissement| avertissement.contains("tileset")),
+            "avertissements : {:?}",
+            rapport.warnings
+        );
+
+        let _ = std::fs::remove_dir_all(carte.parent().expect("dossier temporaire"));
+    }
+
+    #[test]
+    fn test_n_plusieurs_tilesets_avertissement_et_premier_utilise() {
+        let carte = carte_temporaire(
+            "tilemap_multi",
+            &["tilemap_multi.tmx", "tilesets_petit.png", "tuiles.png"],
+        );
+        let rapport = import_tmx(&carte).expect("carte multi-tilesets");
+        assert_eq!(rapport.tile_layers_imported, 1);
+        assert!(
+            rapport
+                .warnings
+                .iter()
+                .any(|avertissement| avertissement.contains("2 tilesets")
+                    && avertissement.contains("premier")),
+            "avertissements : {:?}",
+            rapport.warnings
+        );
+        assert!(
+            rapport
+                .warnings
+                .iter()
+                .any(|avertissement| avertissement.contains("autre tileset")),
+            "avertissements : {:?}",
+            rapport.warnings
+        );
+
+        match &tilemap_de(&rapport).renderable.as_ref().expect("rendu").shape {
+            ShapeKind::Tilemap { tiles, columns, .. } => {
+                assert_eq!(*columns, 2, "colonnes du premier tileset");
+                assert_eq!(tiles, &vec![1, 0], "la tuile du 2e tileset est ignorée");
+            }
+            autre => panic!("forme Tilemap attendue, obtenu {autre:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(carte.parent().expect("dossier temporaire"));
+    }
+
+    #[test]
+    fn test_o_rendu_des_tuiles_aux_couleurs_de_l_atlas() {
+        let carte = carte_temporaire(
+            "tilemap_rendu",
+            &["tilemap_couleurs.tmx", "tilesets_petit.png"],
+        );
+        let canvas = rendre_carte(&carte);
+        let pixel = |x: usize, y: usize| canvas.buffer[y * canvas.width + x];
+        // Couche posée à (100, 120) : tuile 0 rouge en (100..102, 120..122),
+        // tuile 1 bleue en (102..104, 120..122). Le blitter opaque écrit la
+        // couleur sans canal alpha (`0x00RRGGBB`).
+        assert_eq!(pixel(101, 121), 0x00FF_0000, "tuile rouge de l'atlas");
+        assert_eq!(pixel(103, 121), 0x0000_00FF, "tuile bleue de l'atlas");
+
+        let _ = std::fs::remove_dir_all(carte.parent().expect("dossier temporaire"));
+    }
+
+    #[test]
+    fn test_p_export_embarque_le_tileset_et_le_paquet_rend_la_carte() {
+        let carte = carte_temporaire(
+            "tilemap_export",
+            &["tilemap_couleurs.tmx", "tilesets_petit.png"],
+        );
+        let rapport = import_tmx(&carte).expect("carte couleurs");
+        let etat = GameState::from_scene_data(
+            rapport.scene.clone(),
+            carte.to_str().expect("chemin UTF-8"),
+        )
+        .expect("état source");
+
+        let asset = match &tilemap_de(&rapport).renderable.as_ref().expect("rendu").shape {
+            ShapeKind::Tilemap { asset, .. } => asset.clone(),
+            autre => panic!("forme Tilemap attendue, obtenu {autre:?}"),
+        };
+
+        let paquet = StandaloneExporter::create_package(&etat, "Tiled", "test");
+        assert!(
+            paquet.sprite_assets.contains_key(&asset),
+            "l'atlas doit voyager dans sprite_assets : {:?}",
+            paquet.sprite_assets.keys().collect::<Vec<_>>()
+        );
+        assert!(!paquet.sprite_assets[&asset].is_empty());
+
+        // L'atlas devient illisible sur disque : seul l'asset embarqué du
+        // paquet peut encore alimenter le rendu.
+        std::fs::remove_file(&asset).expect("suppression de l'atlas copié");
+
+        let mut cible = GameState::from_scene_data(
+            SceneData {
+                name: "cible".to_string(),
+                description: String::new(),
+                objective: None,
+                entities: Vec::new(),
+                player: None,
+                coins: Vec::new(),
+                doors: Vec::new(),
+                walls: Vec::new(),
+                enemies: Vec::new(),
+            },
+            "cible.scene.json",
+        )
+        .expect("état cible vide");
+        StandaloneExporter::import_package(&mut cible, &paquet);
+        cible.screen = crate::screens::GameScreen::Playing;
+        cible.editor.embedded_mode = true;
+        cible.editor.mode = crate::editor::EditorMode::Play;
+        cible.camera.x = 0.0;
+        cible.camera.y = 0.0;
+        let mut canvas = Canvas::new(400, 300);
+        cible.render(&mut canvas);
+
+        let pixel = |x: usize, y: usize| canvas.buffer[y * canvas.width + x];
+        assert_eq!(pixel(101, 121), 0x00FF_0000, "rouge depuis l'asset embarqué");
+        assert_eq!(pixel(103, 121), 0x0000_00FF, "bleu depuis l'asset embarqué");
+        let couleurs: std::collections::HashSet<u32> = canvas
+            .buffer
+            .iter()
+            .copied()
+            .filter(|pixel| *pixel != 0x0008_0B14)
+            .collect();
+        assert!(couleurs.len() > 2, "la carte ne doit pas être uniforme");
+
+        let _ = std::fs::remove_dir_all(carte.parent().expect("dossier temporaire"));
+    }
+
+    #[test]
+    fn test_r_deux_couches_deux_entites_et_ordre_z() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" orientation="orthogonal" width="2" height="1" tilewidth="2" tileheight="2" infinite="0">
+ <tileset firstgid="1" name="couleurs" tilewidth="2" tileheight="2" tilecount="2" columns="2">
+  <image source="tilesets_petit.png" width="4" height="2"/>
+ </tileset>
+ <layer id="1" name="Fond" width="2" height="1">
+  <data encoding="csv">
+1,0
+  </data>
+ </layer>
+ <layer id="2" name="Dessus" width="2" height="1">
+  <data encoding="csv">
+0,2
+  </data>
+ </layer>
+ <objectgroup id="3" name="Entités">
+  <object id="1" name="Joueur" class="player" x="400" y="400" width="4" height="4"/>
+ </objectgroup>
+</map>"#;
+        let rapport = import_tmx_str(xml, "deux_couches.tmx").expect("deux couches");
+        assert_eq!(rapport.tile_layers_imported, 2);
+        assert_eq!(rapport.tile_layers_flattened, 0);
+
+        let mut z: Vec<i32> = rapport
+            .scene
+            .entities
+            .iter()
+            .filter(|entite| entite.tag == "tilemap")
+            .filter_map(|entite| entite.renderable.as_ref().map(|rendu| rendu.z_index))
+            .collect();
+        assert_eq!(z.len(), 2, "une entité Tilemap par couche");
+        let fond = z.remove(0);
+        let dessus = z.remove(0);
+        assert!(
+            dessus > fond,
+            "la couche du dessous doit passer au-dessus : {fond} < {dessus}"
+        );
+    }
+
+    #[test]
+    fn test_q_preflight_tileset_manquant_est_bloquant() {
+        let carte = carte_temporaire(
+            "tilemap_preflight",
+            &["tilemap_couleurs.tmx", "tilesets_petit.png"],
+        );
+        let rapport = import_tmx(&carte).expect("carte couleurs");
+        let mut scene = rapport.scene.clone();
+        for entite in &mut scene.entities {
+            if let Some(rendu) = &mut entite.renderable {
+                if let ShapeKind::Tilemap { asset, .. } = &mut rendu.shape {
+                    *asset = "/chemin/inexistant/tileset.png".to_string();
+                }
+            }
+        }
+        let etat = GameState::from_scene_data(scene, "scene_preflight.json")
+            .expect("état avec atlas manquant");
+        let prevol = StandaloneExporter::preflight_with_runtime_dir(&etat, None);
+        assert!(!prevol.ok);
+        assert!(
+            prevol
+                .issues
+                .iter()
+                .any(|issue| issue.code == "asset-manquant" && issue.message.contains("tileset")),
+            "diagnostics : {:?}",
+            prevol.issues
+        );
+
+        let _ = std::fs::remove_dir_all(carte.parent().expect("dossier temporaire"));
+    }
+
+    #[test]
+    fn test_s_carte_multi_lignes_csv_importee() {
+        // Régression : le crate vendoré refuse les CSV sur plusieurs lignes, et
+        // joindre les rangées sans virgule collait « 4 » et « 1 » en « 41 ».
+        // Une carte réelle a une ligne par rangée : elle doit s'importer.
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" orientation="orthogonal" width="4" height="3" tilewidth="16" tileheight="16" infinite="0">
+ <tileset firstgid="1" name="t" tilewidth="16" tileheight="16" tilecount="4" columns="4">
+  <image source="atlas.png" width="64" height="16"/>
+ </tileset>
+ <layer id="1" name="Sol" width="4" height="3">
+  <data encoding="csv">
+1,2,3,4
+4,3,2,1
+1,1,1,1
+  </data>
+ </layer>
+ <objectgroup id="2" name="Objets">
+  <object id="1" class="player" x="0" y="0" width="16" height="16"/>
+ </objectgroup>
+</map>"#;
+        let rapport = import_tmx_str(xml, "multi_lignes.tmx").expect("CSV multi-lignes accepté");
+        let tilemap = rapport
+            .scene
+            .entities
+            .iter()
+            .find(|entite| matches!(
+                entite.renderable.as_ref().map(|rendu| &rendu.shape),
+                Some(crate::entity::ShapeKind::Tilemap { .. })
+            ))
+            .expect("une entité Tilemap");
+        let crate::entity::ShapeKind::Tilemap { tiles, .. } =
+            &tilemap.renderable.as_ref().unwrap().shape
+        else {
+            unreachable!()
+        };
+        assert_eq!(tiles.len(), 12, "4 × 3 tuiles");
+        assert_eq!(&tiles[..4], &[1, 2, 3, 4], "première rangée dans l'ordre");
+        assert_eq!(&tiles[4..8], &[4, 3, 2, 1], "deuxième rangée dans l'ordre");
+    }
+
+    #[test]
+    fn test_t_carte_csv_incoherente_erreur_sans_panic() {
+        // Le crate vendoré paniquait (« index out of bounds ») sur une carte dont le
+        // CSV ne contient pas largeur × hauteur valeurs. Une entrée utilisateur ne
+        // doit jamais faire tomber le processus.
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" orientation="orthogonal" width="4" height="3" tilewidth="16" tileheight="16" infinite="0">
+ <tileset firstgid="1" name="t" tilewidth="16" tileheight="16" tilecount="4" columns="4">
+  <image source="atlas.png" width="64" height="16"/>
+ </tileset>
+ <layer id="1" name="Sol" width="4" height="3">
+  <data encoding="csv">1,2,3</data>
+ </layer>
+ <objectgroup id="2" name="Objets">
+  <object id="1" class="player" x="0" y="0" width="16" height="16"/>
+ </objectgroup>
+</map>"#;
+        let resultat = import_tmx_str(xml, "incoherente.tmx");
+        assert!(resultat.is_err(), "une carte incohérente doit renvoyer une erreur");
     }
 }

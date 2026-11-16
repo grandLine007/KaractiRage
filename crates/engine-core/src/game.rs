@@ -69,6 +69,26 @@ pub(crate) fn resolve_scene_path(path: &str) -> String {
     }
 }
 
+/// Plage de cellules `[début, fin)` d'une grille de tuiles qui intersecte la
+/// zone écran `[0, limite)`, pour ne parcourir que les cellules visibles.
+///
+/// `origine` est la coordonnée écran du coin haut-gauche de la grille, `taille`
+/// la taille d'une cellule en pixels. Retourne une plage non bornée à la grille :
+/// l'appelant la rogne à ses dimensions. Aucun float, aucun débordement i32.
+fn plage_cellules_visibles(origine: i32, taille: i32, limite: i32) -> (u32, u32) {
+    if taille <= 0 || limite <= 0 {
+        return (0, 0);
+    }
+    let o = origine as i64;
+    let t = taille as i64;
+    let lim = limite as i64;
+    // Première cellule dont l'intervalle [o + k·t, o + (k+1)·t) rencontre [0, lim).
+    let debut = if o >= 0 { 0 } else { (-o) / t };
+    let fin = ((lim - o + t - 1) / t).max(0);
+    let borne = u32::MAX as i64;
+    (debut.clamp(0, borne) as u32, fin.clamp(0, borne) as u32)
+}
+
 /// Compose un rig vectoriel SVG à l'écran : chaque membre est blitté avec son
 /// keyframe interpolé (rotation autour du pivot + translation + échelle). Aucune
 /// allocation : tout est lu depuis les bitmaps partagés mis en cache à l'import.
@@ -1089,6 +1109,12 @@ impl GameState {
                     ShapeKind::ImageRef { asset } => {
                         let _ = sprite_cache.get_or_load(asset);
                     }
+                    ShapeKind::Tilemap { asset, .. } => {
+                        // Atlas de tuiles : même résolution que les sprites PNG
+                        // (disque puis assets embarqués). Un atlas manquant laisse
+                        // la carte se dessiner en rectangles de repli.
+                        let _ = sprite_cache.get_or_load(asset);
+                    }
                     ShapeKind::SheetRef { asset, .. } => {
                         let _ = sheet_cache.get_or_load(asset);
                     }
@@ -1280,6 +1306,9 @@ impl GameState {
                     ShapeKind::ImageRef { asset } => {
                         let _ = self.sprite_cache.get_or_load(asset);
                     }
+                    ShapeKind::Tilemap { asset, .. } => {
+                        let _ = self.sprite_cache.get_or_load(asset);
+                    }
                     ShapeKind::SheetRef { asset, .. } => {
                         let _ = self.sheet_cache.get_or_load(asset);
                     }
@@ -1291,6 +1320,47 @@ impl GameState {
                 }
             }
         }
+    }
+
+    /// (Re)charge les assets de rendu référencés par les entités courantes.
+    ///
+    /// Utilisé par [`Self::load_project`] : un projet importé (Tiled, paquet)
+    /// arrive avec des entités mais sans cache d'assets ; sans cette passe, les
+    /// `Tilemap`, sprites PNG, spritesheets et SVG d'un projet fraîchement
+    /// ouvert resteraient des rectangles de repli. Les assets embarqués de la
+    /// session (paquet déjà importé) sont conservés et restent prioritaires.
+    fn resoudre_assets_rendu(&mut self) {
+        let mut sprite_cache = crate::vector::PngCache::new();
+        sprite_cache.install_embedded(self.embedded_sprites.clone());
+        let mut sheet_cache = crate::sheet::SheetCache::new();
+        sheet_cache.install_embedded(self.embedded_sheets.clone());
+        let mut svg_cache = crate::vector::SvgCache::new();
+        svg_cache.install_embedded(self.embedded_svg_assets.clone());
+        svg_cache.install_embedded_clips(self.embedded_svg_anims.clone());
+
+        let mut anim_states: HashMap<usize, crate::sheet::AnimState> = HashMap::new();
+        for ent in self.entities.iter_mut() {
+            resoudre_sprite_vectoriel(ent, &mut svg_cache);
+            if let Some(rend) = &ent.renderable {
+                match &rend.shape {
+                    ShapeKind::ImageRef { asset } | ShapeKind::Tilemap { asset, .. } => {
+                        let _ = sprite_cache.get_or_load(asset);
+                    }
+                    ShapeKind::SheetRef { asset, .. } => {
+                        let _ = sheet_cache.get_or_load(asset);
+                    }
+                    ShapeKind::AnimRef { asset } => {
+                        let _ = sheet_cache.get_or_load(asset);
+                        anim_states.insert(ent.id, crate::sheet::AnimState::default());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        self.sprite_cache = sprite_cache;
+        self.sheet_cache = sheet_cache;
+        self.anim_states = anim_states;
     }
 
     /// Installe les sources SVG embarquées d'un paquet, puis re-résout les
@@ -1621,6 +1691,10 @@ impl GameState {
         };
         self.scene_objective = current.objective.clone();
         self.entities = current.entities.clone();
+        // Un projet fraîchement chargé n'a pas encore de cache d'assets : sans
+        // cette passe, ses sprites PNG/SVG, spritesheets et tuiles Tiled
+        // resteraient des rectangles de repli.
+        self.resoudre_assets_rendu();
         self.kvl_graphs = project.kvl_graphs;
         self.kvl_context = ExecutionContext::new();
         self.ui_screens = project.ui_screens;
@@ -7676,6 +7750,98 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
                     }
                     if is_selected {
                         canvas.draw_rect_outline(rx - 2, ry - 2, dest_w + 4, dest_h + 4, 0x00FBBF24, 2);
+                        let label = format!("{}: {}", ent.tag.to_uppercase(), ent.name);
+                        canvas.draw_text(rx, ry - 14, &label, 0x00FBBF24, 1);
+                    }
+                }
+                ShapeKind::Tilemap {
+                    ref asset,
+                    tile_w,
+                    tile_h,
+                    columns,
+                    ref tiles,
+                } => {
+                    // Une seule entité par couche, mais chaque cellule non vide
+                    // est un blit de la tuile recadrée (cache de tuiles : le
+                    // recadrage n'a lieu qu'une fois par tuile distincte).
+                    if tile_w == 0 || tile_h == 0 || columns == 0 || tiles.is_empty() {
+                        continue;
+                    }
+                    let tw = tile_w as i32;
+                    let th = tile_h as i32;
+                    // L'importeur fixe transform.w = colonnes_grille × tile_w.
+                    // Une scène éditée à la main qui ne respecte pas ce contrat
+                    // garde au moins une colonne pour ne rien faire disparaître.
+                    let colonnes_grille = (ent.transform.w / tile_w as f32)
+                        .round()
+                        .max(1.0) as u32;
+                    let lignes_grille =
+                        ((tiles.len() as u32).div_ceil(colonnes_grille)).max(1);
+
+                    let (col_debut, col_fin) =
+                        plage_cellules_visibles(rx, tw, canvas.width as i32);
+                    let (lig_debut, lig_fin) =
+                        plage_cellules_visibles(ry, th, canvas.height as i32);
+                    let col_fin = col_fin.min(colonnes_grille);
+                    let lig_fin = lig_fin.min(lignes_grille);
+
+                    for ligne in lig_debut..lig_fin {
+                        for colonne in col_debut..col_fin {
+                            let position = (ligne as usize) * colonnes_grille as usize
+                                + colonne as usize;
+                            let Some(&brut) = tiles.get(position) else {
+                                continue;
+                            };
+                            if brut == 0 {
+                                continue; // cellule vide
+                            }
+                            let sx = rx + colonne as i32 * tw;
+                            let sy = ry + ligne as i32 * th;
+                            let index_local = brut - 1;
+                            match self.sprite_cache.get_or_crop_tile(
+                                asset,
+                                tile_w,
+                                tile_h,
+                                columns,
+                                index_local,
+                            ) {
+                                Some(tuile) => canvas.draw_pixel_matrix_alpha(
+                                    sx,
+                                    sy,
+                                    tile_w,
+                                    tile_h,
+                                    &tuile.pixels,
+                                    tuile.width,
+                                    tuile.height,
+                                ),
+                                None => {
+                                    // Atlas absent ou tuile hors image : repli
+                                    // rectangulaire pour ne pas laisser un trou.
+                                    canvas.draw_rect(sx, sy, tile_w, tile_h, rend.color);
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(outline_col) = rend.outline_color {
+                        canvas.draw_rect_outline(
+                            rx,
+                            ry,
+                            ent.transform.w as u32,
+                            ent.transform.h as u32,
+                            outline_col,
+                            rend.outline_width,
+                        );
+                    }
+                    if is_selected {
+                        canvas.draw_rect_outline(
+                            rx - 2,
+                            ry - 2,
+                            ent.transform.w as u32 + 4,
+                            ent.transform.h as u32 + 4,
+                            0x00FBBF24,
+                            2,
+                        );
                         let label = format!("{}: {}", ent.tag.to_uppercase(), ent.name);
                         canvas.draw_text(rx, ry - 14, &label, 0x00FBBF24, 1);
                     }
