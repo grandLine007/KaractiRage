@@ -1,5 +1,5 @@
 use crate::adaptation::AdaptationManager;
-use crate::audio::{AudioEngine, SoundType};
+use crate::audio::{AudioEngine, SoundType, VOLUME_MUSIQUE};
 use crate::audio_file::{decode_wav, lister_wav_locaux, read_wav_source, SoundClip};
 use crate::camera::Camera2D;
 use crate::dialogue::{DialogueAction, DialogueBox, QuestTracker};
@@ -69,6 +69,28 @@ pub(crate) fn resolve_scene_path(path: &str) -> String {
             path.to_string()
         }
     }
+}
+
+/// Racine d'ancrage des assets relatifs pour un fichier projet/scène.
+///
+/// Renvoie le dossier du fichier **quand il existe réellement** (chemin de scène
+/// « projet:niveau_N » ou asset embarqué → `None`, comportement historique).
+/// Le dossier est canonicalisé pour rester stable même si le processus change de
+/// répertoire courant après l'ouverture.
+fn racine_assets_depuis_fichier(
+    chemin: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    if !chemin.is_file() {
+        return None;
+    }
+    let parent = chemin
+        .parent()
+        .filter(|dossier| !dossier.as_os_str().is_empty())?;
+    Some(
+        parent
+            .canonicalize()
+            .unwrap_or_else(|_| parent.to_path_buf()),
+    )
 }
 
 /// Plage de cellules `[début, fin)` d'une grille de tuiles qui intersecte la
@@ -226,6 +248,17 @@ pub fn segment_intersects_aabb(x1: f32, y1: f32, x2: f32, y2: f32, bx: f32, by: 
 /// via un modèle modulaire générique Entité-Composants (ECS) et pilotées par KVL.
 pub struct GameState {
     pub scene_path: String,
+    /// Racine d'ancrage des assets **relatifs** de la scène ou du projet.
+    ///
+    /// Vaut `Some(dossier)` quand la scène/projet est ouvert depuis un fichier
+    /// existant : les `ShapeKind::Tilemap { asset }` importés depuis Tiled
+    /// stockent `tilesets/<nom>.png` relativement à ce dossier, et le déplacement
+    /// du dossier complet (avec `tilesets/`) reste donc valide. `None` conserve
+    /// la résolution historique (cwd, `../../`, racine du dépôt, assets embarqués).
+    ///
+    /// Propagée à toutes les reconstructions (`start_game`, `next_level`,
+    /// `reload`) par [`Self::inherit_exported_package`].
+    pub racine_projet: Option<std::path::PathBuf>,
     pub scene_name: String,
     pub scene_objective: Option<String>,
     pub entities: Vec<Entity>,
@@ -1124,7 +1157,8 @@ impl GameState {
             }
         };
 
-        Self::from_scene_data(scene_data, path)
+        let racine = racine_assets_depuis_fichier(std::path::Path::new(&resolved));
+        Self::from_scene_data_avec_racine(scene_data, path, racine)
     }
 
     /// Construit un état de jeu à partir d'une scène **en mémoire**.
@@ -1132,9 +1166,27 @@ impl GameState {
     /// Utilisé par les niveaux embarqués d'un projet (`KaractiProject::scenes`) : aucune
     /// lecture disque. `scene_path` ne sert qu'à la traçabilité et à la résolution des
     /// scripts KVL référencés par les entités.
+    ///
+    /// Quand `scene_path` désigne un fichier existant, son dossier devient la
+    /// racine d'ancrage des assets relatifs (atlas Tiled `tilesets/…`) ; sinon le
+    /// comportement historique est conservé.
     pub fn from_scene_data(
         scene_data: SceneData,
         scene_path: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let racine = racine_assets_depuis_fichier(std::path::Path::new(scene_path));
+        Self::from_scene_data_avec_racine(scene_data, scene_path, racine)
+    }
+
+    /// Variante de [`Self::from_scene_data`] avec une racine d'assets explicite.
+    ///
+    /// `load_from_scene` la renseigne depuis le chemin réellement résolu (qui peut
+    /// être `../../…`), et [`Self::load_project_depuis_fichier`] depuis le dossier
+    /// du `.karacti`.
+    fn from_scene_data_avec_racine(
+        scene_data: SceneData,
+        scene_path: &str,
+        racine_projet: Option<std::path::PathBuf>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut entities = scene_data.to_entities();
 
@@ -1147,7 +1199,8 @@ impl GameState {
 
         // Résolution des sprites pixel-art PNG (générés par pxl) : décodage à
         // l'import + mise en cache par identifiant. Un asset manquant ne casse
-        // pas le chargement (repli rectangle coloré au rendu).
+        // pas le chargement (repli rectangle coloré au rendu). Les chemins
+        // relatifs sont ancrés sur le dossier de la scène quand il existe.
         let mut sprite_cache = crate::vector::PngCache::new();
         let mut sheet_cache = crate::sheet::SheetCache::new();
         let mut anim_states: HashMap<usize, crate::sheet::AnimState> = HashMap::new();
@@ -1155,13 +1208,16 @@ impl GameState {
             if let Some(rend) = &ent.renderable {
                 match &rend.shape {
                     ShapeKind::ImageRef { asset } => {
-                        let _ = sprite_cache.get_or_load(asset);
+                        let _ = sprite_cache
+                            .get_or_load_ancree(asset, racine_projet.as_deref());
                     }
                     ShapeKind::Tilemap { asset, .. } => {
                         // Atlas de tuiles : même résolution que les sprites PNG
-                        // (disque puis assets embarqués). Un atlas manquant laisse
-                        // la carte se dessiner en rectangles de repli.
-                        let _ = sprite_cache.get_or_load(asset);
+                        // (racine du projet, disque puis assets embarqués). Un
+                        // atlas manquant laisse la carte se dessiner en
+                        // rectangles de repli.
+                        let _ = sprite_cache
+                            .get_or_load_ancree(asset, racine_projet.as_deref());
                     }
                     ShapeKind::SheetRef { asset, .. } => {
                         let _ = sheet_cache.get_or_load(asset);
@@ -1274,6 +1330,7 @@ impl GameState {
 
         let mut state = Self {
             scene_path: scene_path.to_string(),
+            racine_projet,
             scene_name: scene_data.name,
             scene_objective,
             entities,
@@ -1349,14 +1406,19 @@ impl GameState {
         self.sheet_cache = sheet_cache;
         self.anim_states = HashMap::new();
 
+        let racine = self.racine_projet.clone();
         for ent in self.entities.iter() {
             if let Some(rend) = &ent.renderable {
                 match &rend.shape {
                     ShapeKind::ImageRef { asset } => {
-                        let _ = self.sprite_cache.get_or_load(asset);
+                        let _ = self
+                            .sprite_cache
+                            .get_or_load_ancree(asset, racine.as_deref());
                     }
                     ShapeKind::Tilemap { asset, .. } => {
-                        let _ = self.sprite_cache.get_or_load(asset);
+                        let _ = self
+                            .sprite_cache
+                            .get_or_load_ancree(asset, racine.as_deref());
                     }
                     ShapeKind::SheetRef { asset, .. } => {
                         let _ = self.sheet_cache.get_or_load(asset);
@@ -1388,12 +1450,14 @@ impl GameState {
         svg_cache.install_embedded_clips(self.embedded_svg_anims.clone());
 
         let mut anim_states: HashMap<usize, crate::sheet::AnimState> = HashMap::new();
+        let racine = self.racine_projet.clone();
         for ent in self.entities.iter_mut() {
             resoudre_sprite_vectoriel(ent, &mut svg_cache);
             if let Some(rend) = &ent.renderable {
                 match &rend.shape {
                     ShapeKind::ImageRef { asset } | ShapeKind::Tilemap { asset, .. } => {
-                        let _ = sprite_cache.get_or_load(asset);
+                        let _ =
+                            sprite_cache.get_or_load_ancree(asset, racine.as_deref());
                     }
                     ShapeKind::SheetRef { asset, .. } => {
                         let _ = sheet_cache.get_or_load(asset);
@@ -1410,6 +1474,19 @@ impl GameState {
         self.sprite_cache = sprite_cache;
         self.sheet_cache = sheet_cache;
         self.anim_states = anim_states;
+    }
+
+    /// Octets PNG bruts d'un asset de rendu, résolus depuis la racine du projet.
+    ///
+    /// Sert à l'export autonome : un `Tilemap.asset` relatif
+    /// (`tilesets/<nom>.png`) doit être lu depuis le dossier du projet, pas
+    /// depuis le cwd. Les assets embarqués de la session restent prioritaires ;
+    /// un ancien chemin absolu continue d'être lu tel quel.
+    pub fn lire_asset_png(&self, asset: &str) -> Option<Vec<u8>> {
+        if let Some(octets) = self.embedded_sprites.get(asset) {
+            return Some(octets.clone());
+        }
+        crate::vector::read_png_source_ancree(asset, self.racine_projet.as_deref())
     }
 
     /// (Re)charge la banque de sons WAV du projet.
@@ -1659,6 +1736,10 @@ impl GameState {
     /// Les champs doivent être recopiés avant `*self = fresh` : sans cela, la
     /// première reconstruction les viderait définitivement.
     fn inherit_exported_package(&mut self, source: &GameState) {
+        // La racine d'assets est une propriété du projet ouvert : la scène
+        // reconstruite repart d'un `from_scene_data` avec `projet:niveau_N`
+        // (aucun fichier), il faut donc la lui rendre avant de re-résoudre.
+        self.racine_projet = source.racine_projet.clone();
         self.exported_kvl_graphs = source.exported_kvl_graphs.clone();
         self.exported_initial_variables = source.exported_initial_variables.clone();
         self.embedded_sprites = source.embedded_sprites.clone();
@@ -1868,8 +1949,42 @@ impl GameState {
         Ok(name)
     }
 
-    /// Charge un projet KaractiProject complet dans le moteur de jeu
-    pub fn load_project(&mut self, mut project: crate::project::KaractiProject) {
+    /// Charge un projet KaractiProject complet dans le moteur de jeu.
+    ///
+    /// Sans racine explicite : comportement historique (résolution depuis le cwd,
+    /// `../../`, la racine du dépôt ou les assets embarqués). Pour ancrer les
+    /// chemins relatifs d'un projet ouvert depuis un `.karacti`, utiliser
+    /// [`Self::load_project_depuis_fichier`] (voie du Studio).
+    pub fn load_project(&mut self, project: crate::project::KaractiProject) {
+        self.load_project_avec_racine(project, None);
+    }
+
+    /// Charge un projet lu depuis `chemin` et ancre ses assets relatifs sur le
+    /// dossier de ce fichier `.karacti`.
+    ///
+    /// C'est la voie d'ouverture du Studio : un projet Tiled importé référence
+    /// `tilesets/<nom>.png` relativement à son dossier, et déplacer/renommer le
+    /// dossier complet (avec `tilesets/`) ne casse plus le rendu natif.
+    pub fn load_project_depuis_fichier(
+        &mut self,
+        project: crate::project::KaractiProject,
+        chemin: impl AsRef<std::path::Path>,
+    ) {
+        let racine = racine_assets_depuis_fichier(chemin.as_ref());
+        self.load_project_avec_racine(project, racine);
+    }
+
+    /// Charge un projet avec une racine d'assets explicite (`None` = historique).
+    ///
+    /// La racine est posée **avant** [`Self::resoudre_assets_rendu`] : l'atlas
+    /// Tiled est ainsi chargé depuis le dossier du projet dès l'ouverture, sans
+    /// dépendre du répertoire courant du processus.
+    pub fn load_project_avec_racine(
+        &mut self,
+        mut project: crate::project::KaractiProject,
+        racine_projet: Option<std::path::PathBuf>,
+    ) {
+        self.racine_projet = racine_projet;
         // Niveaux embarqués : niveau 1 = `scenes[0]` (normalisé si le JSON est ancien).
         let mut scenes = std::mem::take(&mut project.scenes);
         if scenes.is_empty() {
@@ -6696,9 +6811,10 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         }
         self.camera.update(dt);
 
-        // Les actions KVL `PlaySound` déposent une demande dans le contexte ;
-        // elle est consommée ici, une seule fois par frame, après tous les systèmes.
-        self.drain_sound_request();
+        // Les actions KVL audio (`PlaySound`, `LoopSound`, `StopSounds`) déposent
+        // une demande dans le contexte ; elle est consommée ici, une seule fois
+        // par frame, après tous les systèmes.
+        self.drain_audio_requests();
 
         // Le temps complet de frame (update + render + transport) est mesuré côté
         // `NativeEngine::render_frame` puis injecté via `finish_frame_telemetry`.
@@ -6717,6 +6833,73 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
 
         // Priorité aux WAV du projet, repli procédural inchangé sinon.
         self.play_sound_id(&requested);
+    }
+
+    /// Consomme les demandes audio KVL de la frame.
+    ///
+    /// Ordre volontaire : `PlaySound` (effet ponctuel), puis `LoopSound` (musique
+    /// de fond), puis `StopSounds`. Un graphe qui enchaîne `LoopSound` et
+    /// `StopSounds` dans la même frame finit donc bien muet, comme l'exécution
+    /// séquentielle des nœuds le laisse attendre.
+    fn drain_audio_requests(&mut self) {
+        self.drain_sound_request();
+        self.drain_loop_sound_request();
+        self.drain_stop_sounds_request();
+    }
+
+    /// Démarre la musique de fond demandée par KVL (`LoopSound:identifiant`).
+    fn drain_loop_sound_request(&mut self) {
+        let requested = match self.kvl_context.get_var("loop_sound_request") {
+            Some(Value::String(name)) => name.clone(),
+            _ => return,
+        };
+        self.kvl_context
+            .set_var("loop_sound_request", Value::String(String::new()));
+        if !requested.trim().is_empty() {
+            self.loop_sound_id(&requested);
+        }
+    }
+
+    /// Coupe les musiques de fond demandé par KVL (`StopSounds`).
+    fn drain_stop_sounds_request(&mut self) {
+        if self.kvl_context.get_var("stop_sounds_request") != Some(&Value::Bool(true)) {
+            return;
+        }
+        self.kvl_context
+            .set_var("stop_sounds_request", Value::Bool(false));
+        self.stop_sounds();
+    }
+
+    /// Démarre une **musique de fond bouclée** identifiée (`LoopSound:<id>`).
+    ///
+    /// Priorité identique à [`Self::play_sound_id`] : le **clip WAV du projet**
+    /// (fichier réel) l'emporte sur tout repli. Il n'existe en revanche **aucun
+    /// repli procédural pour une boucle** : un identifiant sans clip fichier est
+    /// ignoré avec un simple avertissement de log, jamais une panique ni une voix
+    /// silencieuse qui tournerait indéfiniment.
+    ///
+    /// Renvoie `true` quand une voix de boucle a effectivement démarré (l'ancienne
+    /// boucle éventuelle est remplacée).
+    pub fn loop_sound_id(&mut self, id: &str) -> bool {
+        let id = id.trim();
+        if id.is_empty() {
+            return false;
+        }
+        if let Some(clip) = self.chercher_clip(id) {
+            return self.audio.loop_clip(clip, VOLUME_MUSIQUE);
+        }
+        tracing::warn!(
+            son = %id,
+            "LoopSound : aucun clip WAV chargé pour cet identifiant ; boucle ignorée \
+             (pas de repli procédural pour une musique)"
+        );
+        false
+    }
+
+    /// Coupe toutes les musiques de fond bouclées (`StopSounds`) ; renvoie le
+    /// nombre de voix arrêtées. Les effets ponctuels continuent.
+    pub fn stop_sounds(&mut self) -> usize {
+        self.audio.stop_loops()
     }
 
     /// Enregistre la télémétrie d'une frame complète et déclenche l'adaptation
@@ -15942,6 +16125,157 @@ mod tests {
             state.kvl_context.get_var("sound_request"),
             Some(&Value::String(String::new())),
             "la demande est consommée une seule fois"
+        );
+    }
+
+    /// Graphe minimal « Start → action audio » pour tester le dispatch KVL réel.
+    fn graphe_action_audio(action_type: &str) -> Graph {
+        let mut graph = Graph::new("audio_test", "Test audio", "");
+        graph.add_node(Node::new(
+            "start",
+            "Start",
+            Category::World,
+            "",
+            NodeKind::Event {
+                event_type: "Start".into(),
+            },
+        ));
+        graph.add_node(Node::new(
+            "action",
+            "Action audio",
+            Category::Audio,
+            "",
+            NodeKind::Action {
+                action_type: action_type.into(),
+            },
+        ));
+        graph.add_connection(kvl_core::Connection::new(
+            "c1",
+            "start",
+            "out_trigger",
+            "action",
+            "in_trigger",
+        ));
+        graph
+    }
+
+    #[test]
+    fn loop_sound_demarre_une_boucle_et_stop_sounds_l_arrete() {
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("Scène chargée");
+        state.audio.stop_clips();
+        state.audio.set_muted(false);
+        state.sound_bank.insert(
+            "musique".to_string(),
+            clip_wav_de_test("musique.wav"),
+        );
+
+        // `LoopSound:musique` passe par le registre de handlers KVL (comme
+        // PlaySound) et dépose une demande consommée en fin de frame.
+        let graph = graphe_action_audio("LoopSound:musique");
+        Interpreter::trigger_event_with(
+            &graph,
+            &mut state.kvl_context,
+            "Start",
+            state.plugins.handlers(),
+        )
+        .expect("action LoopSound reconnue");
+        state.drain_audio_requests();
+
+        assert_eq!(
+            state.audio.clip_voice_count(),
+            1,
+            "LoopSound:<id> doit démarrer une voix de boucle"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("loop_sound_request"),
+            Some(&Value::String(String::new())),
+            "la demande de boucle est consommée"
+        );
+
+        // `StopSounds` coupe spécifiquement les boucles.
+        let stop = graphe_action_audio("StopSounds");
+        Interpreter::trigger_event_with(
+            &stop,
+            &mut state.kvl_context,
+            "Start",
+            state.plugins.handlers(),
+        )
+        .expect("action StopSounds reconnue");
+        state.drain_audio_requests();
+
+        assert_eq!(
+            state.audio.clip_voice_count(),
+            0,
+            "StopSounds doit couper la musique de fond"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("stop_sounds_request"),
+            Some(&Value::Bool(false)),
+            "la demande d'arrêt est consommée"
+        );
+    }
+
+    #[test]
+    fn loop_sound_inconnu_est_ignore_sans_panique() {
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("Scène chargée");
+        state.audio.stop_clips();
+        let avant = state.audio.active_voice_count();
+
+        let graph = graphe_action_audio("LoopSound:musique_absente");
+        Interpreter::trigger_event_with(
+            &graph,
+            &mut state.kvl_context,
+            "Start",
+            state.plugins.handlers(),
+        )
+        .expect("LoopSound inconnu ne casse pas le graphe");
+        state.drain_audio_requests();
+
+        assert!(
+            !state.loop_sound_id("musique_absente"),
+            "aucun clip : la boucle n'est pas démarrée"
+        );
+        assert_eq!(
+            state.audio.active_voice_count(),
+            avant,
+            "un identifiant inconnu ne crée aucune voix"
+        );
+
+        // StopSounds sans boucle active reste inoffensif.
+        let stop = graphe_action_audio("StopSounds");
+        Interpreter::trigger_event_with(
+            &stop,
+            &mut state.kvl_context,
+            "Start",
+            state.plugins.handlers(),
+        )
+        .expect("StopSounds sans boucle");
+        state.drain_audio_requests();
+        assert_eq!(state.audio.active_voice_count(), avant);
+    }
+
+    #[test]
+    fn drain_stop_sounds_coupe_les_effets_ponctuels_non() {
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("Scène chargée");
+        state.audio.stop_clips();
+        state.sound_bank.insert(
+            "musique".to_string(),
+            clip_wav_de_test("musique.wav"),
+        );
+        state.sound_bank.insert(
+            "effet".to_string(),
+            clip_wav_de_test("effet.wav"),
+        );
+        assert!(state.loop_sound_id("musique"));
+        assert!(state.play_sound_id("effet"));
+        assert_eq!(state.audio.clip_voice_count(), 2);
+
+        // StopSounds ne coupe que les boucles : l'effet ponctuel reste en voix.
+        assert_eq!(state.stop_sounds(), 1);
+        assert_eq!(
+            state.audio.clip_voice_count(),
+            1,
+            "l'effet PlaySound ne doit pas être coupé par StopSounds"
         );
     }
 

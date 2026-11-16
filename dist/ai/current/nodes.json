@@ -1,7 +1,7 @@
 {
   "api_version": 1,
   "plugin_count": 1,
-  "node_count": 78,
+  "node_count": 80,
   "load_order": [
     "karacti.nodes.core"
   ],
@@ -381,6 +381,37 @@
       "params": [],
       "aliases": [],
       "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "LoopSound",
+      "flavor": "action",
+      "label": "Jouer une musique en boucle",
+      "category": "Audio",
+      "description": "Démarre une musique de fond bouclée, remplace la boucle précédente. Forme : « LoopSound:musique ». Le clip WAV du projet est prioritaire (comme PlaySound) ; sans clip fichier, la boucle est ignorée. S'arrête avec StopSounds.",
+      "params": [
+        {
+          "name": "music",
+          "label": "Identifiant de la musique",
+          "param_type": {
+            "kind": "string"
+          },
+          "default": {
+            "type": "String",
+            "value": "musique"
+          },
+          "description": ""
+        }
+      ],
+      "aliases": [],
+      "prefixes": [
+        "LoopSound:"
+      ],
       "default_argument": "",
       "flow_input": true,
       "flow_outputs": [
@@ -1219,6 +1250,22 @@
       "label": "Arrêter l'animation 2D",
       "category": "World",
       "description": "Action historique migrée vers le registre.",
+      "params": [],
+      "aliases": [],
+      "prefixes": [],
+      "default_argument": "",
+      "flow_input": true,
+      "flow_outputs": [
+        "out_trigger"
+      ],
+      "plugin": "karacti.nodes.core"
+    },
+    {
+      "id": "StopSounds",
+      "flavor": "action",
+      "label": "Arrêter la musique de fond",
+      "category": "Audio",
+      "description": "Coupe toutes les musiques de fond bouclées (LoopSound). Les effets ponctuels PlaySound ne sont pas interrompus.",
       "params": [],
       "aliases": [],
       "prefixes": [],

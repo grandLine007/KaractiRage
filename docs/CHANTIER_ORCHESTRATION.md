@@ -230,7 +230,7 @@ réseau).
 plateforme). Un veilleur par interrogation de mtime, testable, suffit pour un
 rechargement sous la seconde.
 
-## 3novodecies. Vague 18 — en cours (consolidation P2 avant P3)
+## 3novodecies. Vague 18 — terminée (consolidation P2 avant P3)
 
 | Agent | Tâche | Critère de sortie |
 |---|---|---|

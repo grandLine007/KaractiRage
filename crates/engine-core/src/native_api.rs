@@ -451,7 +451,7 @@ impl NativeEngine {
         let mode = self.game.editor.mode;
         let emballe = self.game.editor.embedded_mode;
 
-        self.game.load_project(projet);
+        self.game.load_project_depuis_fichier(projet, chemin);
         self.game.level_index = index.min(self.game.levels.len().saturating_sub(1));
         if index > 0 {
             self.game.reload();
@@ -1329,7 +1329,20 @@ impl NativeEngine {
     /// « reprendre où on s'était arrêté », pas « revenir au menu ».
     fn apply_save_state(&mut self, state: crate::save::SaveState) {
         let level = state.level_index;
-        self.game.load_project(state.project);
+        // Une sauvegarde ne transporte pas le chemin du projet : on réutilise la
+        // racine du projet ouvert (ou courante) pour que les assets relatifs
+        // (`tilesets/…`) restent résolus après reprise.
+        let racine = self
+            .projet_ouvert
+            .as_deref()
+            .and_then(std::path::Path::parent)
+            .map(|dossier| {
+                dossier
+                    .canonicalize()
+                    .unwrap_or_else(|_| dossier.to_path_buf())
+            })
+            .or_else(|| self.game.racine_projet.clone());
+        self.game.load_project_avec_racine(state.project, racine);
         self.game.kvl_context.variables = state.variables;
         for _ in 0..level {
             if !self.game.next_level() {
@@ -1390,7 +1403,9 @@ impl NativeEngine {
         } else {
             let proj = crate::project::KaractiProject::load_from_file(path)
                 .map_err(|e| format!("Impossible de charger le projet : {}", e))?;
-            self.game.load_project(proj);
+            // Le dossier du `.karacti` est la racine des assets relatifs
+            // (`tilesets/<nom>.png` d'un projet importé depuis Tiled).
+            self.game.load_project_depuis_fichier(proj, path);
             self.projet_ouvert = Some(PathBuf::from(path));
         }
         // Nouveau contenu : la liste des cibles du veilleur est reconstruite au

@@ -226,16 +226,36 @@ pub enum TiledImportError {
 ///
 /// Les tilesets externes et templates éventuels sont lus relativement au fichier
 /// `.tmx` (comportement du crate `tiled`). L'image du **premier** tileset est
-/// copiée dans `tilesets/` à côté de la carte, puis référencée par les entités
-/// `Tilemap` de la scène produite.
+/// copiée dans `tilesets/` à côté de la carte, puis référencée **relativement**
+/// au dossier de la carte (`tilesets/<nom>.png`) par les entités `Tilemap` de la
+/// scène produite : déplacer la scène avec son dossier `tilesets/` ne casse donc
+/// plus le rendu. Le chemin absolu n'est conservé qu'en repli, quand la copie
+/// échoue ou que la source est introuvable.
 pub fn import_tmx(path: &Path) -> Result<TiledImportReport, TiledImportError> {
+    let racine = path
+        .parent()
+        .filter(|dossier| !dossier.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    import_tmx_avec_racine(path, racine)
+}
+
+/// Importe une carte Tiled en copiant son atlas dans `racine/tilesets/`.
+///
+/// `racine` est la **racine du projet** : c'est elle qui sert d'ancre au chemin
+/// relatif stocké dans `ShapeKind::Tilemap::asset`. Pour [`import_tmx_to_project`]
+/// c'est le dossier de destination du `.karacti` (qui peut différer de celui de
+/// la carte `.tmx`).
+fn import_tmx_avec_racine(
+    path: &Path,
+    racine: &Path,
+) -> Result<TiledImportReport, TiledImportError> {
     let xml = std::fs::read_to_string(path).map_err(|source| TiledImportError::Lecture {
         chemin: path.display().to_string(),
         source,
     })?;
     let origin = path.display().to_string();
     protege_du_panic(&origin, || {
-        import_impl(&compacter_csv(&xml), &origin, Some(path))
+        import_impl(&compacter_csv(&xml), &origin, Some(path), Some(racine))
     })
 }
 
@@ -252,16 +272,14 @@ pub fn import_tmx(path: &Path) -> Result<TiledImportReport, TiledImportError> {
 /// `<nom>` est le nom de la carte (nom de fichier sans extension), assaini pour
 /// rester un nom de fichier portable. Les assets du dépôt ne sont jamais
 /// modifiés : la seule écriture hors sortie est la copie
-/// `tilesets/<nom-tileset>.png` **à côté de la carte**, faite par
-/// [`import_tmx`], qui rend la carte autonome une fois déplacée avec son dossier
-/// `tilesets/`.
+/// `tilesets/<nom-tileset>.png` **dans le dossier du projet** (`dest_dir`, par
+/// défaut le dossier de la carte), faite par [`import_tmx_to_project`] elle-même.
+/// L'atlas est référencé relativement à ce dossier : déplacer le projet complet
+/// avec son sous-dossier `tilesets/` préserve le rendu natif.
 pub fn import_tmx_to_project(
     tmx_path: &Path,
     dest_dir: Option<&Path>,
 ) -> Result<ImportedProject, TiledImportError> {
-    let route = import_tmx(tmx_path)?;
-    let titre = route.scene.name.clone();
-    let nom_fichier = nom_fichier_sur(&titre);
     let dossier = dest_dir
         .map(Path::to_path_buf)
         .or_else(|| tmx_path.parent().map(Path::to_path_buf))
@@ -271,6 +289,13 @@ pub fn import_tmx_to_project(
         chemin: dossier.display().to_string(),
         details: erreur.to_string(),
     })?;
+
+    // L'import copie l'atlas dans `dossier/tilesets/` et stocke un chemin relatif
+    // à `dossier` : la racine d'ancrage est donc le dossier du `.karacti`, même
+    // quand la carte `.tmx` vient d'ailleurs.
+    let route = import_tmx_avec_racine(tmx_path, &dossier)?;
+    let titre = route.scene.name.clone();
+    let nom_fichier = nom_fichier_sur(&titre);
 
     // 1. La scène seule d'abord : même si la construction du projet échouait, le
     // créateur garde un `.scene.json` utilisable.
@@ -453,13 +478,16 @@ where
 }
 
 pub fn import_tmx_str(xml: &str, origin: &str) -> Result<TiledImportReport, TiledImportError> {
-    protege_du_panic(origin, || import_impl(&compacter_csv(xml), origin, None))
+    protege_du_panic(origin, || {
+        import_impl(&compacter_csv(xml), origin, None, None)
+    })
 }
 
 fn import_impl(
     xml: &str,
     origin: &str,
     chemin: Option<&Path>,
+    racine_assets: Option<&Path>,
 ) -> Result<TiledImportReport, TiledImportError> {
     // Détection faite AVANT le parseur : le crate vendoré sans zstd renverrait
     // sinon une erreur générique « encoding/compression inconnus ».
@@ -545,11 +573,13 @@ fn import_impl(
         ));
     }
 
-    // Le premier tileset est préparé une seule fois : copie de l'image à côté de
-    // la carte et métadonnées de découpe partagées par toutes les couches.
+    // Le premier tileset est préparé une seule fois : copie de l'image dans
+    // `<racine>/tilesets/` et métadonnées de découpe partagées par toutes les
+    // couches.
     let tileset_importe = preparer_tileset(
         map.tilesets().first().map(|tileset| tileset.as_ref()),
         chemin,
+        racine_assets,
         origin,
         &mut warnings,
     );
@@ -781,7 +811,8 @@ fn import_impl(
 struct TilesetImporte {
     /// Nom lisible du tileset (messages d'avertissement).
     nom: String,
-    /// Identifiant stable de l'atlas (chemin absolu du PNG copié).
+    /// Identifiant de l'atlas : chemin **relatif à la racine du projet**
+    /// (`tilesets/<nom>.png`), ou chemin absolu en repli si la copie a échoué.
     asset: String,
     tile_w: u32,
     tile_h: u32,
@@ -789,13 +820,16 @@ struct TilesetImporte {
 }
 
 /// Prépare le premier tileset : valide ses dimensions, copie son image dans
-/// `tilesets/<nom>.png` à côté de la carte et renvoie les métadonnées de découpe.
+/// `<racine>/tilesets/<nom>.png` et renvoie les métadonnées de découpe.
 ///
 /// `carte` vaut `None` pour un import en mémoire ([`import_tmx_str`]) : aucune
 /// copie n'est alors tentée, l'image d'origine est référencée telle quelle.
+/// `racine_assets` est le dossier du projet (ou de la carte pour un import
+/// autonome) ; c'est l'ancre du chemin relatif stocké dans `Tilemap.asset`.
 fn preparer_tileset(
     tileset: Option<&tiled::Tileset>,
     carte: Option<&Path>,
+    racine_assets: Option<&Path>,
     origin: &str,
     warnings: &mut Vec<String>,
 ) -> Option<TilesetImporte> {
@@ -824,9 +858,12 @@ fn preparer_tileset(
     } else {
         1
     };
-    let asset = match carte {
-        Some(chemin) => copier_image_tileset(chemin, &nom, &image.source, origin, warnings),
-        None => image.source.display().to_string(),
+    let asset = match (carte, racine_assets) {
+        (Some(_), Some(racine)) => {
+            copier_image_tileset(&nom, &image.source, racine, origin, warnings)
+        }
+        // Import en mémoire : aucune copie, on référence la source telle quelle.
+        _ => image.source.display().to_string(),
     };
     Some(TilesetImporte {
         nom,
@@ -851,18 +888,23 @@ fn nom_tileset(tileset: &tiled::Tileset, source_par_defaut: &Path) -> String {
     nom_fichier_sur(&brut)
 }
 
-/// Copie l'image d'un tileset dans `tilesets/` à côté de la carte et renvoie le
-/// chemin **absolu** du fichier copié (identifiant stable, résolvable quel que
-/// soit le répertoire courant du moteur).
+/// Copie l'image d'un tileset dans `<racine>/tilesets/` et renvoie le chemin
+/// **relatif à `racine`** du fichier copié (`tilesets/<nom>.png`).
+///
+/// Ce chemin relatif est l'identifiant stable stocké dans `Tilemap.asset` : il
+/// reste valide quand le dossier projet est déplacé/renommé en bloc, à condition
+/// que `tilesets/` suive. Le moteur l'ancre sur la racine du projet ouverte
+/// (voir `GameState::racine_projet`). Pour les scènes d'avant la v0.4.4, un
+/// chemin absolu reste accepté tel quel.
 ///
 /// En cas d'image introuvable ou de copie impossible, un avertissement est
-/// émis et l'image d'origine est référencée : l'import continue, le rendu
-/// retombera sur les rectangles de repli et le pré-vol d'export signalera
-/// l'asset manquant.
+/// émis et l'image d'origine (chemin absolu) est référencée : l'import continue,
+/// le rendu retombera sur les rectangles de repli et le pré-vol d'export
+/// signalera l'asset manquant.
 fn copier_image_tileset(
-    carte: &Path,
     nom: &str,
     source: &Path,
+    racine: &Path,
     origin: &str,
     warnings: &mut Vec<String>,
 ) -> String {
@@ -875,12 +917,10 @@ fn copier_image_tileset(
         return chemin_absolu(source);
     }
 
-    let dossier_carte = carte
-        .parent()
-        .filter(|dossier| !dossier.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let dossier_tilesets = dossier_carte.join("tilesets");
+    let dossier_tilesets = racine.join("tilesets");
     let destination = dossier_tilesets.join(format!("{nom}.png"));
+    // Chemin portable (toujours `/`) relatif à la racine du projet.
+    let relatif = format!("tilesets/{nom}.png");
 
     let deja_place = match (source.canonicalize(), destination.canonicalize()) {
         (Ok(source), Ok(destination)) => source == destination,
@@ -899,7 +939,7 @@ fn copier_image_tileset(
             return chemin_absolu(source);
         }
     }
-    chemin_absolu(&destination)
+    relatif
 }
 
 /// Chemin absolu si possible, sinon chemin tel quel (jamais de panic).
@@ -1475,11 +1515,14 @@ mod tests {
                 assert_eq!((*tile_w, *tile_h, *columns), (16, 16, 1));
                 assert_eq!(tiles.len(), 12);
                 assert!(tiles.iter().all(|&tuile| tuile == 1), "{tiles:?}");
-                let copie = Path::new(asset.as_str());
+                // Chemin relatif au dossier de la carte (pas un absolu) : il
+                // survit au déplacement du dossier projet.
+                assert_eq!(asset, "tilesets/tuiles.png");
+                let copie = carte.parent().expect("dossier de la carte").join(asset);
                 assert!(copie.is_file(), "atlas copié : {asset}");
                 assert_eq!(copie.file_name().and_then(|nom| nom.to_str()), Some("tuiles.png"));
                 assert_eq!(
-                    std::fs::read(copie).expect("lecture copie"),
+                    std::fs::read(&copie).expect("lecture copie"),
                     std::fs::read(fixture("tuiles.png")).expect("lecture source")
                 );
             }
@@ -1663,6 +1706,28 @@ mod tests {
                 .any(|entite| entite.tag == "tilemap"),
             "la couche de tuiles est bien un Tilemap dans le projet"
         );
+        // L'atlas suit le **projet**, pas la carte : il est copié dans
+        // `destination/tilesets/` et le chemin stocké est relatif à la destination.
+        let tilemap = projet
+            .scene
+            .entities
+            .iter()
+            .find(|entite| entite.tag == "tilemap")
+            .expect("entité tilemap");
+        let asset = match &tilemap.renderable.as_ref().expect("rendu").shape {
+            ShapeKind::Tilemap { asset, .. } => asset.clone(),
+            autre => panic!("forme Tilemap attendue, obtenu {autre:?}"),
+        };
+        assert_eq!(asset, "tilesets/tuiles.png");
+        assert!(
+            destination.join(&asset).is_file(),
+            "atlas copié dans le dossier du projet : {}",
+            destination.join(&asset).display()
+        );
+        assert!(
+            !dossier.join("tilesets").exists(),
+            "aucun tileset ne doit être copié à côté de la carte quand la destination diffère"
+        );
 
         let _ = std::fs::remove_dir_all(&dossier);
     }
@@ -1734,7 +1799,8 @@ mod tests {
             } => {
                 assert_eq!((*tile_w, *tile_h, *columns), (2, 2, 2));
                 assert_eq!(tiles, &vec![1, 2], "indices locaux décalés de 1 (0 = vide)");
-                let copie = Path::new(asset.as_str());
+                assert_eq!(asset, "tilesets/couleurs.png", "chemin relatif au projet");
+                let copie = carte.parent().expect("dossier de la carte").join(asset);
                 assert!(copie.is_file(), "atlas copié à côté de la carte : {asset}");
                 assert_eq!(
                     copie.file_name().and_then(|nom| nom.to_str()),
@@ -1748,7 +1814,7 @@ mod tests {
                     Some("tilesets")
                 );
                 assert_eq!(
-                    std::fs::read(copie).expect("lecture de la copie"),
+                    std::fs::read(&copie).expect("lecture de la copie"),
                     std::fs::read(fixture("tilesets_petit.png")).expect("lecture de la source")
                 );
             }
@@ -1796,6 +1862,7 @@ mod tests {
             } => {
                 assert_eq!((*tile_w, *tile_h, *columns), (2, 2, 2));
                 assert_eq!(tiles, &vec![1, 2]);
+                assert_eq!(asset, "tilesets/externe.png");
                 assert_eq!(
                     Path::new(asset.as_str())
                         .file_name()
@@ -1803,7 +1870,10 @@ mod tests {
                     Some("externe.png"),
                     "nom repris du .tsx externe"
                 );
-                assert!(Path::new(asset.as_str()).is_file());
+                assert!(
+                    carte.parent().expect("dossier de la carte").join(asset).is_file(),
+                    "atlas copié : {asset}"
+                );
             }
             autre => panic!("forme Tilemap attendue, obtenu {autre:?}"),
         }
@@ -1958,7 +2028,8 @@ mod tests {
 
         // L'atlas devient illisible sur disque : seul l'asset embarqué du
         // paquet peut encore alimenter le rendu.
-        std::fs::remove_file(&asset).expect("suppression de l'atlas copié");
+        std::fs::remove_file(carte.parent().expect("dossier de la carte").join(&asset))
+            .expect("suppression de l'atlas copié");
 
         let mut cible = GameState::from_scene_data(
             SceneData {
@@ -2037,6 +2108,112 @@ mod tests {
             dessus > fond,
             "la couche du dessous doit passer au-dessus : {fond} < {dessus}"
         );
+    }
+
+    #[test]
+    fn test_u_projet_deplace_atlas_relatif_toujours_resolu() {
+        // Dette v0.4.2 §5.1 : l'atlas était référencé par un chemin absolu, donc
+        // déplacer la carte + `tilesets/` cassait le rendu natif. Le chemin doit
+        // être relatif à la racine du projet et se résoudre après un `rename`.
+        let avant = dossier_temporaire_unique("deplacement_avant");
+        let dossier = avant.join("projet_tiled");
+        std::fs::create_dir_all(&dossier).expect("dossier projet");
+        let carte = dossier.join("carte_deplacee.tmx");
+        std::fs::copy(fixture("tilemap_couleurs.tmx"), &carte).expect("copie carte");
+        std::fs::copy(
+            fixture("tilesets_petit.png"),
+            dossier.join("tilesets_petit.png"),
+        )
+        .expect("copie atlas source");
+
+        let importe = import_tmx_to_project(&carte, None).expect("import en projet");
+        let asset = {
+            let projet = KaractiProject::load_from_file(&importe.project_path)
+                .expect("projet importé relu");
+            let tilemap = projet
+                .scene
+                .entities
+                .iter()
+                .find(|entite| entite.tag == "tilemap")
+                .expect("entité Tilemap dans le projet importé");
+            match &tilemap.renderable.as_ref().expect("rendu").shape {
+                ShapeKind::Tilemap { asset, .. } => asset.clone(),
+                autre => panic!("forme Tilemap attendue, obtenu {autre:?}"),
+            }
+        };
+        assert_eq!(asset, "tilesets/couleurs.png", "chemin relatif au projet");
+        assert!(
+            dossier.join(&asset).is_file(),
+            "atlas copié dans le dossier du projet"
+        );
+
+        // Déplacement atomique du dossier complet (projet + tilesets/).
+        let apres = std::env::temp_dir().join(format!(
+            "karactirage_tiled_deplacement_apres_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&apres);
+        std::fs::rename(&dossier, &apres).expect("déplacement du dossier projet");
+        assert!(!dossier.exists(), "l'ancien dossier ne doit plus exister");
+
+        // Réouverture depuis le nouveau chemin : la racine d'ancrage est le
+        // dossier du `.karacti`, pas l'ancienne localisation de la carte.
+        let project_path = apres.join(
+            importe
+                .project_path
+                .file_name()
+                .expect("nom du fichier projet"),
+        );
+        let projet = KaractiProject::load_from_file(&project_path).expect("projet déplacé relu");
+        let mut etat = GameState::from_scene_data(
+            SceneData {
+                name: "base".to_string(),
+                description: String::new(),
+                objective: None,
+                entities: Vec::new(),
+                player: None,
+                coins: Vec::new(),
+                doors: Vec::new(),
+                walls: Vec::new(),
+                enemies: Vec::new(),
+            },
+            "base.scene.json",
+        )
+        .expect("état de base");
+        etat.load_project_depuis_fichier(projet, &project_path);
+
+        let racine_attendue = apres.canonicalize().expect("racine canonique");
+        assert_eq!(
+            etat.racine_projet.as_deref(),
+            Some(racine_attendue.as_path()),
+            "racine ancrée sur le dossier du projet déplacé"
+        );
+        assert!(
+            etat.sprite_cache.get(&asset).is_some(),
+            "l'atlas doit être décodé depuis la nouvelle racine : {asset}"
+        );
+
+        // Le rendu natif utilise réellement les couleurs de l'atlas déplacé.
+        etat.editor.embedded_mode = true;
+        etat.editor.mode = crate::editor::EditorMode::Play;
+        etat.camera.x = 0.0;
+        etat.camera.y = 0.0;
+        let mut canvas = Canvas::new(400, 300);
+        etat.render(&mut canvas);
+        let pixel = |x: usize, y: usize| canvas.buffer[y * canvas.width + x];
+        assert_eq!(pixel(101, 121), 0x00FF_0000, "tuile rouge après déplacement");
+        assert_eq!(pixel(103, 121), 0x0000_00FF, "tuile bleue après déplacement");
+
+        // L'export embarque toujours l'atlas (lu depuis la racine du projet).
+        let paquet = StandaloneExporter::create_package(&etat, "Déplacé", "test");
+        assert!(
+            paquet.sprite_assets.contains_key(&asset),
+            "l'atlas relatif voyage dans le paquet : {:?}",
+            paquet.sprite_assets.keys().collect::<Vec<_>>()
+        );
+
+        let _ = std::fs::remove_dir_all(&avant);
+        let _ = std::fs::remove_dir_all(&apres);
     }
 
     #[test]

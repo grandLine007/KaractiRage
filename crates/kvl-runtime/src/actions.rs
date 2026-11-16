@@ -68,6 +68,26 @@ pub fn builtin_node_schemas() -> Vec<NodeSchema> {
         .with_prefix("PlaySound:")
         .with_plugin(CORE_NODE_PACK),
         NodeSchema::action(
+            "LoopSound",
+            "Jouer une musique en boucle",
+            Category::Audio,
+            "Démarre une musique de fond bouclée, remplace la boucle précédente. \
+             Forme : « LoopSound:musique ». Le clip WAV du projet est prioritaire \
+             (comme PlaySound) ; sans clip fichier, la boucle est ignorée. \
+             S'arrête avec StopSounds.",
+        )
+        .with_param(ParamSpec::text("music", "Identifiant de la musique", "musique"))
+        .with_prefix("LoopSound:")
+        .with_plugin(CORE_NODE_PACK),
+        NodeSchema::action(
+            "StopSounds",
+            "Arrêter la musique de fond",
+            Category::Audio,
+            "Coupe toutes les musiques de fond bouclées (LoopSound). Les effets \
+             ponctuels PlaySound ne sont pas interrompus.",
+        )
+        .with_plugin(CORE_NODE_PACK),
+        NodeSchema::action(
             "OpenDoor",
             "Ouvrir une porte",
             Category::World,
@@ -156,6 +176,12 @@ pub fn builtin_handlers() -> HandlerRegistry {
         .register_prefix("PlaySound:", play_sound)
         .expect("préfixe PlaySound unique");
     registry
+        .register_prefix("LoopSound:", loop_sound)
+        .expect("préfixe LoopSound unique");
+    registry
+        .register("StopSounds", stop_sounds)
+        .expect("handler StopSounds unique");
+    registry
         .register_prefix("TeleportPlayer:", teleport_player)
         .expect("préfixe TeleportPlayer unique");
     registry
@@ -190,6 +216,44 @@ fn play_sound(ctx: &mut ExecutionContext, call: &NodeCall<'_>) -> Result<(), Run
         call.node_id,
         call.node_name,
         format!("Son demandé : {}", call.argument),
+    );
+    Ok(())
+}
+
+/// Demande une **musique de fond bouclée** au moteur via `loop_sound_request`.
+///
+/// Le moteur cherche le clip (WAV du projet) puis appelle
+/// `AudioEngine::loop_clip` ; la priorité est la même que `PlaySound` : un clip
+/// fichier chargé l'emporte. Contrairement à `PlaySound`, aucun repli
+/// procédural n'existe pour une boucle : un identifiant sans clip fichier est
+/// ignoré silencieusement (aucune voix, aucun panic).
+fn loop_sound(ctx: &mut ExecutionContext, call: &NodeCall<'_>) -> Result<(), RuntimeError> {
+    if call.argument.is_empty() {
+        ctx.record_step(
+            call.node_id,
+            call.node_name,
+            "LoopSound sans identifiant : aucune musique demandée.",
+        );
+        return Ok(());
+    }
+
+    ctx.set_var("loop_sound_request", Value::String(call.argument.to_string()));
+    ctx.record_step(
+        call.node_id,
+        call.node_name,
+        format!("Musique en boucle demandée : {}", call.argument),
+    );
+    Ok(())
+}
+
+/// Demande l'arrêt des musiques de fond (`stop_sounds_request` → `stop_loops`).
+/// Les effets ponctuels ne sont pas coupés.
+fn stop_sounds(ctx: &mut ExecutionContext, call: &NodeCall<'_>) -> Result<(), RuntimeError> {
+    ctx.set_var("stop_sounds_request", Value::Bool(true));
+    ctx.record_step(
+        call.node_id,
+        call.node_name,
+        "Arrêt des musiques de fond demandé.",
     );
     Ok(())
 }

@@ -49,7 +49,9 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    game.load_project(project);
+    // Le dossier du `.karacti` est la racine des assets relatifs (`tilesets/…`) :
+    // un projet Tiled déplacé garde ainsi son atlas à l'export.
+    game.load_project_depuis_fichier(project, &project_path);
 
     let report = StandaloneExporter::preflight(&game);
     for issue in &report.issues {

@@ -759,15 +759,18 @@ impl StandaloneExporter {
             if let Some(rend) = &ent.renderable {
                 match &rend.shape {
                     ShapeKind::ImageRef { asset } => {
-                        if let Some(bytes) = crate::vector::read_png_source(asset) {
+                        // `lire_asset_png` ancre les chemins relatifs sur la
+                        // racine du projet ouverte (atlas Tiled, sprites relatifs).
+                        if let Some(bytes) = game.lire_asset_png(asset) {
                             sprite_assets.entry(asset.clone()).or_insert_with(|| STANDARD.encode(&bytes));
                         }
                     }
                     ShapeKind::Tilemap { asset, .. } => {
                         // L'atlas de tuiles voyage dans `sprite_assets`, comme
                         // les sprites PNG : le runtime wasm n'a pas de disque et
-                        // dessinerait sinon des cases vides.
-                        if let Some(bytes) = crate::vector::read_png_source(asset) {
+                        // dessinerait sinon des cases vides. Le chemin relatif
+                        // (`tilesets/…`) est lu depuis la racine du projet.
+                        if let Some(bytes) = game.lire_asset_png(asset) {
                             sprite_assets.entry(asset.clone()).or_insert_with(|| STANDARD.encode(&bytes));
                         }
                     }
@@ -986,14 +989,14 @@ impl StandaloneExporter {
                 }
                 ShapeKind::ImageRef { asset } => {
                     game.sprite_cache.get(asset).is_none()
-                        && crate::vector::read_png_source(asset).is_none()
+                        && game.lire_asset_png(asset).is_none()
                 }
                 ShapeKind::Tilemap { asset, .. } => {
                     // Même règle que les sprites PNG : présent si le cache l'a
                     // décodé (scène native ou paquet importé) ou si le fichier
-                    // source est lisible sur disque.
+                    // source est lisible depuis la racine du projet.
                     game.sprite_cache.get(asset).is_none()
-                        && crate::vector::read_png_source(asset).is_none()
+                        && game.lire_asset_png(asset).is_none()
                 }
                 ShapeKind::SheetRef { asset, .. } | ShapeKind::AnimRef { asset } => {
                     game.sheet_cache.get(asset).is_none()

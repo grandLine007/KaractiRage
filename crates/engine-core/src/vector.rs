@@ -7,6 +7,7 @@
 //! allocation par frame).
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use resvg::{tiny_skia, usvg};
@@ -668,11 +669,39 @@ pub fn decode_png(bytes: &[u8]) -> Result<RasterImage, SvgError> {
 /// Cherche depuis le cwd, puis `../../`, puis la racine du dépôt (absolue,
 /// indépendante du cwd — robuste pour `cargo test` et `cargo tauri dev`).
 fn load_png_source(id: &str) -> Result<Vec<u8>, SvgError> {
+    load_png_source_ancree(id, None)
+}
+
+/// Résout un asset PNG en **ancrant les chemins relatifs** sur `racine`.
+///
+/// Règle de résolution, dans cet ordre :
+/// 1. chemin **absolu** : lu tel quel — c'est la rétrocompatibilité des projets
+///    importés avant que `Tilemap.asset` ne devienne relatif ;
+/// 2. chemin relatif (ou identifiant sans extension) et `racine` fournie :
+///    `racine.join(chemin)` — c'est le cas d'un projet/scène ouvert depuis son
+///    dossier, y compris après déplacement du dossier complet ;
+/// 3. comportement historique inchangé : cwd, puis `../../`, puis la racine du
+///    dépôt (utile aux tests et au Studio lancé depuis le dépôt).
+///
+/// Un identifiant sans extension reste résolu en
+/// `assets/generated/sprites/{id}.png`, y compris sous `racine`.
+fn load_png_source_ancree(id: &str, racine: Option<&Path>) -> Result<Vec<u8>, SvgError> {
     let rel = if id.ends_with(".png") {
         id.to_string()
     } else {
         format!("assets/generated/sprites/{id}.png")
     };
+    // Une scène d'avant la v0.4.4 peut stocker un chemin absolu : il ne doit
+    // jamais être préfixé par la racine (sinon il deviendrait introuvable).
+    if Path::new(&rel).is_absolute() {
+        return std::fs::read(&rel)
+            .map_err(|_| SvgError(format!("asset PNG introuvable: {id}")));
+    }
+    if let Some(racine) = racine {
+        if let Ok(bytes) = std::fs::read(racine.join(&rel)) {
+            return Ok(bytes);
+        }
+    }
     if let Ok(bytes) = std::fs::read(&rel) {
         return Ok(bytes);
     }
@@ -716,13 +745,28 @@ impl PngCache {
 
     /// Récupère un asset déjà décodé, ou le charge à la demande (embarqué puis disque).
     pub fn get_or_load(&mut self, id: &str) -> Result<Arc<RasterImage>, SvgError> {
+        self.get_or_load_ancree(id, None)
+    }
+
+    /// Comme [`Self::get_or_load`], mais ancre les chemins **relatifs** sur
+    /// `racine` (dossier du projet ou de la scène). La clé de cache reste `id`
+    /// (chemin tel que stocké dans la scène) : le recadrage de tuiles et le
+    /// pré-vol d'export retrouvent donc l'atlas avec la même référence.
+    ///
+    /// Les assets embarqués (paquet autonome) restent prioritaires sur le disque ;
+    /// un chemin absolu est lu tel quel (rétrocompatibilité).
+    pub fn get_or_load_ancree(
+        &mut self,
+        id: &str,
+        racine: Option<&Path>,
+    ) -> Result<Arc<RasterImage>, SvgError> {
         if let Some(img) = self.assets.get(id) {
             return Ok(img.clone());
         }
         let bytes = if let Some(b) = self.embedded.get(id) {
             b.clone()
         } else {
-            load_png_source(id)?
+            load_png_source_ancree(id, racine)?
         };
         let img = Arc::new(decode_png(&bytes)?);
         self.assets.insert(id.to_string(), img.clone());
@@ -791,6 +835,14 @@ impl PngCache {
 /// Octets PNG bruts d'un asset identifié (miniature Studio), sans décodage.
 pub fn read_png_source(id: &str) -> Option<Vec<u8>> {
     load_png_source(id).ok()
+}
+
+/// Octets PNG bruts d'un asset, chemins relatifs ancrés sur `racine`.
+///
+/// Utilisé par l'export d'un projet/scène ouvert depuis son dossier : l'atlas
+/// `tilesets/<nom>.png` est lu depuis la racine du projet, pas depuis le cwd.
+pub fn read_png_source_ancree(id: &str, racine: Option<&Path>) -> Option<Vec<u8>> {
+    load_png_source_ancree(id, racine).ok()
 }
 
 /// Dimensions d'un PNG (lecture de l'en-tête uniquement, sans décodage complet).
@@ -1030,6 +1082,53 @@ mod tests {
         let again = cache.get("coin").expect("déjà chargé");
         assert!(Arc::ptr_eq(&img, again));
         assert!(cache.get("asset_inexistant").is_none());
+    }
+
+    #[test]
+    fn png_source_ancree_resout_relatif_et_chemin_absolu() {
+        // Dette v0.4.2 : un atlas peut être stocké relativement au projet
+        // (`tilesets/…`). La résolution doit l'ancre sur la racine fournie, et
+        // continuer d'accepter un ancien chemin absolu.
+        let racine = std::env::temp_dir().join(format!(
+            "karacti_png_ancree_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&racine);
+        std::fs::create_dir_all(racine.join("tilesets")).expect("dossier tilesets");
+        let nom = format!("tilesets/karacti_ancrage_{}.png", std::process::id());
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("tilesets_petit.png");
+        std::fs::copy(&source, racine.join(&nom)).expect("copie atlas de test");
+
+        assert!(
+            read_png_source_ancree(&nom, Some(&racine)).is_some(),
+            "chemin relatif résolu depuis la racine"
+        );
+        assert!(
+            read_png_source_ancree(&nom, None).is_none(),
+            "sans racine, ce chemin n'existe pas depuis le cwd"
+        );
+
+        // Un chemin absolu reste lu tel quel, même avec une racine inutilisable
+        // (rétrocompatibilité des projets importés avant la v0.4.4).
+        let absolu = racine.join(&nom);
+        assert!(
+            read_png_source_ancree(
+                absolu.to_str().expect("chemin UTF-8"),
+                Some(Path::new("/chemin/absolument/inexistant"))
+            )
+            .is_some(),
+            "chemin absolu rétrocompatible"
+        );
+
+        // Le cache garde l'identifiant relatif comme clé (recadrage/pré-vol).
+        let mut cache = PngCache::new();
+        assert!(cache.get_or_load_ancree(&nom, Some(&racine)).is_ok());
+        assert!(cache.get(&nom).is_some());
+
+        let _ = std::fs::remove_dir_all(&racine);
     }
 
     #[test]
