@@ -209,6 +209,17 @@ manque de P2.2 : sans tilesets, une carte Tiled ne ressemble pas à une carte Ti
 **Limites v1 prévues** : premier tileset seulement, tuiles retournées/rotées ignorées,
 animations de tuiles réduites à la première image.
 
+## 3sedecies. Vague 16 — en cours (P2.3 : audio par fichiers, sans Kira)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| agent-10 | Décoder des WAV, les mixer, résoudre `PlaySound:<id>` et les embarquer dans l'export | un son fourni par l'auteur joue en natif et dans le HTML |
+
+**Décision de meneur** : Kira est abandonné *pour l'instant* — son arbre (~40 crates :
+cpal, symphonia…) n'est pas caché et crates.io est bloqué. Un décodeur WAV natif (RIFF
+PCM) couvre le besoin sans aucune dépendance ; OGG/MP3 restent à faire (vendoring ou
+réseau).
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
