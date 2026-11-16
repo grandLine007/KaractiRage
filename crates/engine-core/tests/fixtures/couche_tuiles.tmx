@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="4" height="3" tilewidth="32" tileheight="32" infinite="0" nextlayerid="3" nextobjectid="2">
+ <tileset firstgid="1" name="tuiles" tilewidth="16" tileheight="16" tilecount="1" columns="1">
+  <image source="tuiles.png" width="16" height="16"/>
+ </tileset>
+ <layer id="1" name="Sol" width="4" height="3">
+  <data encoding="csv">
+1,1,1,1,
+1,1,1,1,
+1,1,1,1
+  </data>
+ </layer>
+ <objectgroup id="2" name="Entités">
+  <object id="1" name="Joueur" class="player" x="16" y="16" width="32" height="32"/>
+ </objectgroup>
+</map>

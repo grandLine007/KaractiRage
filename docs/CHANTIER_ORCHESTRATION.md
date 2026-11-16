@@ -170,6 +170,21 @@ rectangles colorés. `from_scene_data` résout `SvgRef` sur disque, échoue en w
 
 **Réseau** : `crates.io` toujours en 403 — Tiled/Kira restent bloqués.
 
+## 3terdecies. Vague 13 — en cours (P2.2 : import Tiled)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| agent-7 | `.tmx` orthogonal → `SceneData` jouable (objets → entités, propriétés → composants) | carte de démonstration importée, scène chargeable, erreurs claires (zstd, joueur absent) |
+
+**Déblocage** : crates.io est toujours bloqué (index/API), mais **static.crates.io répond**.
+Le meneur a vendoré `tiled` 0.16.0 et `quick-xml` 0.31.0 dans `vendor/`, vérifié en
+compilant hors ligne (`cargo build --offline --workspace`, 538 tests). Les dépendances
+optionnelles lourdes (zstd, ggez, sfml) ont été retirées du Cargo.toml vendoré — voir
+`vendor/tiled-0.16.0/VENDORING.md`.
+
+**Conséquence assumée** : les cartes compressées en zstd ne sont pas lisibles ; l'import
+v1 couvre les couches d'objets, les couches de tuiles sont aplaties.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |

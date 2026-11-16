@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="20" height="15" tilewidth="32" tileheight="32" infinite="0" nextlayerid="3" nextobjectid="4">
+ <objectgroup id="1" name="Entités">
+  <object id="1" name="Joueur" class="player" x="32" y="32" width="32" height="32"/>
+  <object id="2" name="MurAncien" class="wall" x="100" y="100" width="40" height="48">
+   <properties>
+    <property name="script" value="assets/scripts/door_interaction.kvl.json"/>
+    <property name="solid" type="bool" value="true"/>
+    <property name="health" type="float" value="5"/>
+    <property name="color" value="#FF00AA"/>
+    <property name="name" value="Mur Mystère"/>
+   </properties>
+  </object>
+  <object id="3" name="MurFantome" class="wall" x="300" y="100" width="32" height="32">
+   <properties>
+    <property name="solid" type="bool" value="false"/>
+    <property name="hp" type="int" value="7"/>
+    <property name="color" type="color" value="#123456"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

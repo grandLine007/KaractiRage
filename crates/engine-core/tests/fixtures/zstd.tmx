@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="2" height="2" tilewidth="32" tileheight="32" infinite="0" nextlayerid="3" nextobjectid="2">
+ <objectgroup id="1" name="Entités">
+  <object id="1" name="Joueur" class="player" x="0" y="0" width="32" height="32"/>
+ </objectgroup>
+ <layer id="2" name="Sol" width="2" height="2">
+  <data encoding="base64" compression="zstd">KLUv/QBYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==</data>
+ </layer>
+</map>

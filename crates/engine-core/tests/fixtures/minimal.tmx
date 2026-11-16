@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="25" height="19" tilewidth="32" tileheight="32" infinite="0" nextlayerid="3" nextobjectid="5">
+ <objectgroup id="1" name="Entités">
+  <object id="1" name="Joueur" class="player" x="64" y="96" width="32" height="32"/>
+  <object id="2" name="Mur Nord" type="wall" x="200" y="96" width="64" height="32"/>
+  <object id="3" name="Mur Est" type="wall" x="200" y="160" width="32" height="96"/>
+  <object id="4" name="Porte" class="door" x="600" y="96" width="32" height="64"/>
+ </objectgroup>
+</map>

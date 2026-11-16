@@ -21,6 +21,7 @@ pub mod settings;
 pub mod sheet;
 pub mod spatial;
 pub mod telemetry;
+pub mod tiled_import;
 pub mod trace;
 pub mod ui_render;
 pub mod vector;
