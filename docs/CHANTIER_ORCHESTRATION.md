@@ -131,6 +131,45 @@ spatiale, il ne pouvait presque jamais toucher le joueur.
 **Défaut visé** : l'export ne sérialisait que la scène courante — le fichier partagé
 contenait 9 entités (niveau 1) alors que le jeu en compte 3.
 
+## 3nonies. Vague 9 — terminée (n'importe quel jeu s'exporte)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| « réinjection » | Faire survivre graphes KVL et assets embarqués aux changements de niveau | ✅ script absent du disque + PNG + spritesheet survivent à `start_game`/`next_level`/`reload` |
+| meneur | Ré-export des images embarquées | ✅ ferme la boucle export → import → export |
+
+**Dette visée** (rapport v0.3.6 §6.1) : `from_scene_data` reconstruit l'état et perd
+l'union du paquet. Le jeu de référence n'est pas touché, mais un jeu exporté avec des
+sprites importés perd ses images au niveau 2.
+
+## 3decies. Vague 10 — terminée (le jeu exporté a une interface)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| « écrans exportés » | Embarquer `ui_screens` et afficher le niveau courant | à l'import, le menu est **visible** ; « NIVEAU X/N » dans le HUD ; smoke `--expect-screens` |
+
+**Dette visée** (rapport v0.3.7 §5.1) : l'import force `screen = Menu` mais `ui_screens`
+est vide — le monde est figé sans surcouche de départ.
+
+## 3undecies. Vague 11 — terminée (les sprites arrivent dans l'export)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| « SVG exportés » | Embarquer les sources SVG et ne plus écraser un sprite déjà résolu | le joueur n'est plus un rectangle dans le HTML exporté ; capture avant/après |
+
+**Défaut visuel constaté** : dans le jeu exporté, le joueur et le décor sont des
+rectangles colorés. `from_scene_data` résout `SvgRef` sur disque, échoue en wasm, et met
+`vector_sprite = None`. Le paquet n'embarque aucune source SVG.
+
+## 3duodecies. Vague 12 — terminée (finitions export + performance)
+
+| Agent | Tâche | Périmètre | Critère de sortie |
+|---|---|---|---|
+| agent-5 | Embarquer les `.anim.json` des sprites SVG | `vector.rs`, `exporter.rs`, `game.rs` | un clip personnalisé survit à l'import et aux reconstructions |
+| agent-6 | Instrumenter le temps de frame et ajouter `--expect-fps` | `standalone_template.html`, `export-smoke.mjs` | le jeu exporté est mesuré à ≥ 55 FPS, ou le smoke échoue avec la valeur réelle |
+
+**Réseau** : `crates.io` toujours en 403 — Tiled/Kira restent bloqués.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |

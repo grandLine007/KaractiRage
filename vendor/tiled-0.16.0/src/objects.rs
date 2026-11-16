@@ -1,0 +1,591 @@
+use std::{collections::HashMap, path::Path, sync::Arc};
+
+use crate::{
+    Color, Gid, MapTilesetGid, ResourceCache, ResourceReader, Tile, TileId, Tileset,
+    error::{Error, Result},
+    properties::{Properties, parse_properties},
+    template::Template,
+    util::{get_attrs, map_wrapper, parse_tag, read_text_or_cdata},
+};
+
+/// The location of the tileset this tile is in
+///
+/// Tilesets can be contained within either a map or a template.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TilesetLocation {
+    /// Index into the Map's tileset list, guaranteed to be a valid index of the map tileset container.
+    Map(usize),
+    /// Arc of the tileset itself if and only if this location is from a template.
+    Template(Arc<Tileset>),
+}
+
+/// Stores the internal tile gid about a layer tile, along with how it is flipped.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ObjectTileData {
+    /// A valid TilesetLocation that points to a tileset that **may or may not contain** this tile.
+    tileset_location: TilesetLocation,
+    /// The local ID of the tile in the tileset it's in.
+    id: TileId,
+    /// Whether this tile is flipped on its Y axis (horizontally).
+    pub flip_h: bool,
+    /// Whether this tile is flipped on its X axis (vertically).
+    pub flip_v: bool,
+    /// Whether this tile is flipped diagonally.
+    pub flip_d: bool,
+}
+
+impl ObjectTileData {
+    /// Get the layer tile's local id within its parent tileset.
+    #[inline]
+    pub fn id(&self) -> TileId {
+        self.id
+    }
+
+    /// Get a reference to the object tile data's tileset location, which points to a tileset that
+    /// **may or may not contain** this tile.
+    #[inline]
+    pub fn tileset_location(&self) -> &TilesetLocation {
+        &self.tileset_location
+    }
+
+    const FLIPPED_HORIZONTALLY_FLAG: u32 = 0x80000000;
+    const FLIPPED_VERTICALLY_FLAG: u32 = 0x40000000;
+    const FLIPPED_DIAGONALLY_FLAG: u32 = 0x20000000;
+    const ALL_FLIP_FLAGS: u32 = Self::FLIPPED_HORIZONTALLY_FLAG
+        | Self::FLIPPED_VERTICALLY_FLAG
+        | Self::FLIPPED_DIAGONALLY_FLAG;
+
+    /// Creates a new [`ObjectTileData`] from a [`Gid`] plus its flipping bits.
+    pub(crate) fn from_bits(
+        bits: u32,
+        tilesets: &[MapTilesetGid],
+        for_tileset: Option<Arc<Tileset>>,
+    ) -> Option<Self> {
+        let flags = bits & Self::ALL_FLIP_FLAGS;
+        let gid = Gid(bits & !Self::ALL_FLIP_FLAGS);
+        let flip_d = flags & Self::FLIPPED_DIAGONALLY_FLAG == Self::FLIPPED_DIAGONALLY_FLAG; // Swap x and y axis (anti-diagonally) [flips over y = -x line]
+        let flip_h = flags & Self::FLIPPED_HORIZONTALLY_FLAG == Self::FLIPPED_HORIZONTALLY_FLAG; // Flip tile over y axis
+        let flip_v = flags & Self::FLIPPED_VERTICALLY_FLAG == Self::FLIPPED_VERTICALLY_FLAG; // Flip tile over x axis
+
+        if gid == Gid::EMPTY {
+            None
+        } else {
+            let (tileset_location, id) = match for_tileset {
+                Some(tileset) => (TilesetLocation::Template(tileset), gid.0 - 1),
+                None => {
+                    let (tileset_index, tileset) = crate::util::get_tileset_for_gid(tilesets, gid)?;
+                    let id = gid.0 - tileset.first_gid.0;
+                    (TilesetLocation::Map(tileset_index), id)
+                }
+            };
+
+            Some(Self {
+                tileset_location,
+                id,
+                flip_h,
+                flip_v,
+                flip_d,
+            })
+        }
+    }
+}
+
+map_wrapper!(
+    #[doc = "An instance of a [`Tile`] present in an [`Object`]."]
+    ObjectTile => ObjectTileData
+);
+
+impl<'map> ObjectTile<'map> {
+    /// Get a reference to the object tile's referenced tile, if it exists.
+    #[inline]
+    pub fn get_tile(&self) -> Option<Tile<'map>> {
+        self.get_tileset().get_tile(self.data.id)
+    }
+    /// Get a reference to the object tile's referenced tileset.
+    #[inline]
+    pub fn get_tileset(&self) -> &'map Tileset {
+        match &self.data.tileset_location {
+            // SAFETY: `tileset_index` is guaranteed to be valid
+            TilesetLocation::Map(n) => &self.map.tilesets()[*n],
+            TilesetLocation::Template(t) => t,
+        }
+    }
+}
+
+/// A structure describing an [`Object`]'s shape.
+///
+/// Also see the [TMX docs](https://doc.mapeditor.org/en/stable/reference/tmx-map-format/#tmx-object).
+#[derive(Debug, PartialEq, Clone)]
+#[allow(missing_docs)]
+pub enum ObjectShape {
+    Rect {
+        width: f32,
+        height: f32,
+    },
+    Ellipse {
+        width: f32,
+        height: f32,
+    },
+    Capsule {
+        width: f32,
+        height: f32,
+    },
+    Polyline {
+        points: Vec<(f32, f32)>,
+    },
+    Polygon {
+        points: Vec<(f32, f32)>,
+    },
+    /// A point marker.
+    ///
+    /// The values are deprecated, since they merely duplicate the object's `x` and `y` members
+    /// and will be removed in a future version. Match this variant with
+    /// `ObjectShape::Point(..)` to avoid the deprecation warnings.
+    Point(
+        #[deprecated = "use the object's `x` member instead"] f32,
+        #[deprecated = "use the object's `y` member instead"] f32,
+    ),
+    Text {
+        font_family: String,
+        pixel_size: usize,
+        wrap: bool,
+        color: Color,
+        bold: bool,
+        italic: bool,
+        underline: bool,
+        strikeout: bool,
+        kerning: bool,
+        halign: HorizontalAlignment,
+        valign: VerticalAlignment,
+        /// The actual text content of this object.
+        text: String,
+        width: f32,
+        height: f32,
+    },
+}
+
+/// The horizontal alignment of an [`ObjectShape::Text`].
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[allow(missing_docs)]
+pub enum HorizontalAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+    Justify,
+}
+
+/// The vertical alignment of an [`ObjectShape::Text`].
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[allow(missing_docs)]
+pub enum VerticalAlignment {
+    #[default]
+    Top,
+    Center,
+    Bottom,
+}
+
+/// Raw data belonging to an object. Used internally and for tile collisions.
+///
+/// Also see the [TMX docs](https://doc.mapeditor.org/en/stable/reference/tmx-map-format/#tmx-object).
+#[derive(Debug, PartialEq, Clone)]
+pub struct ObjectData {
+    id: u32,
+    tile: Option<ObjectTileData>,
+    /// The name of the object, which is arbitrary and set by the user.
+    pub name: String,
+    /// The type of the object, which is arbitrary and set by the user.
+    pub user_type: String,
+    /// The X coordinate of this object in pixels.
+    pub x: f32,
+    /// The Y coordinate of this object in pixels.
+    pub y: f32,
+    /// The clockwise rotation of this object around (x,y) in degrees.
+    pub rotation: f32,
+    /// The opacity of this object.
+    pub opacity: f32,
+    /// Whether the object is shown or hidden.
+    pub visible: bool,
+    /// The object's shape.
+    pub shape: ObjectShape,
+    /// The object's custom properties as set by the user.
+    pub properties: Properties,
+}
+
+impl ObjectData {
+    /// ID of the object, which is unique per map since Tiled 0.11.
+    ///
+    /// On older versions this value is defaulted to 0.
+    #[inline]
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
+    /// Returns the data of the tile that this object is referencing, if it exists.
+    #[inline]
+    pub fn tile_data(&self) -> Option<ObjectTileData> {
+        self.tile.clone()
+    }
+}
+
+impl ObjectData {
+    /// If it is known that the object has no tile images in it (i.e. collision data)
+    /// then we can pass in [`None`] as the tilesets
+    pub(crate) fn new<R: std::io::BufRead>(
+        elem: crate::util::XmlElement<'_, R>,
+        tilesets: Option<&[MapTilesetGid]>,
+        for_tileset: Option<Arc<Tileset>>,
+        // Base path is a directory to which all other files are relative to
+        base_path: &Path,
+        reader: &mut impl ResourceReader,
+        cache: &mut impl ResourceCache,
+    ) -> Result<ObjectData> {
+        let (id, tile, mut n, mut t, c, mut w, mut h, mut v, mut r, mut o, template, x, y) = get_attrs!(
+            for v in (elem.attrs) {
+                Some("id") => id ?= v.parse(),
+                Some("gid") => tile ?= v.parse::<u32>(),
+                Some("name") => name ?= v.parse(),
+                Some("type") => user_type ?= v.parse(),
+                Some("class") => user_class ?= v.parse(),
+                Some("width") => width ?= v.parse(),
+                Some("height") => height ?= v.parse(),
+                Some("visible") => visible ?= v.parse().map(|x:i32| x == 1),
+                Some("rotation") => rotation ?= v.parse(),
+                Some("opacity") => opacity ?= v.parse(),
+                Some("template") => template ?= v.parse(),
+                Some("x") => x ?= v.parse::<f32>(),
+                Some("y") => y ?= v.parse::<f32>(),
+            }
+            (id, tile, name, user_type, user_class, width, height, visible, rotation, opacity, template, x, y)
+        );
+        let x = x.unwrap_or(0.);
+        let y = y.unwrap_or(0.);
+        let mut tile = tile.and_then(|bits| {
+            ObjectTileData::from_bits(bits, tilesets?, for_tileset.as_ref().cloned())
+        });
+        // If the template attribute is there, we need to go fetch the template file
+        let template = template
+            .map(|template_path: String| {
+                let template_path = base_path.join(Path::new(&template_path));
+
+                // Check the cache to see if this template exists
+                let template = if let Some(templ) = cache.get_template(&template_path) {
+                    templ
+                } else {
+                    let template = Template::parse_template(&template_path, reader, cache)?;
+                    // Insert it into the cache
+                    cache.insert_template(&template_path, template.clone());
+                    template
+                };
+
+                // The template sets the default values for the object
+                let obj = &template.object;
+                v.get_or_insert(obj.visible);
+                r.get_or_insert(obj.rotation);
+                o.get_or_insert(obj.opacity);
+                n.get_or_insert_with(|| obj.name.clone());
+                t.get_or_insert_with(|| obj.user_type.clone());
+                if let Some(templ_tile) = &obj.tile {
+                    tile.get_or_insert_with(|| templ_tile.clone());
+                }
+                match &obj.shape {
+                    ObjectShape::Rect { width, height }
+                    | ObjectShape::Ellipse { width, height }
+                    | ObjectShape::Capsule { width, height }
+                    | ObjectShape::Text { width, height, .. } => {
+                        w.get_or_insert(*width);
+                        h.get_or_insert(*height);
+                    }
+                    _ => {}
+                }
+                Ok(template)
+            })
+            .transpose()?;
+
+        let visible = v.unwrap_or(true);
+        let width = w.unwrap_or(0f32);
+        let height = h.unwrap_or(0f32);
+        let rotation = r.unwrap_or(0f32);
+        let opacity = o.unwrap_or(1f32);
+        let id = id.unwrap_or(0u32);
+        let name = n.unwrap_or_default();
+        let user_type: String = t.or(c).unwrap_or_default();
+        let mut shape = None;
+        let mut properties = HashMap::new();
+
+        parse_tag!(elem, {
+            "ellipse" => |elem: crate::util::XmlElement<'_, R>| {
+                shape = Some(ObjectShape::Ellipse {
+                    width,
+                    height,
+                });
+                parse_tag!(elem, {});
+                Ok(())
+            },
+            "capsule" => |elem: crate::util::XmlElement<'_, R>| {
+                shape = Some(ObjectShape::Capsule {
+                    width,
+                    height,
+                });
+                parse_tag!(elem, {});
+                Ok(())
+            },
+            "polyline" => |elem| {
+                shape = Some(ObjectData::new_polyline(elem)?);
+                Ok(())
+            },
+            "polygon" => |elem| {
+                shape = Some(ObjectData::new_polygon(elem)?);
+                Ok(())
+            },
+            "point" => |elem: crate::util::XmlElement<'_, R>| {
+                #[allow(deprecated)]
+                {
+                    shape = Some(ObjectShape::Point(x, y));
+                }
+                parse_tag!(elem, {});
+                Ok(())
+            },
+            "text" => |elem| {
+                shape = Some(ObjectData::new_text(elem, width, height)?);
+                Ok(())
+            },
+            "properties" => |elem| {
+                properties = parse_properties(elem)?;
+                Ok(())
+            },
+        });
+
+        if let Some(templ) = template {
+            shape.get_or_insert_with(|| {
+                // Inherit the shape from the template but use the size and
+                // position from the object where relevant
+                match &templ.object.shape {
+                    ObjectShape::Rect { .. } => ObjectShape::Rect { width, height },
+                    ObjectShape::Ellipse { .. } => ObjectShape::Ellipse { width, height },
+                    ObjectShape::Capsule { .. } => ObjectShape::Capsule { width, height },
+                    #[allow(deprecated)]
+                    ObjectShape::Point(..) => ObjectShape::Point(x, y),
+                    ObjectShape::Text {
+                        font_family,
+                        pixel_size,
+                        wrap,
+                        color,
+                        bold,
+                        italic,
+                        underline,
+                        strikeout,
+                        kerning,
+                        halign,
+                        valign,
+                        text,
+                        width: _,
+                        height: _,
+                    } => ObjectShape::Text {
+                        font_family: font_family.clone(),
+                        pixel_size: *pixel_size,
+                        wrap: *wrap,
+                        color: *color,
+                        bold: *bold,
+                        italic: *italic,
+                        underline: *underline,
+                        strikeout: *strikeout,
+                        kerning: *kerning,
+                        halign: *halign,
+                        valign: *valign,
+                        text: text.clone(),
+                        width,
+                        height,
+                    },
+                    shape => shape.clone(),
+                }
+            });
+
+            // Possibly copy properties from the template into the object
+            // Any that already exist in the object's map don't get copied over
+            for (k, v) in &templ.object.properties {
+                if !properties.contains_key(k) {
+                    properties.insert(k.clone(), v.clone());
+                }
+            }
+        }
+
+        let shape = shape.unwrap_or(ObjectShape::Rect { width, height });
+
+        Ok(ObjectData {
+            id,
+            tile,
+            name,
+            user_type,
+            x,
+            y,
+            rotation,
+            opacity,
+            visible,
+            shape,
+            properties,
+        })
+    }
+}
+
+impl ObjectData {
+    fn new_polyline<R: std::io::BufRead>(
+        elem: crate::util::XmlElement<'_, R>,
+    ) -> Result<ObjectShape> {
+        let points = get_attrs!(
+            for v in (elem.attrs) {
+                "points" => points ?= ObjectData::parse_points(v),
+            }
+            points
+        );
+        parse_tag!(elem, {});
+        Ok(ObjectShape::Polyline { points })
+    }
+
+    fn new_polygon<R: std::io::BufRead>(
+        elem: crate::util::XmlElement<'_, R>,
+    ) -> Result<ObjectShape> {
+        let points = get_attrs!(
+            for v in (elem.attrs) {
+                "points" => points ?= ObjectData::parse_points(v),
+            }
+            points
+        );
+        parse_tag!(elem, {});
+        Ok(ObjectShape::Polygon { points })
+    }
+
+    fn new_text<R: std::io::BufRead>(
+        elem: crate::util::XmlElement<'_, R>,
+        width: f32,
+        height: f32,
+    ) -> Result<ObjectShape> {
+        let (
+            font_family,
+            pixel_size,
+            wrap,
+            color,
+            bold,
+            italic,
+            underline,
+            strikeout,
+            kerning,
+            halign,
+            valign,
+        ) = get_attrs!(
+            for v in (elem.attrs) {
+                Some("fontfamily") => font_family = v.to_string(),
+                Some("pixelsize") => pixel_size ?= v.parse(),
+                Some("wrap") => wrap ?= v.parse(),
+                Some("color") => color ?= v.parse(),
+                Some("bold") => bold ?= v.parse(),
+                Some("italic") => italic ?= v.parse(),
+                Some("underline") => underline ?= v.parse(),
+                Some("strikeout") => strikeout ?= v.parse(),
+                Some("kerning") => kerning ?= v.parse::<i32>(),
+                Some("halign") => halign = match v {
+                    "left" => HorizontalAlignment::Left,
+                    "center" => HorizontalAlignment::Center,
+                    "right" => HorizontalAlignment::Right,
+                    "justify" => HorizontalAlignment::Justify,
+                    _ => return Err(Error::MalformedAttributes("`halign` property did not contain a valid value of 'left', 'center', 'right' or 'justify'".to_string()))
+                },
+                Some("valign") => valign = match v {
+                    "top" => VerticalAlignment::Top,
+                    "center" => VerticalAlignment::Center,
+                    "bottom" => VerticalAlignment::Bottom,
+                    _ => return Err(Error::MalformedAttributes(
+                        "`halign` property did not contain a valid value of 'top', 'center' or 'bottom'"
+                            .to_string(),
+                    )),
+                },
+            }
+            (
+                font_family,
+                pixel_size,
+                wrap,
+                color,
+                bold,
+                italic,
+                underline,
+                strikeout,
+                kerning,
+                halign,
+                valign,
+            )
+        );
+        let font_family = font_family.unwrap_or_else(|| "sans-serif".to_string());
+        let pixel_size = pixel_size.unwrap_or(16);
+        let color = color.unwrap_or(Color {
+            red: 0,
+            green: 0,
+            blue: 0,
+            alpha: 255,
+        });
+        let wrap = wrap == Some(1);
+        let bold = bold == Some(1);
+        let italic = italic == Some(1);
+        let underline = underline == Some(1);
+        let strikeout = strikeout == Some(1);
+        let kerning = kerning.is_none_or(|k| k == 1);
+        let halign = halign.unwrap_or_default();
+        let valign = valign.unwrap_or_default();
+        let contents = read_text_or_cdata(elem, |text| Ok(text.to_string()))?;
+
+        Ok(ObjectShape::Text {
+            font_family,
+            pixel_size,
+            wrap,
+            color,
+            bold,
+            italic,
+            underline,
+            strikeout,
+            kerning,
+            halign,
+            valign,
+            text: contents,
+            width,
+            height,
+        })
+    }
+
+    fn parse_points(s: &str) -> Result<Vec<(f32, f32)>> {
+        let pairs = s.split(' ');
+        pairs
+            .map(|point| point.split(','))
+            .map(|components| {
+                let v: Vec<&str> = components.collect();
+                if v.len() != 2 {
+                    return Err(Error::MalformedAttributes(
+                        "one of a polyline's points does not have an x and y coordinate"
+                            .to_string(),
+                    ));
+                }
+                let (x, y) = (v[0].parse().ok(), v[1].parse().ok());
+                match (x, y) {
+                    (Some(x), Some(y)) => Ok((x, y)),
+                    _ => Err(Error::MalformedAttributes(
+                        "one of polyline's points does not have i32eger coordinates".to_string(),
+                    )),
+                }
+            })
+            .collect()
+    }
+}
+
+map_wrapper!(
+    #[doc = "Wrapper over an [`ObjectData`] that contains both a reference to the data as well as
+    to the map it is contained in."]
+    Object => ObjectData
+);
+
+impl<'map> Object<'map> {
+    /// Returns the tile that the object is using as image, if any.
+    pub fn get_tile(&self) -> Option<ObjectTile<'map>> {
+        self.data
+            .tile
+            .as_ref()
+            .map(|tile| ObjectTile::new(self.map, tile))
+    }
+}

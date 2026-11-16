@@ -28,6 +28,7 @@ winit = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tinyaudio = "2.0.0"
+tiled = { workspace = true }
 fontdue = "0.9.4"
 schemars = "1"
 resvg = { version = "0.48", default-features = false }

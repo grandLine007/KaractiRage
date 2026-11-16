@@ -39,19 +39,38 @@
  * `n` niveaux (`window.__karacti_levels`, posé par le template après l'import
  * du paquet). L'option implique `--expect-runtime`.
  *
+ * Avec `--expect-screens <n>`, le test vérifie que l'export embarque exactement
+ * `n` écrans UI déclaratifs (`window.__karacti_screens`, posé par le template
+ * après l'import du paquet). L'option implique `--expect-runtime`.
+ *
+ * Avec `--expect-fps <min>`, le test mesure la performance réelle du rendu :
+ *
+ *   - l'option implique `--expect-runtime` et exige une valeur explicite
+ *     (pas de seuil par défaut) ;
+ *   - attend 3 s après `runtime=running`, puis complète au besoin la fenêtre
+ *     de 120 frames (démarrage lent de Chrome) avant de lire
+ *     `window.__karacti_frame_ms`, `__karacti_fps` et `window.__karacti_frames`
+ *     (instrumentation du template standalone) ;
+ *   - échoue si ces trois valeurs sont absentes (HTML produit par un template
+ *     sans instrumentation), si moins de 60 frames ont été mesurées (mesure
+ *     non significative), ou si `fps < min` — le message donne les FPS
+ *     mesurés, le seuil, les ms/frame et le nombre de frames.
+ *
  * Usage :
  *   node scripts/export-smoke.mjs <chemin-vers-html> [--json] [--timeout <ms>]
  *                                 [--expect-runtime] [--expect-input]
- *                                 [--expect-levels <n>]
+ *                                 [--expect-levels <n>] [--expect-screens <n>]
+ *                                 [--expect-fps <min>]
  *   node scripts/export-smoke.mjs --help
  *
  * Options :
  *   --json           sort un objet JSON machine (rien d'autre sur stdout) :
  *                    { ok, entities, consoleErrors, pageErrors,
  *                      networkRequests, runtime, expectedRuntime, levels,
- *                      expectedLevels, nonBlackPixels, canvasColors,
- *                      expectedInput, inputDelta, inputPixelsBefore,
- *                      inputPixelsAfter, problems }
+ *                      expectedLevels, screens, expectedScreens,
+ *                      nonBlackPixels, canvasColors, expectedInput, inputDelta,
+ *                      inputPixelsBefore, inputPixelsAfter, fps, frameMs,
+ *                      frames, expectedFps, problems }
  *   --timeout <ms>   délai global (défaut : 30 000 ms), pour ne jamais
  *                    suspendre un CI.
  *   --expect-runtime exige que le runtime WASM embarqué démarre et rende des
@@ -59,6 +78,10 @@
  *   --expect-input   exige que le clavier pilote le moteur : variation de
  *                    pixels > 2000 après un appui simulé sur `ArrowRight`.
  *   --expect-levels <n> exige que l'export embarque exactement `n` niveaux.
+ *   --expect-screens <n> exige que l'export embarque exactement `n` écrans UI.
+ *   --expect-fps <min> exige que le rendu tienne au moins `min` FPS mesurés
+ *                    (moyenne glissante sur 120 frames) ; implique
+ *                    --expect-runtime et exige une valeur explicite.
  *   -h, --help       affiche cette aide.
  *
  * Codes de sortie :
@@ -99,6 +122,38 @@ const INPUT_MENU_SETTLE_MS = 500;
 /** Délai après le relâchement avant la recapture (ms). */
 const INPUT_SETTLE_MS = 1000;
 
+/**
+ * Attente après `runtime=running` avant de lire la mesure FPS (ms) : la
+ * moyenne glissante du template porte sur 120 frames, soit ~2 s à 60 FPS.
+ */
+const FPS_SETTLE_MS = 3_000;
+
+/**
+ * Taille de la fenêtre glissante du template (`FENETRE_FPS`) : tant qu'elle
+ * n'est pas pleine, la moyenne est partielle.
+ */
+const FPS_WINDOW_FRAMES = 120;
+
+/**
+ * Rallonge maximale après les 3 s réglementaires pour laisser la fenêtre se
+ * remplir (ms). Chrome headless peut geler `requestAnimationFrame` 2 à 3 s
+ * après la première frame (initialisation GPU du canvas) : sans cette marge,
+ * un jeu rapide serait déclaré « non significatif » à tort.
+ */
+const FPS_FILL_MAX_MS = 3_000;
+
+/** Période de scrutation pendant le remplissage de la fenêtre (ms). */
+const FPS_POLL_MS = 200;
+
+/**
+ * Nombre minimal de frames mesurées en dessous duquel la moyenne n'est pas
+ * significative (moins d'une seconde de rendu à 60 FPS) : on refuse de valider.
+ */
+const FPS_MIN_FRAMES = 60;
+
+/** Budget réservé après l'attente FPS pour les contrôles suivants (ms). */
+const FPS_TAIL_BUDGET_MS = 4_000;
+
 /** Schémas d'URL qui ne constituent PAS une requête réseau. */
 const LOCAL_PROTOCOLS = ['file:', 'data:', 'blob:', 'about:', 'chrome:', 'devtools:'];
 
@@ -111,8 +166,9 @@ erreur console, avec un paquet embarqué valide et un canvas.
 Options :
   --json           sortie JSON machine { ok, entities, consoleErrors, pageErrors,
                    networkRequests, runtime, expectedRuntime, levels,
-                   expectedLevels, nonBlackPixels, canvasColors, expectedInput,
-                   inputDelta, inputPixelsBefore, inputPixelsAfter, problems }
+                   expectedLevels, screens, expectedScreens, nonBlackPixels,
+                   canvasColors, expectedInput, inputDelta, inputPixelsBefore,
+                   inputPixelsAfter, fps, frameMs, frames, expectedFps, problems }
   --timeout <ms>   délai global en millisecondes (défaut : ${DEFAULT_TIMEOUT_MS})
   --expect-runtime exige que le runtime WASM embarqué démarre (runtime=running)
                    et rende des pixels dans le canvas
@@ -120,6 +176,11 @@ Options :
                    et vérifie que plus de ${INPUT_DIFF_MIN_PIXELS} pixels changent
   --expect-levels <n> exige que l'export embarque exactement n niveaux
                    (window.__karacti_levels) ; implique --expect-runtime
+  --expect-screens <n> exige que l'export embarque exactement n écrans UI
+                   (window.__karacti_screens) ; implique --expect-runtime
+  --expect-fps <min> exige au moins min FPS mesurés (moyenne glissante sur
+                   120 frames) ; implique --expect-runtime ; la valeur est
+                   obligatoire (ex. --expect-fps 55)
   -h, --help       affiche cette aide
 
 Codes de sortie :
@@ -132,6 +193,8 @@ Exemples :
   node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime
   node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime --expect-input
   node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime --expect-levels 3
+  node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime --expect-levels 3 --expect-screens 4
+  node scripts/export-smoke.mjs ./jeu-standalone.html --expect-runtime --expect-fps 55
   node scripts/export-smoke.mjs ./jeu-standalone.html --json
 `;
 
@@ -147,6 +210,8 @@ function parseArgs(args) {
     expectRuntime: false,
     expectInput: false,
     expectLevels: null,
+    expectScreens: null,
+    expectFps: null,
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -170,6 +235,51 @@ function parseArgs(args) {
         return { error: `valeur invalide pour --expect-levels : ${raw} (entier >= 1 attendu)` };
       }
       opts.expectLevels = n;
+    } else if (arg === '--expect-screens') {
+      const raw = args[++i];
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 0) {
+        return { error: `valeur invalide pour --expect-screens : ${raw ?? '(absente)'} (entier >= 0 attendu)` };
+      }
+      opts.expectScreens = n;
+    } else if (arg.startsWith('--expect-screens=')) {
+      const raw = arg.slice('--expect-screens='.length);
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 0) {
+        return { error: `valeur invalide pour --expect-screens : ${raw} (entier >= 0 attendu)` };
+      }
+      opts.expectScreens = n;
+    } else if (arg === '--expect-fps') {
+      // Aucun seuil par défaut : une option présente sans valeur explicite est
+      // une erreur d'usage, jamais une validation silencieuse à 55 FPS.
+      const raw = args[i + 1];
+      if (raw === undefined || raw.startsWith('--')) {
+        return {
+          error:
+            'valeur manquante pour --expect-fps : un seuil explicite est requis ' +
+            '(ex. --expect-fps 55)',
+        };
+      }
+      i++;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0) {
+        return { error: `valeur invalide pour --expect-fps : ${raw} (nombre > 0 attendu)` };
+      }
+      opts.expectFps = n;
+    } else if (arg.startsWith('--expect-fps=')) {
+      const raw = arg.slice('--expect-fps='.length);
+      if (raw.trim() === '') {
+        return {
+          error:
+            'valeur manquante pour --expect-fps=... : un seuil explicite est requis ' +
+            '(ex. --expect-fps=55)',
+        };
+      }
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0) {
+        return { error: `valeur invalide pour --expect-fps : ${raw} (nombre > 0 attendu)` };
+      }
+      opts.expectFps = n;
     } else if (arg === '-h' || arg === '--help') {
       opts.help = true;
     } else if (arg === '--timeout') {
@@ -204,13 +314,23 @@ function isLocalUrl(url) {
 }
 
 /** Sortie d'erreur d'usage / d'environnement : message clair + exit 2. */
-function usageError(message, json, expectRuntime = false, expectInput = false, expectLevels = null) {
+function usageError(
+  message,
+  json,
+  expectRuntime = false,
+  expectInput = false,
+  expectLevels = null,
+  expectScreens = null,
+  expectFps = null,
+) {
   if (json) {
     const payload = {
       ...emptyResult(),
       expectedRuntime: expectRuntime,
       expectedInput: expectInput,
       expectedLevels: expectLevels,
+      expectedScreens: expectScreens,
+      expectedFps: expectFps,
       problems: [message],
     };
     process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
@@ -240,6 +360,12 @@ function emptyResult() {
     expectedRuntime: false,
     levels: null,
     expectedLevels: null,
+    screens: null,
+    expectedScreens: null,
+    fps: null,
+    frameMs: null,
+    frames: null,
+    expectedFps: null,
     nonBlackPixels: null,
     canvasColors: null,
     expectedInput: false,
@@ -287,6 +413,136 @@ async function readLevels(page) {
   return await page.evaluate(() =>
     Number.isInteger(window.__karacti_levels) ? window.__karacti_levels : null,
   );
+}
+
+/**
+ * Lit `window.__karacti_screens` (nombre d'écrans UI embarqués), posé par le
+ * template après un import de paquet réussi. `null` si absent ou invalide.
+ */
+async function readScreens(page) {
+  return await page.evaluate(() =>
+    Number.isInteger(window.__karacti_screens) ? window.__karacti_screens : null,
+  );
+}
+
+/**
+ * Lit l'instrumentation de performance posée par le template standalone.
+ * Chaque valeur est validée séparément : un template ancien n'expose aucune des
+ * trois clés, un template partiel en exposerait une partie. Renvoie
+ * `{ fps, frameMs, frames }` avec `null` pour tout champ absent/invalide.
+ */
+async function readPerformance(page) {
+  return await page.evaluate(() => {
+    const nombre = (valeur) =>
+      typeof valeur === 'number' && Number.isFinite(valeur) ? valeur : null;
+    return {
+      fps: nombre(window.__karacti_fps),
+      frameMs: nombre(window.__karacti_frame_ms),
+      frames:
+        Number.isInteger(window.__karacti_frames) && window.__karacti_frames >= 0
+          ? window.__karacti_frames
+          : null,
+    };
+  });
+}
+
+/**
+ * Sonde de performance (--expect-fps) : attend la stabilisation de la moyenne
+ * glissante, lit l'instrumentation du template et statue.
+ *
+ * Trois échecs distincts, jamais un crash :
+ *   - instrumentation absente → « mesure indisponible (template sans
+ *     instrumentation) », cas d'un HTML construit avant l'ajout du template ;
+ *   - `frames < 60` → mesure non significative, on refuse de valider ;
+ *   - `fps < min` → message avec FPS mesurés, seuil, ms/frame, frames.
+ */
+async function runFpsProbe(page, startedAt, timeoutMs, expectFps) {
+  const problems = [];
+  const resultat = { problems, fps: null, frameMs: null, frames: null };
+
+  // 3 s après `running` : à 60 FPS cela couvre la fenêtre de 120 frames. On
+  // réserve du temps pour les contrôles suivants, sans jamais dépasser le
+  // budget global (le cas échéant, c'est un échec explicite, pas un silence).
+  const restant = timeoutMs - (Date.now() - startedAt);
+  const attente = Math.max(0, Math.min(FPS_SETTLE_MS, restant - FPS_TAIL_BUDGET_MS));
+  if (attente < FPS_SETTLE_MS) {
+    problems.push(
+      `--expect-fps : budget insuffisant pour stabiliser la mesure — ${attente} ms d'attente ` +
+        `sur ${FPS_SETTLE_MS} ms (augmenter --timeout)`,
+    );
+  }
+  try {
+    await page.waitForTimeout(attente);
+  } catch (err) {
+    problems.push(
+      `--expect-fps : attente de stabilisation impossible — ${String(err?.message ?? err).split('\n')[0]}`,
+    );
+    return resultat;
+  }
+
+  let mesure = await readPerformance(page).catch(() => ({
+    fps: null,
+    frameMs: null,
+    frames: null,
+  }));
+
+  // Remplissage borné de la fenêtre : la première lecture peut tomber pendant
+  // le gel de démarrage de Chrome. On scrute jusqu'à FPS_WINDOW_FRAMES frames,
+  // sans jamais empiéter sur le budget global ni sur les contrôles suivants.
+  const budgetRemplissage = Math.max(
+    0,
+    Math.min(FPS_FILL_MAX_MS, timeoutMs - (Date.now() - startedAt) - FPS_TAIL_BUDGET_MS),
+  );
+  const finRemplissage = Date.now() + budgetRemplissage;
+  while (
+    mesure.frames !== null &&
+    mesure.frames < FPS_WINDOW_FRAMES &&
+    Date.now() < finRemplissage
+  ) {
+    try {
+      await page.waitForTimeout(FPS_POLL_MS);
+      mesure = await readPerformance(page);
+    } catch (err) {
+      problems.push(
+        `--expect-fps : lecture de la mesure impossible — ${String(err?.message ?? err).split('\n')[0]}`,
+      );
+      break;
+    }
+  }
+
+  resultat.fps = mesure.fps;
+  resultat.frameMs = mesure.frameMs;
+  resultat.frames = mesure.frames;
+
+  const manquantes = [];
+  if (mesure.frames === null) manquantes.push('__karacti_frames');
+  if (mesure.frameMs === null) manquantes.push('__karacti_frame_ms');
+  if (mesure.fps === null) manquantes.push('__karacti_fps');
+  if (manquantes.length > 0) {
+    problems.push(
+      'mesure de performance indisponible (template sans instrumentation) : ' +
+        `${manquantes.join(', ')} absent(s) — réexportez le jeu avec le template instrumenté`,
+    );
+    return resultat;
+  }
+
+  if (mesure.frames < FPS_MIN_FRAMES) {
+    problems.push(
+      `mesure de performance non significative : ${mesure.frames} frame(s) rendue(s), ` +
+        `${FPS_MIN_FRAMES} minimum requis — le rendu n'a pas tourné assez longtemps ` +
+        `(onglet suspendu ou boucle rAF interrompue)`,
+    );
+    return resultat;
+  }
+
+  if (mesure.fps < expectFps) {
+    problems.push(
+      `--expect-fps : ${mesure.fps.toFixed(1)} FPS mesurés (< ${expectFps} FPS attendus) — ` +
+        `${mesure.frameMs.toFixed(2)} ms/frame sur ${mesure.frames} frames`,
+    );
+  }
+
+  return resultat;
 }
 
 /**
@@ -576,11 +832,21 @@ async function runInputProbe(page, startedAt, timeoutMs) {
 }
 
 /** Exécute le test de fumée. Renvoie l'objet résultat + un code de sortie. */
-async function runSmoke(filePath, timeoutMs, expectRuntime = false, expectInput = false, expectLevels = null) {
+async function runSmoke(
+  filePath,
+  timeoutMs,
+  expectRuntime = false,
+  expectInput = false,
+  expectLevels = null,
+  expectScreens = null,
+  expectFps = null,
+) {
   const result = emptyResult();
   result.expectedRuntime = expectRuntime;
   result.expectedInput = expectInput;
   result.expectedLevels = expectLevels;
+  result.expectedScreens = expectScreens;
+  result.expectedFps = expectFps;
   const url = pathToFileURL(filePath).href;
   const startedAt = Date.now();
   let browser = null;
@@ -731,6 +997,37 @@ async function runSmoke(filePath, timeoutMs, expectRuntime = false, expectInput 
             );
           }
 
+          // --- Écrans UI embarqués (contrat du template) -------------------
+          // Le template pose `window.__karacti_screens` après un import réussi.
+          // Sans `--expect-screens`, la valeur est seulement publiée dans le
+          // JSON ; avec l'option, elle doit être exactement celle demandée.
+          const screens = await readScreens(page).catch(() => null);
+          result.screens = screens;
+          if (screens === null) {
+            result.problems.push(
+              'window.__karacti_screens jamais défini après un import réussi ' +
+                '(HTML produit par un ancien moteur ?)',
+            );
+          } else if (screens < 0) {
+            result.problems.push(`window.__karacti_screens = ${screens} : valeur négative`);
+          } else if (expectScreens !== null && screens !== expectScreens) {
+            result.problems.push(
+              `--expect-screens : ${screens} écran(s) embarqué(s), ${expectScreens} attendu(s)`,
+            );
+          }
+
+                  // --- Performance de rendu (uniquement avec --expect-fps) ----------
+          // Le template expose une moyenne glissante sur 120 frames ; on attend
+          // 3 s après `running` puis on complète la fenêtre si Chrome a démarré
+          // lentement (gel rAF du premier rendu GPU).
+          if (expectFps !== null) {
+            const perf = await runFpsProbe(page, startedAt, timeoutMs, expectFps);
+            result.fps = perf.fps;
+            result.frameMs = perf.frameMs;
+            result.frames = perf.frames;
+            for (const problem of perf.problems) result.problems.push(problem);
+          }
+
           const budgetPixels = Math.max(
             2_000,
             Math.min(5_000, timeoutMs - (Date.now() - startedAt) - 1_000),
@@ -806,6 +1103,13 @@ async function runSmoke(filePath, timeoutMs, expectRuntime = false, expectInput 
   }
 }
 
+/** Formate une mesure numérique pour le rapport humain (ou « indéfini »). */
+function formatMesure(valeur, decimales) {
+  return typeof valeur === 'number' && Number.isFinite(valeur)
+    ? valeur.toFixed(decimales)
+    : 'indéfini';
+}
+
 /** Rapport humain : une ligne « OK » compacte, ou la liste des problèmes. */
 function printReport(filePath, result) {
   const errors = result.consoleErrors.length + result.pageErrors.length;
@@ -818,6 +1122,12 @@ function printReport(filePath, result) {
       : result.expectedRuntime
         ? `, niveaux=${result.levels ?? 'indéfini'}`
         : '';
+  const screensSuffix =
+    result.expectedScreens !== null
+      ? `, écrans=${result.screens ?? 'indéfini'}/${result.expectedScreens}`
+      : result.expectedRuntime
+        ? `, écrans=${result.screens ?? 'indéfini'}`
+        : '';
   const pixelsSuffix =
     result.expectedRuntime && result.nonBlackPixels !== null
       ? `, ${result.nonBlackPixels} pixels non noirs (${result.canvasColors} couleurs)`
@@ -829,11 +1139,17 @@ function printReport(filePath, result) {
         ? ` (${result.inputPixelsBefore} → ${result.inputPixelsAfter} pixels non noirs)`
         : '')
     : '';
+  // Le détail de performance n'apparaît qu'avec --expect-fps.
+  const fpsSuffix =
+    result.expectedFps !== null
+      ? `, ${formatMesure(result.fps, 1)} FPS (${formatMesure(result.frameMs, 2)} ms/frame, ` +
+        `${result.frames ?? 'indéfini'} frames)`
+      : '';
   if (result.ok) {
     const plural = result.entities === 1 ? '' : 's';
     console.log(
       `[export-smoke] OK — ${result.entities} entité${plural}, 0 erreur, 0 requête réseau` +
-        `${runtimeSuffix}${levelsSuffix}${pixelsSuffix}${inputSuffix}`,
+        `${runtimeSuffix}${levelsSuffix}${screensSuffix}${pixelsSuffix}${inputSuffix}${fpsSuffix}`,
     );
     return;
   }
@@ -842,7 +1158,7 @@ function printReport(filePath, result) {
   console.error(
     `[export-smoke] résumé : ${result.entities ?? 0} entité(s), ` +
       `${errors} erreur(s) console/page, ${result.networkRequests.length} requête(s) réseau non-file://` +
-      runtimeSuffix + levelsSuffix + inputSuffix,
+      runtimeSuffix + levelsSuffix + screensSuffix + inputSuffix + fpsSuffix,
   );
 }
 
@@ -853,25 +1169,77 @@ const JSON_OUTPUT = Boolean(parsed.json);
 async function main() {
   const expectInput = Boolean(parsed.expectInput);
   const expectLevels = parsed.expectLevels ?? null;
-  // Prouver l'entrée ou le nombre de niveaux suppose un moteur qui tourne :
-  // --expect-input et --expect-levels impliquent --expect-runtime (un fichier
-  // sans runtime échoue proprement, sans crash).
-  const expectRuntime = Boolean(parsed.expectRuntime || expectInput || expectLevels !== null);
-  if (parsed.error) usageError(parsed.error, JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
+  const expectScreens = parsed.expectScreens ?? null;
+  const expectFps = parsed.expectFps ?? null;
+  // Prouver l'entrée, le nombre de niveaux, le nombre d'écrans ou les FPS
+  // suppose un moteur qui tourne : ces options impliquent --expect-runtime (un
+  // fichier sans runtime échoue proprement, sans crash).
+  const expectRuntime = Boolean(
+    parsed.expectRuntime ||
+      expectInput ||
+      expectLevels !== null ||
+      expectScreens !== null ||
+      expectFps !== null,
+  );
+  if (parsed.error)
+    usageError(
+      parsed.error,
+      JSON_OUTPUT,
+      expectRuntime,
+      expectInput,
+      expectLevels,
+      expectScreens,
+      expectFps,
+    );
   if (parsed.help) {
     // L'aide documente l'usage ; code 2 (aucun test exécuté).
     process.stdout.write(USAGE);
     process.exit(2);
   }
-  if (!parsed.file) usageError('chemin du fichier HTML manquant', JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
+  if (!parsed.file)
+    usageError(
+      'chemin du fichier HTML manquant',
+      JSON_OUTPUT,
+      expectRuntime,
+      expectInput,
+      expectLevels,
+      expectScreens,
+      expectFps,
+    );
 
   const filePath = path.resolve(process.cwd(), parsed.file);
-  if (!existsSync(filePath)) usageError(`fichier introuvable : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
-  if (!statSync(filePath).isFile()) usageError(`ce n'est pas un fichier : ${filePath}`, JSON_OUTPUT, expectRuntime, expectInput, expectLevels);
+  if (!existsSync(filePath))
+    usageError(
+      `fichier introuvable : ${filePath}`,
+      JSON_OUTPUT,
+      expectRuntime,
+      expectInput,
+      expectLevels,
+      expectScreens,
+      expectFps,
+    );
+  if (!statSync(filePath).isFile())
+    usageError(
+      `ce n'est pas un fichier : ${filePath}`,
+      JSON_OUTPUT,
+      expectRuntime,
+      expectInput,
+      expectLevels,
+      expectScreens,
+      expectFps,
+    );
 
   let result;
   try {
-    result = await runSmoke(filePath, parsed.timeoutMs, expectRuntime, expectInput, expectLevels);
+    result = await runSmoke(
+      filePath,
+      parsed.timeoutMs,
+      expectRuntime,
+      expectInput,
+      expectLevels,
+      expectScreens,
+      expectFps,
+    );
   } catch (err) {
     // Erreur d'environnement (navigateur indisponible, sandbox…) : exit 2.
     const message = String(err?.message ?? err).split('\n')[0];
@@ -881,6 +1249,8 @@ async function main() {
         expectedRuntime: expectRuntime,
         expectedInput: expectInput,
         expectedLevels: expectLevels,
+        expectedScreens: expectScreens,
+        expectedFps: expectFps,
         problems: [message],
       };
       process.stdout.write(JSON.stringify(failed, null, 2) + '\n');

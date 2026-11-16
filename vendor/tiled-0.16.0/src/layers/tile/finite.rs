@@ -1,0 +1,90 @@
+use crate::{
+    LayerTile, LayerTileData, MapTilesetGid, Result,
+    util::{get_attrs, map_wrapper},
+};
+
+use super::util::parse_data_line;
+
+/// The raw data of a [`FiniteTileLayer`]. Does not include a reference to its parent [`Map`](crate::Map).
+#[derive(PartialEq, Clone, Default)]
+pub struct FiniteTileLayerData {
+    width: u32,
+    height: u32,
+    /// The tiles are arranged in rows.
+    tiles: Vec<Option<LayerTileData>>,
+}
+
+impl std::fmt::Debug for FiniteTileLayerData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FiniteTileLayerData")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .finish()
+    }
+}
+
+impl FiniteTileLayerData {
+    /// Get the tile layer's width in tiles.
+    #[inline]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Get the tile layer's height in tiles.
+    #[inline]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub(crate) fn new<R: std::io::BufRead>(
+        elem: crate::util::XmlElement<'_, R>,
+        width: u32,
+        height: u32,
+        tilesets: &[MapTilesetGid],
+    ) -> Result<Self> {
+        let (e, c) = get_attrs!(
+            for v in (elem.attrs) {
+                Some("encoding") => encoding = v.to_string(),
+                Some("compression") => compression = v.to_string(),
+            }
+            (encoding, compression)
+        );
+
+        let tiles = parse_data_line(e, c, elem, tilesets)?;
+
+        Ok(Self {
+            width,
+            height,
+            tiles,
+        })
+    }
+
+    /// Obtains the tile data present at the position given.
+    ///
+    /// If the position given is invalid or the position is empty, this function will return [`None`].
+    ///
+    /// If you want to get a [`Tile`](`crate::Tile`) instead, use [`FiniteTileLayer::get_tile()`].
+    pub fn get_tile_data(&self, x: i32, y: i32) -> Option<&LayerTileData> {
+        if x < self.width as i32 && y < self.height as i32 && x >= 0 && y >= 0 {
+            self.tiles[x as usize + y as usize * self.width as usize].as_ref()
+        } else {
+            None
+        }
+    }
+}
+
+map_wrapper!(
+    #[doc = "A [`TileLayer`](super::TileLayer) with a defined bound (width and height)."]
+    FiniteTileLayer => FiniteTileLayerData
+);
+
+impl<'map> FiniteTileLayer<'map> {
+    /// Obtains the tile present at the position given.
+    ///
+    /// If the position given is invalid or the position is empty, this function will return [`None`].
+    pub fn get_tile(&self, x: i32, y: i32) -> Option<LayerTile<'map>> {
+        self.data
+            .get_tile_data(x, y)
+            .map(|data| LayerTile::new(self.map(), data))
+    }
+}
