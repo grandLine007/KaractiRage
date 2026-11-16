@@ -1,5 +1,9 @@
 [workspace]
 resolver = "2"
+# Les crates vendorés ne sont pas des membres : sans cela, cargo les inclut
+# automatiquement (dépendances `path`) et lance leurs doctests/exemples amont,
+# qui référencent des assets absents du vendoring.
+exclude = ["vendor/tiled-0.16.0", "vendor/quick-xml-0.31.0"]
 members = [
     "crates/kvl-core",
     "crates/kvl-runtime",
@@ -10,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.11"
+version = "0.4.0"
 edition = "2021"
 authors = ["KaractiRage Team"]
 license = "MIT OR Apache-2.0"

@@ -76,7 +76,11 @@ fn main() {
         .join(", ");
 
     println!("Carte Tiled importée : {}", carte.display());
-    println!("Scène écrite : {} ({} octets)", sortie.display(), json.len());
+    println!(
+        "Scène écrite : {} ({} octets)",
+        sortie.display(),
+        json.len()
+    );
     println!(
         "Dimensions de la carte : {} × {} px",
         rapport.map_size.0, rapport.map_size.1

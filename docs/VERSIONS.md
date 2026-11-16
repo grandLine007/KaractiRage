@@ -18,7 +18,8 @@
 | v0.3.9 | P1 (UI jeu) | Menu/overlays recalculés, contrastes mesurés, HUD prouvé inchangé | [RAPPORT_v0.3.9](RAPPORTS/RAPPORT_v0.3.9.md) | **prêt, non taguée** |
 | v0.3.10 | P1 (export) | Sources SVG embarquées, non-destruction des sprites, niveau exposé | [RAPPORT_v0.3.10](RAPPORTS/RAPPORT_v0.3.10.md) | **prêt, non taguée** |
 | v0.3.11 | P1 (finitions) | Clips d'animation embarqués, performance mesurée (278 FPS) | [RAPPORT_v0.3.11](RAPPORTS/RAPPORT_v0.3.11.md) | **prêt, non taguée** |
-| v0.4.0 | P2 | Import Tiled, audio par fichiers, rechargement à chaud | à écrire | **bloqué réseau** |
+| v0.4.0 | P2.2 | Import Tiled, vendoring hors ligne, scène importée jouable | [RAPPORT_v0.4.0](RAPPORTS/RAPPORT_v0.4.0.md) | **prêt, non taguée** |
+| v0.4.1 | P2.3 | Audio par fichiers (Kira) | à écrire | **bloqué réseau** |
 | v0.5.0 | P3 | Packs image/audio locaux (endpoint compatible OpenAI) | à écrire | à venir |
 | v0.6.0 | P4 | glTF, 3D déclarative, 2.5D, Blender MCP | à écrire | à venir |
 | v0.7.0 | P5 | Qualité IA mesurée (40 × 10, seuils) | à écrire | à venir |

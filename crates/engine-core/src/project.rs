@@ -299,7 +299,11 @@ impl KaractiProject {
         if self.scenes.is_empty() {
             self.scenes.push(self.scene.clone());
         } else {
-            self.scenes[0] = self.scene.clone();
+            // `scenes` est la source de vérité depuis le format multi-niveaux ; le champ
+            // `scene` n'est qu'un miroir legacy. Le resynchroniser DANS CE SENS : écraser
+            // `scenes[0]` par un `scene` périmé faisait ouvrir la mauvaise scène (import
+            // Tiled, édition d'un niveau).
+            self.scene = self.scenes[0].clone();
         }
     }
 

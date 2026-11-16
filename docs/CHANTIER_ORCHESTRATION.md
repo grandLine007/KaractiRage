@@ -170,7 +170,7 @@ rectangles colorés. `from_scene_data` résout `SvgRef` sur disque, échoue en w
 
 **Réseau** : `crates.io` toujours en 403 — Tiled/Kira restent bloqués.
 
-## 3terdecies. Vague 13 — en cours (P2.2 : import Tiled)
+## 3terdecies. Vague 13 — terminée (P2.2 : import Tiled)
 
 | Agent | Tâche | Critère de sortie |
 |---|---|---|

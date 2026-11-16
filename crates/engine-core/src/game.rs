@@ -1607,16 +1607,20 @@ impl GameState {
         if scenes.is_empty() {
             scenes.push(project.scene.clone());
         }
+        // La scène courante est **niveau 1 = `scenes[0]`**, jamais le champ legacy
+        // `scene` : un projet dont `scenes` a été mis à jour (import Tiled, édition
+        // d'un niveau) mais dont `scene` est resté périmé ouvrait la mauvaise scène.
+        let current = scenes.first().cloned().unwrap_or_else(|| project.scene.clone());
         // Le nom affiché est celui du niveau 1 ; le titre du projet reste dans les
         // métadonnées (et dans le Hub).
-        let level_name = project.scene.name.clone();
+        let level_name = current.name.clone();
         self.scene_name = if level_name.is_empty() {
             project.metadata.title
         } else {
             level_name
         };
-        self.scene_objective = project.scene.objective;
-        self.entities = project.scene.entities;
+        self.scene_objective = current.objective.clone();
+        self.entities = current.entities.clone();
         self.kvl_graphs = project.kvl_graphs;
         self.kvl_context = ExecutionContext::new();
         self.ui_screens = project.ui_screens;

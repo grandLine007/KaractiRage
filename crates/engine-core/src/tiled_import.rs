@@ -23,8 +23,8 @@
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use tiled::{LayerType, Loader, ObjectShape, PropertyValue};
 use thiserror::Error;
+use tiled::{LayerType, Loader, ObjectShape, PropertyValue};
 
 use crate::entity::{
     BossComponent, Collider2D, Entity, Health2D, KVLScriptComponent, Movement2D, Renderable2D,
@@ -212,15 +212,14 @@ fn import_impl(
 
     // Lecteur en mémoire pour la carte ; les tilesets/templates externes sont lus
     // sur disque par le crate, relativement au chemin de la carte.
-    let mut loader = Loader::with_reader(
-        move |demande: &Path| -> std::io::Result<Cursor<Vec<u8>>> {
+    let mut loader =
+        Loader::with_reader(move |demande: &Path| -> std::io::Result<Cursor<Vec<u8>>> {
             if demande == map_path_lecteur {
                 Ok(Cursor::new(map_bytes.clone()))
             } else {
                 std::fs::read(demande).map(Cursor::new)
             }
-        },
-    );
+        });
 
     let map = loader
         .load_tmx_map(&map_path)
@@ -426,12 +425,8 @@ fn importer_objet(
     *prochain_id += 1;
 
     let nom = nom_objet(objet, id, tag);
-    let mut transform = Transform2D::new(
-        objet.x + decalage_x,
-        objet.y + decalage_y,
-        largeur,
-        hauteur,
-    );
+    let mut transform =
+        Transform2D::new(objet.x + decalage_x, objet.y + decalage_y, largeur, hauteur);
     transform.rotation = objet.rotation.to_radians();
 
     let (couleur, contour, z_index) = apparence(tag);
@@ -538,6 +533,10 @@ enum Forme {
 }
 
 /// Traduit une `class`/`type` Tiled en tag moteur.
+///
+/// Correspondances : `player`, `wall`/`collision`, `door`, `enemy`,
+/// `item`/`pickup`, `boss`, `switch`, `teleport`. Toute autre valeur devient
+/// `decor` (import sans comportement).
 fn tag_depuis_classe(classe: &str) -> &'static str {
     match classe.trim().to_ascii_lowercase().as_str() {
         "player" => "player",
@@ -553,6 +552,11 @@ fn tag_depuis_classe(classe: &str) -> &'static str {
 }
 
 /// Normalise la forme d'un objet Tiled. `None` = forme ignorée en v1.
+///
+/// - rectangle : `width`/`height` tels quels, 32 px si absents ou nuls ;
+/// - ellipse : approchée par un cercle de diamètre `min(width, height)` (16 px de
+///   rayon si dimensions absentes) ; une ellipse très allongée perd son aspect ;
+/// - point : petite entité 16 × 16, sauf le joueur (32 × 32) pour rester jouable.
 fn forme_objet(shape: &ObjectShape, tag: &str) -> Option<Forme> {
     match shape {
         ObjectShape::Rect { width, height } => {
@@ -623,9 +627,7 @@ fn nom_objet(objet: &tiled::Object<'_>, id: usize, tag: &str) -> String {
 /// Lit une propriété Tiled comme chaîne (`string` ou `file`).
 fn lire_chaine(valeur: &PropertyValue) -> Option<String> {
     match valeur {
-        PropertyValue::StringValue(texte) | PropertyValue::FileValue(texte) => {
-            Some(texte.clone())
-        }
+        PropertyValue::StringValue(texte) | PropertyValue::FileValue(texte) => Some(texte.clone()),
         _ => None,
     }
 }
@@ -802,11 +804,13 @@ mod tests {
             ),
             (64.0, 96.0, 32.0, 32.0)
         );
-        assert!(joueur
-            .movement
-            .as_ref()
-            .expect("mouvement joueur")
-            .is_player_controlled);
+        assert!(
+            joueur
+                .movement
+                .as_ref()
+                .expect("mouvement joueur")
+                .is_player_controlled
+        );
         assert!(joueur.collider.as_ref().expect("collider joueur").is_solid);
 
         let mur_nord = &rapport.scene.entities[1];
@@ -850,10 +854,7 @@ mod tests {
         );
         assert!(mur.collider.as_ref().expect("collider").is_solid);
         assert_eq!(mur.health.as_ref().expect("health").max, 5.0);
-        assert_eq!(
-            mur.renderable.as_ref().expect("rendu").color,
-            0x00FF_00AA
-        );
+        assert_eq!(mur.renderable.as_ref().expect("rendu").color, 0x00FF_00AA);
 
         let fantome = rapport
             .scene
@@ -955,9 +956,9 @@ mod tests {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <map version="1.10" orientation="orthogonal" width="10" height="10" tilewidth="32" tileheight="32" infinite="0">
  <objectgroup name="Spawns">
-  <object id="1" class="player" x="10" y="20"/>
+  <object id="1" class="player" x="10" y="20"><point/></object>
   <object id="2" class="item" x="100" y="50" width="20" height="20"><ellipse/></object>
-  <object id="3" class="enemy" x="200" y="70"/>
+  <object id="3" class="enemy" x="200" y="70"><point/></object>
  </objectgroup>
 </map>"#;
         let rapport = import_tmx_str(xml, "inline.tmx").expect("import en mémoire");
