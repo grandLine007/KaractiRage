@@ -1290,6 +1290,72 @@ fn engine_open_project(path: String, engine: tauri::State<'_, SharedEngine>) -> 
     engine.lock().unwrap().open_project_path(&path)
 }
 
+/// Rapport d'import Tiled renvoyé au Studio (JSON compact, une seule IPC).
+#[derive(Debug, Serialize)]
+struct TiledImportSummary {
+    /// Chemin du `.karacti` écrit.
+    project_path: String,
+    /// Chemin du `.scene.json` écrit.
+    scene_path: String,
+    /// Nombre d'entités importées.
+    entities: usize,
+    /// Nombre de couches de tuiles aplaties en décor.
+    tile_layers_flattened: usize,
+    /// Avertissements non bloquants de l'importeur.
+    warnings: Vec<String>,
+}
+
+/// Importe une carte Tiled (`.tmx`) en projet `.karacti`, puis l'ouvre dans le
+/// moteur. Le Studio n'a donc plus qu'à rafraîchir sa liste et à passer en Studio.
+#[tauri::command]
+fn engine_import_tiled(
+    path: String,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    let carte = std::path::PathBuf::from(&path);
+    let est_tmx = carte
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("tmx"))
+        .unwrap_or(false);
+    if !est_tmx {
+        return Err(format!(
+            "« {path} » n'est pas une carte Tiled : l'import attend un fichier .tmx."
+        ));
+    }
+    if !carte.is_file() {
+        return Err(format!("Carte Tiled introuvable : « {path} »."));
+    }
+
+    let importe = karactirage_engine::tiled_import::import_tmx_to_project(&carte, None)
+        .map_err(|erreur| format!("Import Tiled impossible : {erreur}"))?;
+
+    let project_path = importe.project_path.display().to_string();
+    {
+        let mut eng = engine.lock().map_err(|erreur| {
+            format!("Projet importé mais moteur indisponible pour l'ouvrir : {erreur}")
+        })?;
+        eng.open_project_path(&project_path).map_err(|erreur| {
+            format!("Projet importé mais ouverture dans le moteur impossible : {erreur}")
+        })?;
+    }
+
+    // Le projet importé apparaît dans les « Derniers projets » du Hub.
+    let mut registry = ProjectRegistry::open();
+    registry.record_recent(&project_path);
+    let _ = registry.save();
+
+    let rapport = TiledImportSummary {
+        project_path,
+        scene_path: importe.scene_path.display().to_string(),
+        entities: importe.route.entities_imported,
+        tile_layers_flattened: importe.route.tile_layers_flattened,
+        warnings: importe.route.warnings,
+    };
+    serde_json::to_string(&rapport)
+        .map_err(|erreur| format!("Rapport d'import Tiled illisible : {erreur}"))
+}
+
 #[tauri::command]
 fn engine_recent_projects() -> String {
     let registry = ProjectRegistry::open();
@@ -1706,6 +1772,7 @@ pub fn run() {
             engine_list_projects,
             engine_create_project,
             engine_open_project,
+            engine_import_tiled,
             engine_recent_projects,
             engine_remove_recent,
             engine_duplicate_project,

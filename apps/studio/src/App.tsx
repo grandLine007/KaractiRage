@@ -875,6 +875,7 @@ export function App() {
           setIsAiModalOpen(true);
         }}
         onProjectOpened={handleProjectOpened}
+        onNotify={pushToast}
       />
 
       <ArchetypesModal

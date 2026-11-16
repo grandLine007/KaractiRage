@@ -30,7 +30,10 @@ use crate::entity::{
     BossComponent, Collider2D, Entity, Health2D, KVLScriptComponent, Movement2D, Renderable2D,
     ShapeKind, Transform2D, VisionSensing,
 };
+use crate::project::KaractiProject;
+use crate::recipe::GameGenre;
 use crate::scene::SceneData;
+use crate::subsystems::{UiElement, UiScreen, UiScreenKind};
 
 /// Taille par défaut d'un objet rectangulaire Tiled sans `width`/`height`.
 const TAILLE_OBJET_DEFAUT: f32 = 32.0;
@@ -58,6 +61,21 @@ pub struct TiledImportReport {
     pub tile_layers_flattened: usize,
     /// Dimensions de la carte en **pixels** : `(largeur, hauteur)`.
     pub map_size: (u32, u32),
+}
+
+/// Résultat de la conversion d'une carte Tiled en projet KaractiRage sur disque.
+///
+/// Les deux fichiers sont écrits dans le même dossier : la scène
+/// (`<nom>.scene.json`, relisible par `GameState::load_from_scene`) et le projet
+/// (`<nom>.karacti`, relisible par `KaractiProject::load_from_file`).
+#[derive(Debug, Clone)]
+pub struct ImportedProject {
+    /// Chemin du fichier `.karacti` écrit.
+    pub project_path: PathBuf,
+    /// Chemin du fichier `.scene.json` écrit.
+    pub scene_path: PathBuf,
+    /// Rapport d'import complet (scène, avertissements, statistiques).
+    pub route: TiledImportReport,
 }
 
 /// Erreurs d'import d'une carte Tiled. Les messages sont destinés au créateur.
@@ -166,6 +184,30 @@ pub enum TiledImportError {
         /// Détail fourni par le parseur.
         details: String,
     },
+
+    /// Le dossier de destination du projet n'a pas pu être préparé.
+    #[error(
+        "Impossible de préparer le dossier de destination « {chemin} » : {details}. \
+         Choisissez un dossier accessible en écriture."
+    )]
+    DossierDestination {
+        /// Dossier demandé.
+        chemin: String,
+        /// Détail de l'erreur système.
+        details: String,
+    },
+
+    /// Un fichier de sortie (scène ou projet) n'a pas pu être écrit.
+    #[error(
+        "Impossible d'écrire « {chemin} » : {details}. Vérifiez les droits d'écriture du dossier \
+         et l'espace disque disponible."
+    )]
+    EcritureFichier {
+        /// Fichier de sortie concerné.
+        chemin: String,
+        /// Détail de l'erreur (système ou sérialisation).
+        details: String,
+    },
 }
 
 /// Importe une carte Tiled depuis le disque.
@@ -180,6 +222,147 @@ pub fn import_tmx(path: &Path) -> Result<TiledImportReport, TiledImportError> {
     })?;
     let origin = path.display().to_string();
     import_impl(&xml, &origin, Some(path))
+}
+
+/// Importe une carte Tiled **et l'écrit comme projet KaractiRage prêt à ouvrir**.
+///
+/// La carte est convertie en scène, puis deux fichiers sont écrits dans
+/// `dest_dir` (par défaut : le dossier de la carte `.tmx`) :
+///
+/// - `<nom>.scene.json` : la scène, chargeable seule par `GameState::load_from_scene` ;
+/// - `<nom>.karacti` : un `KaractiProject` complet (métadonnées issues du nom de la
+///   carte, une seule scène, écrans UI par défaut, graphe racine KVL), chargeable
+///   par `KaractiProject::load_from_file` puis `GameState::load_project`.
+///
+/// `<nom>` est le nom de la carte (nom de fichier sans extension), assaini pour
+/// rester un nom de fichier portable. Aucun fichier n'est écrit ailleurs : les
+/// assets du dépôt ne sont jamais modifiés.
+pub fn import_tmx_to_project(
+    tmx_path: &Path,
+    dest_dir: Option<&Path>,
+) -> Result<ImportedProject, TiledImportError> {
+    let route = import_tmx(tmx_path)?;
+    let titre = route.scene.name.clone();
+    let nom_fichier = nom_fichier_sur(&titre);
+    let dossier = dest_dir
+        .map(Path::to_path_buf)
+        .or_else(|| tmx_path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    std::fs::create_dir_all(&dossier).map_err(|erreur| TiledImportError::DossierDestination {
+        chemin: dossier.display().to_string(),
+        details: erreur.to_string(),
+    })?;
+
+    // 1. La scène seule d'abord : même si la construction du projet échouait, le
+    // créateur garde un `.scene.json` utilisable.
+    let scene_path = dossier.join(format!("{nom_fichier}.scene.json"));
+    let scene_json = serde_json::to_string_pretty(&route.scene).map_err(|erreur| {
+        TiledImportError::EcritureFichier {
+            chemin: scene_path.display().to_string(),
+            details: erreur.to_string(),
+        }
+    })?;
+    std::fs::write(&scene_path, scene_json).map_err(|erreur| {
+        TiledImportError::EcritureFichier {
+            chemin: scene_path.display().to_string(),
+            details: erreur.to_string(),
+        }
+    })?;
+
+    // 2. Le projet complet : `new_empty` fournit le graphe racine KVL et des
+    // réglages cohérents ; la scène générée remplace celle du projet vierge.
+    let mut projet = KaractiProject::new_empty(&titre, "KaractiRage Studio", GameGenre::Adventure);
+    projet.metadata.description = format!(
+        "Projet importé depuis la carte Tiled « {} ». Scène prête à être ouverte dans \
+         l'Atelier Studio.",
+        tmx_path.display()
+    );
+    projet.metadata.dimension = Some("2D".to_string());
+    projet.settings.default_mode = "edit".to_string();
+    projet.scene = route.scene.clone();
+    projet.scenes = vec![route.scene.clone()];
+    // Écrans par défaut (HUD + Pause) : un projet importé est immédiatement jouable
+    // et personnalisable, sans écran de menu qui masquerait la carte au lancement.
+    projet.ui_screens = ecrans_par_defaut();
+
+    let project_path = dossier.join(format!("{nom_fichier}.karacti"));
+    projet
+        .save_to_file(&project_path)
+        .map_err(|erreur| TiledImportError::EcritureFichier {
+            chemin: project_path.display().to_string(),
+            details: erreur.to_string(),
+        })?;
+
+    Ok(ImportedProject {
+        project_path,
+        scene_path,
+        route,
+    })
+}
+
+/// Assainit un nom de carte pour en faire un nom de fichier portable.
+///
+/// Les lettres/chiffres Unicode, `-` et `_` sont conservés ; tout le reste devient
+/// un `_` (les suites de séparateurs sont compactées). Un nom vide devient
+/// `carte_tiled`.
+fn nom_fichier_sur(nom: &str) -> String {
+    let mut sortie = String::with_capacity(nom.len());
+    let mut separateur_precedent = false;
+    for caractere in nom.trim().chars() {
+        if caractere.is_alphanumeric() || caractere == '-' || caractere == '_' {
+            sortie.push(caractere);
+            separateur_precedent = false;
+        } else if !separateur_precedent {
+            sortie.push('_');
+            separateur_precedent = true;
+        }
+    }
+    let nettoye = sortie.trim_matches('_').to_string();
+    if nettoye.is_empty() {
+        "carte_tiled".to_string()
+    } else {
+        nettoye
+    }
+}
+
+/// Écrans UI par défaut d'un projet importé : HUD (vie + score) et Pause.
+///
+/// Aucun écran `Menu` n'est déclaré : le moteur démarre donc directement sur la
+/// carte importée au lieu d'afficher un menu d'accueil.
+fn ecrans_par_defaut() -> Vec<UiScreen> {
+    vec![
+        UiScreen {
+            id: "hud_jeu".to_string(),
+            kind: UiScreenKind::Hud,
+            title: None,
+            elements: vec![
+                UiElement {
+                    id: "vie".to_string(),
+                    kind: "bar".to_string(),
+                    label: Some("Vie".to_string()),
+                    bind: Some("player_hp".to_string()),
+                },
+                UiElement {
+                    id: "score".to_string(),
+                    kind: "text".to_string(),
+                    label: Some("Score".to_string()),
+                    bind: Some("score".to_string()),
+                },
+            ],
+        },
+        UiScreen {
+            id: "pause".to_string(),
+            kind: UiScreenKind::Pause,
+            title: Some("Pause".to_string()),
+            elements: vec![UiElement {
+                id: "reprendre".to_string(),
+                kind: "button".to_string(),
+                label: Some("Reprendre".to_string()),
+                bind: None,
+            }],
+        },
+    ]
 }
 
 /// Importe une carte Tiled depuis une chaîne XML (tests sans disque).
@@ -981,5 +1164,107 @@ mod tests {
         assert_eq!(ennemi.tag, "enemy");
         assert_eq!((ennemi.transform.w, ennemi.transform.h), (16.0, 16.0));
         assert!(ennemi.vision.is_some());
+    }
+
+    /// Dossier temporaire unique par test (le nom évite les collisions entre tests
+    /// exécutés en parallèle dans le même processus).
+    fn dossier_temporaire_unique(suffixe: &str) -> PathBuf {
+        let dossier = std::env::temp_dir().join(format!(
+            "karactirage_tiled_{suffixe}_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dossier);
+        std::fs::create_dir_all(&dossier).expect("création du dossier temporaire");
+        dossier
+    }
+
+    #[test]
+    fn test_h_import_tmx_to_project_ecrit_projet_et_scene_relus() {
+        let dossier = dossier_temporaire_unique("projet");
+        let carte = dossier.join("carte_atelier.tmx");
+        std::fs::copy(fixture("minimal.tmx"), &carte).expect("copie de la carte de test");
+
+        let importe = import_tmx_to_project(&carte, None).expect("import en projet");
+        assert_eq!(
+            importe.project_path.parent(),
+            Some(dossier.as_path()),
+            "par défaut, le projet est écrit à côté de la carte"
+        );
+        assert_eq!(
+            importe
+                .project_path
+                .file_name()
+                .and_then(|nom| nom.to_str()),
+            Some("carte_atelier.karacti")
+        );
+        assert_eq!(
+            importe.scene_path.file_name().and_then(|nom| nom.to_str()),
+            Some("carte_atelier.scene.json")
+        );
+        assert!(importe.project_path.is_file(), "fichier .karacti écrit");
+        assert!(importe.scene_path.is_file(), "fichier .scene.json écrit");
+
+        // Le projet est relisible par l'API publique du moteur.
+        let projet = KaractiProject::load_from_file(&importe.project_path).expect("projet relu");
+        assert_eq!(projet.metadata.title, "carte_atelier");
+        assert_eq!(projet.scenes.len(), 1, "un projet importé n'a qu'une scène");
+        assert_eq!(
+            projet.scene.entities.len(),
+            importe.route.entities_imported,
+            "la scène du projet est la carte importée"
+        );
+        assert!(
+            !projet.ui_screens.is_empty(),
+            "des écrans UI par défaut sont fournis"
+        );
+        assert_eq!(importe.route.entities_imported, 4);
+
+        // La scène seule est chargeable par le moteur, avec son joueur contrôlable.
+        let etat = GameState::load_from_scene(
+            importe
+                .scene_path
+                .to_str()
+                .expect("chemin de scène en UTF-8"),
+        )
+        .expect("scène relue par le moteur");
+        assert_eq!(etat.entities.len(), importe.route.entities_imported);
+        assert!(etat.player_index().is_some(), "joueur contrôlable présent");
+
+        // Aucun fichier n'a été créé dans les assets du dépôt.
+        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        assert!(!assets.join("carte_atelier.karacti").exists());
+        assert!(!assets.join("carte_atelier.scene.json").exists());
+
+        let _ = std::fs::remove_dir_all(&dossier);
+    }
+
+    #[test]
+    fn test_i_import_tmx_to_project_destination_personnalisee() {
+        let dossier = dossier_temporaire_unique("destination");
+        let carte = dossier.join("carte_dest.tmx");
+        std::fs::copy(fixture("couche_tuiles.tmx"), &carte).expect("copie de la carte de test");
+        let destination = dossier.join("projets_crees");
+
+        let importe = import_tmx_to_project(&carte, Some(&destination))
+            .expect("import vers une destination explicite");
+        assert_eq!(importe.project_path.parent(), Some(destination.as_path()));
+        assert_eq!(
+            importe
+                .project_path
+                .file_name()
+                .and_then(|nom| nom.to_str()),
+            Some("carte_dest.karacti")
+        );
+        assert_eq!(
+            importe.scene_path.file_name().and_then(|nom| nom.to_str()),
+            Some("carte_dest.scene.json")
+        );
+        assert_eq!(importe.route.tile_layers_flattened, 1);
+
+        let projet = KaractiProject::load_from_file(&importe.project_path).expect("projet relu");
+        assert_eq!(projet.scene.entities.len(), importe.route.entities_imported);
+        assert_eq!(projet.metadata.title, "carte_dest");
+
+        let _ = std::fs::remove_dir_all(&dossier);
     }
 }

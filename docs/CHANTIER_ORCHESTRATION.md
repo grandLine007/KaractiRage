@@ -185,7 +185,7 @@ optionnelles lourdes (zstd, ggez, sfml) ont été retirées du Cargo.toml vendor
 **Conséquence assumée** : les cartes compressées en zstd ne sont pas lisibles ; l'import
 v1 couvre les couches d'objets, les couches de tuiles sont aplaties.
 
-## 3quaterdecies. Vague 14 — en cours (Tiled dans le Studio)
+## 3quaterdecies. Vague 14 — terminée (Tiled dans le Studio)
 
 | Agent | Tâche | Critère de sortie |
 |---|---|---|

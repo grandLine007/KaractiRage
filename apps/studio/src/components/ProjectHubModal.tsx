@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Archive, ArrowRight, Bot, Clock, Compass, Copy, Cpu,
   FolderOpen, FolderSearch, Gamepad2, HardDrive, Home, Layers, Loader2,
-  Pencil, Play, Plus, RefreshCw, Search, Sparkles, Wrench, X, Zap,
+  Pencil, Play, Plus, RefreshCw, Search, Sparkles, Upload, Wrench, X, Zap,
 } from 'lucide-react';
 import {
   archiveProject, createProject, duplicateProject, isTauri, listProjects, openProject,
   removeRecent, renameProject, revealProject, systemDiagnostics,
   type NewProjectConfig, type ProjectEntry, type SystemDiagnostics,
 } from '../services/projectBridge';
-import { loadProjectJson } from '../services/engineBridge';
+import { importTiledMap, loadProjectJson } from '../services/engineBridge';
 import { ARCHETYPES } from '../services/archetypes';
 
 interface ProjectHubModalProps {
@@ -19,6 +19,11 @@ interface ProjectHubModalProps {
   onOpenWizard: () => void;
   onOpenAiTab: () => void;
   onProjectOpened: (entry: ProjectEntry, mode: 'play' | 'edit') => void;
+  /**
+   * Notifications non bloquantes (ToastCenter de l'App). Optionnel : sans lui,
+   * les erreurs restent dans le bandeau du Hub.
+   */
+  onNotify?: (message: string, kind?: 'info' | 'success' | 'error') => void;
 }
 
 const GENRES = [
@@ -71,6 +76,21 @@ function hashString(s: string): number {
   return h >>> 0;
 }
 
+/** Vrai si le chemin déposé est une carte Tiled `.tmx` (insensible à la casse). */
+function estCarteTiled(chemin: string): boolean {
+  return /\.tmx$/i.test(chemin);
+}
+
+/**
+ * Titre lisible déduit du nom de fichier du projet écrit par le moteur
+ * (`carte_du_donjon.karacti` → « carte du donjon »).
+ */
+function titreDepuisChemin(chemin: string): string {
+  const fichier = chemin.split(/[\\/]/).pop() ?? chemin;
+  const sansExtension = fichier.replace(/\.karacti$/i, '').replace(/_/g, ' ');
+  return sansExtension.trim() || 'Carte Tiled importée';
+}
+
 function SceneThumbnail({ entry }: { entry: ProjectEntry }) {
   const color = genreColor(entry.genre);
   const seed = hashString(entry.path || entry.title);
@@ -95,7 +115,7 @@ function SceneThumbnail({ entry }: { entry: ProjectEntry }) {
   );
 }
 export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
-  isOpen, onClose, onOpenArchetypes, onOpenWizard, onOpenAiTab, onProjectOpened,
+  isOpen, onClose, onOpenArchetypes, onOpenWizard, onOpenAiTab, onProjectOpened, onNotify,
 }) => {
   const [activeTab, setActiveTab] = useState<0 | 1 | 2>(0);
   const [projects, setProjects] = useState<ProjectEntry[]>([]);
@@ -113,6 +133,11 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   // UX-501 : écran d'accueil « 3 choix » + visite guidée.
   const [landing, setLanding] = useState(true);
   const [guide, setGuide] = useState(false);
+  // Import Tiled par glisser-déposer (Tauri v2 natif, sans plugin de dialogue).
+  const [dropActive, setDropActive] = useState(false);
+  const [importingTiled, setImportingTiled] = useState(false);
+  // Verrou synchrone : deux drops rapprochés ne lancent pas deux imports.
+  const importingTiledRef = useRef(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -125,6 +150,114 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
       setLoading(false);
     }
   }, []);
+
+  /** Notification non bloquante ; repli sur le bandeau d'erreur du Hub. */
+  const notify = useCallback((message: string, kind: 'info' | 'success' | 'error' = 'info') => {
+    if (onNotify) onNotify(message, kind);
+    else if (kind === 'error') setError(message);
+  }, [onNotify]);
+
+  /**
+   * Importe la première carte `.tmx` déposée : le moteur écrit le projet à côté
+   * de la carte, l'ouvre, puis on rafraîchit la liste et on entre dans le Studio.
+   */
+  const importerCarteTiled = useCallback(async (paths: string[]) => {
+    const cartes = paths.filter(estCarteTiled);
+    if (cartes.length === 0) {
+      notify('Fichier ignoré : seules les cartes Tiled (.tmx) peuvent être déposées.', 'error');
+      return;
+    }
+    if (importingTiledRef.current) {
+      notify('Un import de carte Tiled est déjà en cours.', 'info');
+      return;
+    }
+    importingTiledRef.current = true;
+    setImportingTiled(true);
+    setError('');
+    try {
+      if (cartes.length > 1) {
+        notify(
+          `Une seule carte par import : « ${titreDepuisChemin(cartes[0])} » est utilisée.`,
+          'info',
+        );
+      }
+      const resultat = await importTiledMap(cartes[0]);
+      await refresh();
+      const entree: ProjectEntry = {
+        path: resultat.project_path,
+        title: titreDepuisChemin(resultat.project_path),
+        description: 'Carte Tiled importée dans le Studio.',
+        objective: null,
+        genre: 'Personnalisé',
+        dimension: '2D',
+        kind: 'project',
+        size_bytes: 0,
+        modified_at: Math.floor(Date.now() / 1000),
+        entity_count: resultat.entities,
+        is_recent: true,
+        status: 'available',
+      };
+      const resume = `Carte Tiled importée : ${entree.title} • ${resultat.entities} entité(s)`;
+      notify(
+        resultat.warnings.length > 0
+          ? `${resume} • ${resultat.warnings.length} avertissement(s)`
+          : resume,
+        'success',
+      );
+      if (resultat.warnings.length > 0) notify(resultat.warnings[0], 'info');
+      onProjectOpened(entree, 'edit');
+    } catch (e: any) {
+      const message = e?.message ?? String(e);
+      setError(`Import Tiled impossible : ${message}`);
+      notify(`Import Tiled impossible : ${message}`, 'error');
+    } finally {
+      importingTiledRef.current = false;
+      setImportingTiled(false);
+    }
+  }, [notify, refresh, onProjectOpened]);
+
+  // Le listener Tauri est enregistré une fois par ouverture du Hub. L'importeur
+  // passe par une ref : les re-rendus de l'App (métriques) ne réinscrivent pas
+  // le listener à chaque frame.
+  const importerRef = useRef(importerCarteTiled);
+  useEffect(() => {
+    importerRef.current = importerCarteTiled;
+  }, [importerCarteTiled]);
+
+  useEffect(() => {
+    if (!isOpen || !isTauri()) return;
+    let demonte = false;
+    let desinscrire: (() => void) | null = null;
+
+    void (async () => {
+      try {
+        const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+        const arreter = await getCurrentWebview().onDragDropEvent(evenement => {
+          const charge = evenement.payload;
+          if (charge.type === 'enter') {
+            // Seules les cartes Tiled allument la zone ; le reste est ignoré.
+            setDropActive(charge.paths.some(estCarteTiled));
+          } else if (charge.type === 'leave') {
+            setDropActive(false);
+          } else if (charge.type === 'drop') {
+            setDropActive(false);
+            void importerRef.current(charge.paths);
+          }
+        });
+        if (demonte) arreter();
+        else desinscrire = arreter;
+      } catch {
+        // Fenêtre non native (navigateur) ou permission absente : la zone reste
+        // informative et aucune exception ne remonte au rendu React.
+      }
+    })();
+
+    return () => {
+      demonte = true;
+      setDropActive(false);
+      if (desinscrire) desinscrire();
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) void refresh();
@@ -163,6 +296,8 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   }, [projects]);
 
   if (!isOpen) return null;
+
+  const tauriDisponible = isTauri();
 
   const handleCreate = async () => {
     if (!form.title.trim()) {
@@ -285,6 +420,47 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
           >
             <X size={18} />
           </button>
+        </div>
+
+        {/* Zone de dépôt Tiled — visible sur tous les écrans du Hub, discrète,
+            focusable et suffisamment haute (≥ 24 px) pour rester accessible. */}
+        <div className="px-6 py-2 bg-[#0d0819] border-b border-[#2d1b4e]">
+          <div
+            data-testid="tiled-drop-zone"
+            role="region"
+            aria-label="Import de carte Tiled par glisser-déposer"
+            aria-describedby="tiled-drop-help"
+            aria-busy={importingTiled}
+            tabIndex={0}
+            className={`flex min-h-[32px] items-center gap-2 px-3 py-1.5 rounded border border-dashed text-[11px] outline-none transition ${
+              dropActive
+                ? 'border-[#a855f7] bg-[#2e1065]/60 text-[#f3e8ff]'
+                : 'border-[#2d1b4e] bg-[#150d27]/60 text-[#94a3b8]'
+            } focus-visible:border-[#a855f7] focus-visible:ring-1 focus-visible:ring-[#a855f7] ${
+              tauriDisponible ? '' : 'opacity-60'
+            }`}
+          >
+            {importingTiled
+              ? <Loader2 size={13} className="animate-spin text-[#c084fc] shrink-0" />
+              : <Upload size={13} className="text-[#c084fc] shrink-0" />}
+            <span id="tiled-drop-help" className="font-medium">
+              {importingTiled
+                ? 'Import de la carte Tiled en cours…'
+                : dropActive
+                  ? 'Relâchez pour importer la carte Tiled'
+                  : 'Déposez une carte Tiled (.tmx)'}
+            </span>
+            <span className="ml-auto shrink-0 text-[10px] text-[#94a3b8]">
+              {tauriDisponible
+                ? (importingTiled ? 'écriture du projet .karacti…' : 'glisser-déposer')
+                : 'application de bureau uniquement'}
+            </span>
+          </div>
+          {!tauriDisponible && (
+            <p className="mt-1 text-[10px] text-[#f59e0b]">
+              Mode navigateur : l'import Tiled nécessite la fenêtre native du Studio.
+            </p>
+          )}
         </div>
 
         {landing ? (

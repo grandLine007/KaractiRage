@@ -125,6 +125,32 @@ export async function loadProjectJson(projectJson: string): Promise<number> {
   return await invoke('engine_load_project_json', { projectJson });
 }
 
+/** Rapport renvoyé par l'import d'une carte Tiled dans le Studio. */
+export interface TiledImportResult {
+  /** Chemin du projet `.karacti` écrit sur disque. */
+  project_path: string;
+  /** Chemin de la scène `.scene.json` écrite à côté du projet. */
+  scene_path: string;
+  /** Nombre d'entités issues de la carte. */
+  entities: number;
+  /** Nombre de couches de tuiles aplaties en décor. */
+  tile_layers_flattened: number;
+  /** Avertissements non bloquants de l'importeur moteur. */
+  warnings: string[];
+}
+
+/**
+ * Importe une carte Tiled `.tmx` en projet `.karacti` et l'ouvre dans le moteur.
+ *
+ * Le backend écrit la scène et le projet à côté de la carte, ouvre le projet puis
+ * renvoie le résumé JSON. Aucun dialogue natif n'est requis : le chemin vient du
+ * glisser-déposer Tauri.
+ */
+export async function importTiledMap(path: string): Promise<TiledImportResult> {
+  const raw: string = await invoke('engine_import_tiled', { path });
+  return JSON.parse(raw) as TiledImportResult;
+}
+
 /**
  * Exporte l'état complet du projet actuel au format JSON .karacti
  */
