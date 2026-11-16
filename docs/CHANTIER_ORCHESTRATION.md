@@ -197,6 +197,18 @@ glisser-déposer intégré de Tauri v2 via `@tauri-apps/api/webview`.
 **Vague 15 prévue** : tilesets → composant `Tilemap` (une entité par couche, atlas de
 tuiles), pour que les couches de tuiles cessent d'être des aplats.
 
+## 3quindecies. Vague 15 — en cours (Tilemap et tilesets)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| agent-9 | `ShapeKind::Tilemap` + import des tilesets + rendu + embarquement dans l'export | une couche de tuiles devient une vraie carte (1 entité, atlas), plus un aplat |
+
+**Pourquoi** : l'import v1 (v0.4.0) aplatit les couches de tuiles. C'est le dernier grand
+manque de P2.2 : sans tilesets, une carte Tiled ne ressemble pas à une carte Tiled.
+
+**Limites v1 prévues** : premier tileset seulement, tuiles retournées/rotées ignorées,
+animations de tuiles réduites à la première image.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
