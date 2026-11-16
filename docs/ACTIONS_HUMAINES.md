@@ -27,9 +27,24 @@ encore une version antérieure (`0.2.0` ou `0.3.2`) au commit du rapport.
 
 ### Commandes recommandées (série cohérente)
 
+Tes quatre tags existants (v0.3.2, v0.3.4, v0.3.5, v0.3.6) ne sont **pas publiés**.
+Les versions suivantes n'ont pas encore de tag. Tout en une commande :
+
 ```bash
 cd /Users/macbookair/Documents/Proj/KaractiRage
 
+# déjà créés localement
+git tag -a v0.3.7  14012d9 -m "v0.3.7 — paquet qui survit aux changements de niveau"
+git tag -a v0.3.8  7caf582 -m "v0.3.8 — écrans d'interface embarqués, menu rendu"
+git tag -a v0.3.9  0b9d22c -m "v0.3.9 — menu lisible, contrastes mesurés"
+git tag -a v0.3.10 3015a58 -m "v0.3.10 — sprites SVG embarqués"
+git tag -a v0.3.11 e730870 -m "v0.3.11 — clips d'animation embarqués, performance mesurée"
+
+# publication des onze tags
+git push origin v0.3.2 v0.3.4 v0.3.5 v0.3.6 v0.3.7 v0.3.8 v0.3.9 v0.3.10 v0.3.11
+```
+
+```bash
 git tag -a v0.3.2 4c52c1c -m "v0.3.2 — cascade CSS corrigée, manifeste branché au pré-vol"
 git tag -a v0.3.4 c732267 -m "v0.3.4 — AC1 mesuré, pile Échap LIFO, garde-fou runtime périmé"
 git tag -a v0.3.5 c051ffb -m "v0.3.5 — correctifs du premier test réel (création, Ctrl+K, parse LLM)"
