@@ -43,12 +43,19 @@ import {
   getAudioSettings,
   setAudioSettings,
   getExportPreflight,
+  hotReloadCheck,
   type StudioEntitySummary,
 } from './services/engineBridge';
 import { Check, X, HelpCircle, Volume2, VolumeX, Save } from 'lucide-react';
 import type { ProjectEntry } from './services/projectBridge';
 import { getAiEditContext, undoAiEdit, type AiApplyReport } from './services/aiEditBridge';
 import { prewarm3D } from './render3d/prewarm';
+
+/**
+ * Fréquence d'interrogation du veilleur natif (P2.4). 800 ms garde le
+ * rechargement sous la seconde sans concurrencer le framebuffer 60 FPS.
+ */
+const HOT_RELOAD_POLL_MS = 800;
 
 export function App() {
   const [currentMode, setCurrentMode] = useState<StudioMode>(() => {
@@ -101,6 +108,9 @@ export function App() {
   }, [editorState]);
 
   const toastIdRef = useRef(0);
+  // Empêche deux contrôles de rechargement simultanés (IPC lente ou moteur
+  // occupé) : le tick suivant est simplement ignoré, pas empilé.
+  const rechargementEnCoursRef = useRef(false);
   const saveButtonRef = useRef<HTMLButtonElement>(null);
   // Déclencheur ✦ de la barre IA, mémorisé à l'ouverture pour rendre le focus
   // au bouton d'origine à la fermeture (Ctrl+K n'a pas de bouton propre).
@@ -146,6 +156,86 @@ export function App() {
     document.addEventListener('pointerdown', handlePointerDown);
     return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, [isSavePanelOpen, closeSavePanel]);
+
+  // --- Rechargement à chaud des fichiers (P2.4) -----------------------------
+  // Le moteur ne fait qu'un `stat` par fichier surveillé ; une IPC toutes les
+  // 800 ms suffit donc à détecter un changement en moins d'une seconde. La
+  // veille est coupée dès qu'une modale, un panneau ou une saisie est actif :
+  // un rechargement ne doit ni voler le focus ni relire un fichier en cours
+  // d'écriture. L'intervalle est nettoyé au démontage et à chaque bascule d'UI.
+  useEffect(() => {
+    const sceneVisible = currentMode === 'play' || currentMode === 'edit';
+    const interfaceAuRepos =
+      !isHubOpen &&
+      !isAiModalOpen &&
+      !isWizardOpen &&
+      !isArchetypesOpen &&
+      !isHelpOpen &&
+      !isSavePanelOpen &&
+      !isAiBarOpen &&
+      !pendingAiPatch;
+    if (!sceneVisible || !interfaceAuRepos) return;
+
+    let demonte = false;
+
+    const controle = async () => {
+      if (demonte || rechargementEnCoursRef.current) return;
+      // Une saisie en cours (champ de l'inspecteur, barre IA…) suspend le
+      // contrôle : le fichier peut être en cours d'écriture.
+      const actif = document.activeElement;
+      if (actif instanceof HTMLElement) {
+        const balise = actif.tagName.toLowerCase();
+        if (
+          balise === 'input' ||
+          balise === 'textarea' ||
+          balise === 'select' ||
+          actif.isContentEditable
+        ) {
+          return;
+        }
+      }
+      // Onglet masqué : inutile de solliciter le moteur.
+      if (document.visibilityState === 'hidden') return;
+
+      rechargementEnCoursRef.current = true;
+      try {
+        const rapport = await hotReloadCheck();
+        if (demonte || !rapport.reloaded) return;
+        refresh();
+        // Un seul toast par rafale : le rapport du moteur ne couvre qu'une passe,
+        // même si plusieurs fichiers ont changé ensemble.
+        const premier = rapport.fichiers[0];
+        const nom = premier ? premier.split(/[\\/]/).pop() || premier : 'fichier';
+        const reste = rapport.fichiers.length > 1 ? ` (+${rapport.fichiers.length - 1})` : '';
+        pushToast(`Rechargé : ${nom}${reste}`, 'info');
+      } catch {
+        /* moteur indisponible : le prochain tick retentera, sans spammer */
+      } finally {
+        rechargementEnCoursRef.current = false;
+      }
+    };
+
+    const minuteur = window.setInterval(() => {
+      void controle();
+    }, HOT_RELOAD_POLL_MS);
+
+    return () => {
+      demonte = true;
+      window.clearInterval(minuteur);
+    };
+  }, [
+    currentMode,
+    isHubOpen,
+    isAiModalOpen,
+    isWizardOpen,
+    isArchetypesOpen,
+    isHelpOpen,
+    isSavePanelOpen,
+    isAiBarOpen,
+    pendingAiPatch,
+    refresh,
+    pushToast,
+  ]);
 
   // --- Édition IA inline (barre ancrée) -------------------------------------
   const openAiEdit = useCallback((field: string | null = null) => {

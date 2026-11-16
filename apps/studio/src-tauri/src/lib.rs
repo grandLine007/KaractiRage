@@ -1146,6 +1146,15 @@ fn engine_save_scene(engine: tauri::State<'_, SharedEngine>) -> bool {
     engine.lock().unwrap().save_scene()
 }
 
+/// Contrôle le rechargement à chaud des fichiers de la scène/projet (P2.4).
+///
+/// Renvoie `{"reloaded":bool,"fichiers":[chemins…]}` ; le Studio interroge cette
+/// commande à basse fréquence (≈ 800 ms) quand une scène est ouverte.
+#[tauri::command]
+fn engine_hot_reload_check(engine: tauri::State<'_, SharedEngine>) -> String {
+    engine.lock().unwrap().hot_reload_check()
+}
+
 #[tauri::command]
 fn engine_list_sprite_assets(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().list_sprite_assets_json()
@@ -1743,6 +1752,7 @@ pub fn run() {
             engine_get_brush_tiles,
             engine_spawn_entity_at_screen,
             engine_save_scene,
+            engine_hot_reload_check,
             engine_list_sprite_assets,
             engine_sprite_png,
             engine_list_anim_assets,

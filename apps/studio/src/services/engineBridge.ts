@@ -355,6 +355,32 @@ export async function saveScene(): Promise<boolean> {
   return await invoke('engine_save_scene');
 }
 
+/** Rapport du veilleur de fichiers natif (P2.4). */
+export interface HotReloadReport {
+  /** `true` quand une reconstruction de scène/projet a été déclenchée. */
+  reloaded: boolean;
+  /** Chemins qui ont changé depuis le contrôle précédent, triés. */
+  fichiers: string[];
+}
+
+/**
+ * Interroge le veilleur de fichiers du moteur (P2.4).
+ *
+ * Appelé à basse fréquence (≈ 800 ms) par le Studio quand une scène est
+ * ouverte. Le repli `{ reloaded: false, fichiers: [] }` absorbe les erreurs
+ * transitoires (moteur en cours de boot, IPC indisponible) : un contrôle raté
+ * ne doit jamais interrompre la session. Le délai borné évite qu'un moteur
+ * bloqué ne fasse s'empiler les requêtes d'interrogation.
+ */
+export async function hotReloadCheck(): Promise<HotReloadReport> {
+  return await safeInvokeJson<HotReloadReport>(
+    'engine_hot_reload_check',
+    undefined,
+    { reloaded: false, fichiers: [] },
+    3_000,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Sauvegarde / reprise de partie (niveau + variables) — panneau « Sauvegardes »
 // ---------------------------------------------------------------------------

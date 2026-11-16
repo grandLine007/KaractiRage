@@ -22,7 +22,7 @@
 | v0.4.1 | P2.2 | Import Tiled dans le Studio (glisser-déposer) | [RAPPORT_v0.4.1](RAPPORTS/RAPPORT_v0.4.1.md) | **prêt, non taguée** |
 | v0.4.2 | P2.2 | Tilemap et tilesets : carte Tiled rendue, CSV multi-lignes, PNG RGB | [RAPPORT_v0.4.2](RAPPORTS/RAPPORT_v0.4.2.md) | **prêt, non taguée** |
 | v0.4.3 | P2.3 | Audio par fichiers : décodeur WAV natif, mixage, export | [RAPPORT_v0.4.3](RAPPORTS/RAPPORT_v0.4.3.md) | **prêt, non taguée** |
-| v0.4.4 | P2.4 | Rechargement à chaud (notify) | à écrire | **bloqué réseau** |
+| v0.4.4 | P2.4 | Rechargement à chaud par polling, sans dépendance — **fin de P2** | [RAPPORT_v0.4.4](RAPPORTS/RAPPORT_v0.4.4.md) | **prêt, non taguée** |
 | v0.5.0 | P3 | Packs image/audio locaux (endpoint compatible OpenAI) | à écrire | à venir |
 | v0.6.0 | P4 | glTF, 3D déclarative, 2.5D, Blender MCP | à écrire | à venir |
 | v0.7.0 | P5 | Qualité IA mesurée (40 × 10, seuils) | à écrire | à venir |

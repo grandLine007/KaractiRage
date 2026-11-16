@@ -220,7 +220,7 @@ cpal, symphonia…) n'est pas caché et crates.io est bloqué. Un décodeur WAV 
 PCM) couvre le besoin sans aucune dépendance ; OGG/MP3 restent à faire (vendoring ou
 réseau).
 
-## 3octodecies. Vague 17 — en cours (P2.4 : rechargement à chaud)
+## 3octodecies. Vague 17 — terminée (P2.4 : rechargement à chaud) — **P2 clos**
 
 | Agent | Tâche | Critère de sortie |
 |---|---|---|

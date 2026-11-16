@@ -9,6 +9,7 @@ use crate::camera::Camera3D;
 use crate::ai_plan::AiOp;
 use crate::entity::{Entity, MaterialRef, MeshRef, Renderable3D, Transform2D, Transform3D};
 use crate::game::GameState;
+use crate::hot_reload::Veilleur;
 use crate::input::InputState;
 use crate::renderer::Canvas;
 use crate::save::SaveManager;
@@ -36,6 +37,32 @@ pub struct FrameStats {
     pub total_us: u64,
 }
 
+/// Réponse JSON du contrôle de rechargement à chaud (P2.4).
+///
+/// `fichiers` contient les chemins qui ont changé depuis le dernier contrôle,
+/// triés; `reloaded` indique qu'une reconstruction a été déclenchée.
+#[derive(serde::Serialize)]
+struct RapportHotReload {
+    reloaded: bool,
+    fichiers: Vec<String>,
+}
+
+/// Sérialise un rapport de rechargement, sans jamais échouer.
+///
+/// Un `PathBuf` non UTF-8 ne doit pas faire perdre le rapport : `display()`
+/// produit toujours une chaîne exploitable côté Studio.
+fn rapport_hot_reload(reloaded: bool, fichiers: &[std::path::PathBuf]) -> String {
+    let rapport = RapportHotReload {
+        reloaded,
+        fichiers: fichiers
+            .iter()
+            .map(|fichier| fichier.display().to_string())
+            .collect(),
+    };
+    serde_json::to_string(&rapport)
+        .unwrap_or_else(|_| "{\"reloaded\":false,\"fichiers\":[]}".to_string())
+}
+
 /// Instance embarquée du moteur, découplée de toute fenêtre OS.
 pub struct NativeEngine {
     pub game: GameState,
@@ -60,6 +87,17 @@ pub struct NativeEngine {
     /// `None` = racine compilée (`CARGO_MANIFEST_DIR/../..`). Les tests et les projets
     /// ouverts hors du dépôt la remplacent pour ne jamais écrire dans le code source.
     workspace_root: Option<std::path::PathBuf>,
+    /// Veilleur de fichiers (P2.4), créé paresseusement au premier contrôle.
+    ///
+    /// `None` après un changement de scène/projet : la liste des cibles est
+    /// reconstruite au contrôle suivant, sans rechargement indu.
+    veilleur: Option<Veilleur>,
+    /// Fichier `.karacti` ouvert sur disque, s'il y en a un.
+    ///
+    /// Les niveaux d'un projet sont embarqués en mémoire et ne portent aucun
+    /// chemin : ce champ est la seule façon de surveiller le fichier projet
+    /// lui-même pour le rechargement à chaud.
+    projet_ouvert: Option<PathBuf>,
 }
 
 /// Résout le chemin de la scène par défaut, quel que soit le répertoire courant
@@ -252,6 +290,8 @@ impl NativeEngine {
             ),
             review_baseline: None,
             workspace_root: None,
+            veilleur: None,
+            projet_ouvert: None,
         };
         // Réglages utilisateur (hors partie) : appliqués au démarrage.
         let audio_settings = crate::settings::AudioSettings::load();
@@ -285,6 +325,8 @@ impl NativeEngine {
     /// Utilisé par les tests et par l'ouverture d'un projet situé ailleurs sur le disque.
     pub fn set_workspace_root(&mut self, root: impl Into<std::path::PathBuf>) {
         self.workspace_root = Some(root.into());
+        // Les cibles relatives changent de racine : l'ancien veilleur est périmé.
+        self.veilleur = None;
     }
 
     /// Redirige les sauvegardes (slots) vers un répertoire précis.
@@ -300,6 +342,126 @@ impl NativeEngine {
         self.workspace_root.clone().unwrap_or_else(|| {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
         })
+    }
+
+    // --- Rechargement à chaud (P2.4) -----------------------------------------
+
+    /// Racine disque des chemins relatifs surveillés.
+    ///
+    /// Pour un projet ouvert (`data/projets/mon-jeu.karacti`), les assets sont
+    /// résolus à côté du fichier projet ; sinon on retombe sur la racine de
+    /// l'espace de travail, qui est déjà celle des scènes de démonstration.
+    fn racine_veille(&self) -> PathBuf {
+        if let Some(projet) = &self.projet_ouvert {
+            if let Some(parent) = projet.parent() {
+                if !parent.as_os_str().is_empty() {
+                    return parent.to_path_buf();
+                }
+            }
+        }
+        self.workspace_root()
+    }
+
+    /// Contrôle unique du rechargement à chaud.
+    ///
+    /// Le veilleur est créé au premier appel (ou après un changement de cible),
+    /// puis réutilisé. Si un fichier surveillé change :
+    /// - le fichier `.karacti` lui-même : le projet est relu sur disque et
+    ///   reconstruit, en conservant le niveau courant et le mode d'édition ;
+    /// - sinon : `GameState::reload()` relit la scène, les scripts et les assets
+    ///   de l'état courant.
+    ///
+    /// La référence du veilleur est ensuite réinitialisée : un même changement
+    /// n'est signalé qu'une fois. Renvoie un JSON
+    /// `{"reloaded":bool,"fichiers":[chemins…]}` et ne panique jamais.
+    pub fn hot_reload_check(&mut self) -> String {
+        // Cibles souhaitées à cet instant : scène, scripts, assets du manifeste,
+        // plus le fichier projet quand il est connu. Les comparer à celles du
+        // veilleur couvre gratuitement les changements de scène/projet sans
+        // devoir réarmer le veilleur dans chaque commande.
+        let racine = self.racine_veille();
+        let mut souhaite = Veilleur::pour_etat_depuis(&self.game, &racine);
+        if let Some(projet) = &self.projet_ouvert {
+            souhaite.ajouter_chemin(projet.clone());
+        }
+
+        let cibles_changees = self
+            .veilleur
+            .as_ref()
+            .map(|veilleur| veilleur.chemins() != souhaite.chemins())
+            .unwrap_or(true);
+        if cibles_changees {
+            souhaite.premier_passage();
+            self.veilleur = Some(souhaite);
+            return rapport_hot_reload(false, &[]);
+        }
+
+        let fichiers = match self.veilleur.as_mut() {
+            Some(veilleur) => veilleur.poll(),
+            None => Vec::new(),
+        };
+        if fichiers.is_empty() {
+            return rapport_hot_reload(false, &[]);
+        }
+
+        let projet_change = self
+            .projet_ouvert
+            .as_ref()
+            .is_some_and(|projet| fichiers.iter().any(|fichier| fichier == projet));
+        let mut recharge = false;
+        if projet_change {
+            if let Some(projet) = self.projet_ouvert.clone() {
+                recharge = self.recharger_projet_depuis_disque(&projet);
+            }
+        }
+        if !recharge {
+            // Scène isolée, asset ou script : la reconstruction de la scène
+            // courante suffit. Un échec de lecture laisse l'état intact (le
+            // statut du jeu porte l'erreur), on ne panique jamais.
+            self.game.reload();
+            recharge = true;
+        }
+
+        // La lecture a pu révéler une nouvelle liste d'assets : on repart d'une
+        // référence fraîche pour ne pas signaler le même changement en boucle.
+        let mut veilleur = Veilleur::pour_etat_depuis(&self.game, &self.racine_veille());
+        if let Some(projet) = &self.projet_ouvert {
+            veilleur.ajouter_chemin(projet.clone());
+        }
+        veilleur.premier_passage();
+        self.veilleur = Some(veilleur);
+
+        rapport_hot_reload(recharge, &fichiers)
+    }
+
+    /// Relit le fichier `.karacti` et reconstruit le projet dans le moteur.
+    ///
+    /// Renvoie `false` si le fichier est illisible ou invalide (écriture en
+    /// cours, par exemple) : l'appelant retombe alors sur le rechargement de
+    /// scène. Le niveau courant et le mode d'édition sont conservés.
+    fn recharger_projet_depuis_disque(&mut self, chemin: &Path) -> bool {
+        let Ok(projet) = crate::project::KaractiProject::load_from_file(chemin) else {
+            return false;
+        };
+        // `load_project` pose les variables du projet ; un `reload` de niveau
+        // repart d'une scène nue et les perdrait : on les garde pour les
+        // réappliquer après la reconstruction.
+        let variables = projet.kvl_variables.clone();
+        let index = self.game.level_index;
+        let mode = self.game.editor.mode;
+        let emballe = self.game.editor.embedded_mode;
+
+        self.game.load_project(projet);
+        self.game.level_index = index.min(self.game.levels.len().saturating_sub(1));
+        if index > 0 {
+            self.game.reload();
+            for (cle, valeur) in variables {
+                self.game.kvl_context.set_var(cle, valeur);
+            }
+        }
+        self.game.editor.mode = mode;
+        self.game.editor.embedded_mode = emballe;
+        true
     }
 
     pub fn canvas_width(&self) -> u32 {
@@ -943,6 +1105,9 @@ impl NativeEngine {
             Err(_) => return -1,
         };
         crate::exporter::StandaloneExporter::import_package(&mut self.game, &package);
+        // Paquet autonome : les données viennent du JSON, pas d'un fichier à suivre.
+        self.projet_ouvert = None;
+        self.veilleur = None;
         0
     }
 
@@ -974,6 +1139,9 @@ impl NativeEngine {
         self.game.kvl_graphs = kvl_graphs;
         self.game.editor.selected = crate::editor::SelectedEntity::None;
         self.game.editor.mode = crate::editor::EditorMode::Play;
+        // La recette remplace la scène en mémoire : plus de fichier source à suivre.
+        self.projet_ouvert = None;
+        self.veilleur = None;
         self.game
             .set_status(&format!("Recette '{}' instanciée avec succès !", recipe.title));
         0
@@ -983,6 +1151,9 @@ impl NativeEngine {
     pub fn launch_default_game(&mut self, key: &str) -> Result<String, String> {
         let name = self.game.launch_default_game(key)?;
         self.game.editor.embedded_mode = true;
+        // Scène de démonstration : elle remplace le projet précédemment ouvert.
+        self.projet_ouvert = None;
+        self.veilleur = None;
         let mut registry = crate::project_registry::ProjectRegistry::open();
         registry.record_recent(&self.game.scene_path);
         let _ = registry.save();
@@ -1101,6 +1272,9 @@ impl NativeEngine {
             _ => crate::recipe::GameGenre::Adventure,
         };
         self.game.new_blank_project(title, genre);
+        // Projet vierge non encore écrit : le veilleur de l'ancien projet est périmé.
+        self.projet_ouvert = None;
+        self.veilleur = None;
         0
     }
 
@@ -1110,6 +1284,9 @@ impl NativeEngine {
             Err(_) => return -2,
         };
         self.game.load_project(proj);
+        // Projet importé depuis une chaîne : aucun fichier disque à surveiller.
+        self.projet_ouvert = None;
+        self.veilleur = None;
         0
     }
 
@@ -1207,11 +1384,18 @@ impl NativeEngine {
             if !self.game.switch_scene(path) {
                 return Err(format!("Impossible de charger la scène '{}'", path));
             }
+            // Scène isolée : c'est le fichier de scène, et non un `.karacti`,
+            // qui porte les changements à surveiller.
+            self.projet_ouvert = None;
         } else {
             let proj = crate::project::KaractiProject::load_from_file(path)
                 .map_err(|e| format!("Impossible de charger le projet : {}", e))?;
             self.game.load_project(proj);
+            self.projet_ouvert = Some(PathBuf::from(path));
         }
+        // Nouveau contenu : la liste des cibles du veilleur est reconstruite au
+        // prochain contrôle (aucun rechargement indu).
+        self.veilleur = None;
         // Le Studio Tauri est toujours embarqué : pas de chrome softbuffer natif.
         self.game.editor.embedded_mode = true;
         self.game.editor.show_welcome_modal = false;
@@ -1462,7 +1646,14 @@ impl NativeEngine {
 
     /// Sauvegarde la scène ECS et les scripts KVL sur disque.
     pub fn save_scene(&mut self) -> bool {
-        self.game.save_scene_and_scripts().is_ok()
+        let ok = self.game.save_scene_and_scripts().is_ok();
+        if ok {
+            // Le Studio vient lui-même d'écrire ces fichiers : réarmer le
+            // veilleur sur les nouveaux `mtime` évite de recharger sa propre
+            // sauvegarde (et de jeter les dernières éditions en cours).
+            self.veilleur = None;
+        }
+        ok
     }
 
     // --- KVL Guidé -------------------------------------------------------------
@@ -3048,6 +3239,184 @@ mod tests {
         assert!(!engine.delete_kvl_graph("../../evil.kvl.json"));
         assert!(engine.delete_kvl_graph(&path));
         assert!(!engine.game.kvl_graphs.contains_key(&path));
+    }
+
+    // --- Rechargement à chaud (P2.4) ---------------------------------------
+
+    /// Scène de référence relue depuis le binaire : indépendante du CWD des tests.
+    const SCENE_REFERENCE: &str =
+        include_str!("../../../assets/scenes/level_01.scene.json");
+    /// Projet de référence à trois niveaux.
+    const PROJET_REFERENCE: &str =
+        include_str!("../../../assets/projects/jeu_reference.karacti");
+
+    /// Dossier temporaire unique, supprimé automatiquement par `Drop`.
+    struct BacTemporaire {
+        dossier: PathBuf,
+    }
+
+    impl BacTemporaire {
+        fn neuf(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duree| duree.as_nanos())
+                .unwrap_or(0);
+            let dossier = std::env::temp_dir().join(format!(
+                "karacti_hot_reload_{tag}_{}_{nanos}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dossier);
+            std::fs::create_dir_all(&dossier).expect("dossier temporaire créé");
+            Self { dossier }
+        }
+
+        fn ecrire(&self, nom: &str, contenu: &str) -> PathBuf {
+            let chemin = self.dossier.join(nom);
+            std::fs::write(&chemin, contenu).expect("fichier temporaire écrit");
+            chemin
+        }
+    }
+
+    impl Drop for BacTemporaire {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dossier);
+        }
+    }
+
+    /// Réécrit un fichier en garantissant que son `mtime` diffère de `avant`.
+    ///
+    /// Certains systèmes de fichiers n'ont qu'une résolution d'une seconde : on
+    /// réécrit jusqu'à observer une date différente (borne d'une seconde).
+    fn ecrire_avec_mtime_neuf(chemin: &Path, contenu: &str) {
+        let avant = std::fs::metadata(chemin)
+            .and_then(|meta| meta.modified())
+            .ok();
+        for _ in 0..200 {
+            std::fs::write(chemin, contenu).expect("réécriture du fichier");
+            let apres = std::fs::metadata(chemin)
+                .and_then(|meta| meta.modified())
+                .ok();
+            if avant != apres {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("le mtime n'a pas changé après une seconde");
+    }
+
+    fn rapport_json(brut: &str) -> serde_json::Value {
+        serde_json::from_str(brut).expect("le contrôle doit renvoyer un JSON valide")
+    }
+
+    #[test]
+    fn hot_reload_check_machine_a_etats() {
+        let bac = BacTemporaire::neuf("machine");
+        let fichier = bac.ecrire("niveau.scene.json", SCENE_REFERENCE);
+
+        let mut engine = NativeEngine::init().expect("init moteur");
+        // La scène surveillée est celle que `reload()` relira sur disque.
+        engine.game.scene_path = fichier.display().to_string();
+
+        // 1. Premier contrôle : le veilleur se pose, rien n'est signalé.
+        let premier = rapport_json(&engine.hot_reload_check());
+        assert_eq!(premier["reloaded"], false);
+        assert_eq!(premier["fichiers"].as_array().map(Vec::len), Some(0));
+
+        // 2. Modification du fichier : signalée une fois, et rechargée.
+        let mut scene: serde_json::Value =
+            serde_json::from_str(SCENE_REFERENCE).expect("scène de référence valide");
+        scene["name"] = serde_json::json!("Scène Rechargée");
+        ecrire_avec_mtime_neuf(
+            &fichier,
+            &serde_json::to_string(&scene).expect("scène sérialisée"),
+        );
+
+        let deuxieme = rapport_json(&engine.hot_reload_check());
+        assert_eq!(deuxieme["reloaded"], true, "rapport : {deuxieme}");
+        let chemin = fichier.display().to_string();
+        assert!(
+            deuxieme["fichiers"]
+                .as_array()
+                .expect("tableau de fichiers")
+                .iter()
+                .any(|fichier| fichier.as_str() == Some(chemin.as_str())),
+            "le fichier modifié doit être cité : {deuxieme}"
+        );
+
+        // 3. Rien de neuf : le même changement n'est pas rejoué.
+        let troisieme = rapport_json(&engine.hot_reload_check());
+        assert_eq!(troisieme["reloaded"], false);
+        assert_eq!(troisieme["fichiers"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn hot_reload_recharge_les_entites_sans_paniquer() {
+        let bac = BacTemporaire::neuf("entites");
+        let fichier = bac.ecrire("niveau.scene.json", SCENE_REFERENCE);
+
+        let mut engine = NativeEngine::init().expect("init moteur");
+        engine.game.scene_path = fichier.display().to_string();
+        let _ = engine.hot_reload_check();
+
+        let mut scene: serde_json::Value =
+            serde_json::from_str(SCENE_REFERENCE).expect("scène de référence valide");
+        scene["name"] = serde_json::json!("Scène Rechargée");
+        scene["objective"] = serde_json::json!("Objectif rechargé");
+        ecrire_avec_mtime_neuf(
+            &fichier,
+            &serde_json::to_string(&scene).expect("scène sérialisée"),
+        );
+
+        let rapport = rapport_json(&engine.hot_reload_check());
+        assert_eq!(rapport["reloaded"], true, "rapport : {rapport}");
+        // Le contenu neuf a bien été relu (et non l'ancien état en mémoire).
+        assert_eq!(engine.game.scene_name, "Scène Rechargée");
+        assert_eq!(engine.game.scene_objective.as_deref(), Some("Objectif rechargé"));
+        assert!(!engine.game.entities.is_empty(), "les entités sont reconstruites");
+        assert!(
+            engine
+                .game
+                .entities
+                .iter()
+                .any(|entite| entite
+                    .movement
+                    .as_ref()
+                    .is_some_and(|mouvement| mouvement.is_player_controlled)),
+            "le joueur survit au rechargement"
+        );
+        // Un rendu après rechargement ne doit pas paniquer (état cohérent).
+        engine.render_frame(1.0 / 60.0);
+    }
+
+    #[test]
+    fn hot_reload_recharge_un_projet_depuis_son_fichier() {
+        let bac = BacTemporaire::neuf("projet");
+        let fichier = bac.ecrire("jeu.karacti", PROJET_REFERENCE);
+
+        let mut engine = NativeEngine::init().expect("init moteur");
+        engine
+            .open_project_path(&fichier.display().to_string())
+            .expect("projet de référence ouvert");
+        assert_eq!(engine.game.project_id, "proj_reference_p1");
+        let premier = rapport_json(&engine.hot_reload_check());
+        assert_eq!(premier["reloaded"], false);
+
+        // Modifie l'identifiant du projet : la relecture disque doit l'appliquer.
+        let mut projet: serde_json::Value =
+            serde_json::from_str(PROJET_REFERENCE).expect("projet de référence valide");
+        projet["metadata"]["id"] = serde_json::json!("proj_recharge");
+        ecrire_avec_mtime_neuf(
+            &fichier,
+            &serde_json::to_string(&projet).expect("projet sérialisé"),
+        );
+
+        let deuxieme = rapport_json(&engine.hot_reload_check());
+        assert_eq!(deuxieme["reloaded"], true, "rapport : {deuxieme}");
+        assert_eq!(
+            engine.game.project_id, "proj_recharge",
+            "le fichier projet doit être relu, pas la scène seule"
+        );
+        assert!(!engine.game.entities.is_empty(), "le projet rechargé porte ses entités");
     }
 }
 

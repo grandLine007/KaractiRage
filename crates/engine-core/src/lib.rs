@@ -9,6 +9,7 @@ pub mod editor;
 pub mod entity;
 pub mod flocking;
 pub mod game;
+pub mod hot_reload;
 pub mod input;
 pub mod inventory;
 pub mod mesh_assets;
