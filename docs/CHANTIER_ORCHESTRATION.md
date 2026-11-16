@@ -209,7 +209,7 @@ manque de P2.2 : sans tilesets, une carte Tiled ne ressemble pas à une carte Ti
 **Limites v1 prévues** : premier tileset seulement, tuiles retournées/rotées ignorées,
 animations de tuiles réduites à la première image.
 
-## 3sedecies. Vague 16 — en cours (P2.3 : audio par fichiers, sans Kira)
+## 3sedecies. Vague 16 — terminée (P2.3 : audio WAV, sans Kira)
 
 | Agent | Tâche | Critère de sortie |
 |---|---|---|

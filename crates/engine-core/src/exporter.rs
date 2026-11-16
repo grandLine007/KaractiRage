@@ -7,6 +7,7 @@ use kvl_core::{Graph, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Nom du fichier de glue JS produit par `wasm-bindgen --target web`.
 const RUNTIME_GLUE_FILE: &str = "engine_wasm.js";
@@ -431,6 +432,17 @@ pub struct KaractiGamePackage {
     /// produits avant ce champ.
     #[serde(default)]
     pub svg_anim_assets: HashMap<String, String>,
+    /// Sons **WAV** fournis par le projet (`identifiant -> WAV PCM16 base64`).
+    ///
+    /// Le moteur audio historique est procédural et le runtime wasm n'a aucun
+    /// accès disque : sans ces octets, un `PlaySound:<id>` personnalisé
+    /// retomberait sur le silence (ou sur un son intégré) dans le HTML exporté.
+    /// Le contenu est ré-encodé en **PCM16 mono** depuis la banque décodée, à la
+    /// fréquence d'échantillonnage d'origine (les sources float/24/32 bits sont
+    /// donc quantifiées). `#[serde(default)]` garde lisibles les paquets
+    /// produits avant ce champ : leur banque de sons est simplement vide.
+    #[serde(default)]
+    pub audio_assets: HashMap<String, String>,
 }
 
 impl KaractiGamePackage {
@@ -670,6 +682,33 @@ fn decoder_assets_embarques(
     (sprites, sheets)
 }
 
+/// Décode les WAV embarqués d'un paquet (`identifiant -> WAV base64`).
+///
+/// Un base64 corrompu ou un WAV invalide est ignoré après un avertissement de
+/// log : l'import reste possible et le `PlaySound` concerné retombe sur le son
+/// procédural, comme pour un asset de rendu absent.
+fn decoder_audio_embarques(
+    package: &KaractiGamePackage,
+) -> HashMap<String, Arc<crate::audio_file::SoundClip>> {
+    let mut clips = HashMap::new();
+    for (identifiant, b64) in &package.audio_assets {
+        let Ok(octets) = STANDARD.decode(b64) else {
+            tracing::warn!(son = %identifiant, "paquet audio : base64 invalide, son ignoré");
+            continue;
+        };
+        match crate::audio_file::decode_wav(&octets, identifiant) {
+            Ok(clip) => {
+                clips.insert(identifiant.clone(), Arc::new(clip));
+            }
+            Err(erreur) => tracing::warn!(
+                son = %identifiant,
+                "paquet audio : WAV refusé ({erreur})"
+            ),
+        }
+    }
+    clips
+}
+
 /// Packageur et exportateur autonome de jeu KaractiRage
 pub struct StandaloneExporter;
 
@@ -788,6 +827,27 @@ impl StandaloneExporter {
                 .or_insert_with(|| anim.clone());
         }
 
+        // Sons WAV du projet : base64 pour que le HTML reste autonome et que le
+        // runtime wasm (sans disque) puisse les jouer. L'ordre trié rend l'export
+        // déterministe ; le dédoublonnage par `Arc` évite d'embarquer deux fois
+        // le même contenu si la banque porte des alias.
+        let mut audio_assets: HashMap<String, String> = HashMap::new();
+        let mut deja_exportes: Vec<*const crate::audio_file::SoundClip> = Vec::new();
+        let mut identifiants_sons: Vec<&String> = game.sound_bank.keys().collect();
+        identifiants_sons.sort();
+        for identifiant in identifiants_sons {
+            let clip = &game.sound_bank[identifiant];
+            let adresse = Arc::as_ptr(clip);
+            if deja_exportes.contains(&adresse) {
+                continue;
+            }
+            deja_exportes.push(adresse);
+            audio_assets.insert(
+                identifiant.clone(),
+                STANDARD.encode(crate::audio_file::encode_wav(clip)),
+            );
+        }
+
         // Union des graphes : scène courante + scripts des niveaux 2/3.
         let kvl_graphs = collecter_graphes_kvl(game);
 
@@ -808,6 +868,7 @@ impl StandaloneExporter {
             sheet_assets,
             svg_assets,
             svg_anim_assets,
+            audio_assets,
         }
     }
 
@@ -959,6 +1020,66 @@ impl StandaloneExporter {
                         ),
                     ));
                 }
+            }
+        }
+
+        // --- Sons WAV (audio fourni par le créateur) -------------------------
+        // Toute référence sonore doit être résoluble : clip WAV chargé, WAV
+        // lisible sur disque, ou son procédural historique. Sinon le créateur
+        // croirait son son joué alors que `PlaySound` ne produit rien. Le
+        // runtime, lui, garde son comportement : une clé inconnue reste
+        // silencieuse ; c'est le pré-vol qui la révèle avant l'export.
+        let mut references_sons: Vec<(String, String)> = Vec::new();
+        if let Some(manifeste) = &game.assets_manifest {
+            for entree in &manifeste.entries {
+                if entree.kind == crate::assets_manifest::AssetKind::Audio {
+                    references_sons.push((
+                        entree.path.clone(),
+                        format!("le son « {} » déclaré au manifeste", entree.id),
+                    ));
+                }
+            }
+        }
+        for graphe in collecter_graphes_kvl(game).values() {
+            for node in graphe.nodes.values() {
+                let kvl_core::NodeKind::Action { action_type } = &node.kind else {
+                    continue;
+                };
+                let Some(id) = action_type.strip_prefix("PlaySound:") else {
+                    continue;
+                };
+                let id = id.trim();
+                if id.is_empty() {
+                    // `PlaySound` sans identifiant ne demande rien (comportement
+                    // documenté de kvl-runtime) : rien à signaler.
+                    continue;
+                }
+                references_sons.push((
+                    id.to_string(),
+                    format!("réclamé par « PlaySound:{id} » (graphe « {} »)", graphe.name),
+                ));
+            }
+        }
+        for (reference, contexte) in references_sons {
+            if game.sound_clip(&reference).is_some()
+                || crate::audio::SoundType::from_key(&reference).is_some()
+            {
+                continue;
+            }
+            let lisible = crate::audio_file::read_wav_source(&reference)
+                .and_then(|octets| crate::audio_file::decode_wav(&octets, &reference).ok())
+                .is_some();
+            if lisible {
+                continue;
+            }
+            let cle = format!("asset-manquant\u{1f}son\u{1f}{reference}");
+            if deja_signales.insert(cle) {
+                issues.push(PreflightIssue::blocking(
+                    "asset-manquant",
+                    format!(
+                        "{contexte} mais aucun WAV jouable n'est chargé et aucun son procédural ne porte ce nom : PlaySound ne produira aucun son. Placez un WAV PCM sous assets/audio/ (8/16/24/32 bits entier ou float 32 bits, mono ou stéréo) puis rechargez le projet."
+                    ),
+                ));
             }
         }
 
@@ -1157,6 +1278,9 @@ impl StandaloneExporter {
                     package.svg_assets.clone(),
                     package.svg_anim_assets.clone(),
                 );
+                // Sons WAV : installés dans la banque pour que `PlaySound`
+                // personnalisé soit jouable sans disque (wasm inclus).
+                nouveau.apply_embedded_audio(decoder_audio_embarques(package));
 
                 // Réinitialise la caméra et la sélection du Studio.
                 nouveau.editor.selected = crate::editor::SelectedEntity::None;
@@ -1226,6 +1350,9 @@ impl StandaloneExporter {
             package.svg_assets.clone(),
             package.svg_anim_assets.clone(),
         );
+        // Même banque de sons que le format multi-niveaux : un paquet ancien
+        // (champ absent) laisse la banque courante intacte.
+        game.apply_embedded_audio(decoder_audio_embarques(package));
 
         // Réinitialise la caméra et la sélection du Studio
         game.editor.selected = crate::editor::SelectedEntity::None;
@@ -1368,6 +1495,7 @@ mod tests {
             sheet_assets: HashMap::new(),
             svg_assets: HashMap::new(),
             svg_anim_assets: HashMap::new(),
+            audio_assets: std::collections::HashMap::new(),
         };
 
         let json = package.to_json_pretty().expect("Sérialisation package");
@@ -1403,6 +1531,7 @@ mod tests {
             sheet_assets: HashMap::new(),
             svg_assets: HashMap::new(),
             svg_anim_assets: HashMap::new(),
+            audio_assets: std::collections::HashMap::new(),
         };
 
         let html = package.generate_standalone_html();
@@ -1834,6 +1963,7 @@ mod tests {
             sheet_assets,
             svg_assets: HashMap::new(),
             svg_anim_assets: HashMap::new(),
+            audio_assets: std::collections::HashMap::new(),
         }
     }
 
@@ -2816,6 +2946,7 @@ mod tests {
             sheet_assets: HashMap::new(),
             svg_assets,
             svg_anim_assets: HashMap::new(),
+            audio_assets: std::collections::HashMap::new(),
         }
     }
 
@@ -3319,6 +3450,143 @@ mod tests {
             reexport.svg_anim_assets.get(&asset).map(String::as_str),
             Some(ANIM_RIG_ANIM),
             "le ré-export doit reprendre les clips de la mémoire du paquet"
+        );
+    }
+
+    /// Clip WAV de test : 100 échantillons à 0,5 sur 8 kHz.
+    fn clip_wav_export() -> Arc<crate::audio_file::SoundClip> {
+        Arc::new(crate::audio_file::SoundClip {
+            sample_rate: 8_000,
+            samples: vec![0.5; 100],
+            name: "coin_perso.wav".to_string(),
+        })
+    }
+
+    #[test]
+    fn test_export_import_embarque_les_wav_et_les_rejoue() {
+        let mut source = jeu_reference();
+        source
+            .sound_bank
+            .insert("coin_perso".to_string(), clip_wav_export());
+
+        let package = StandaloneExporter::create_package(&source, "Sons du projet", "Testeur");
+        assert!(
+            package.audio_assets.contains_key("coin_perso"),
+            "le WAV de la banque doit être embarqué en base64"
+        );
+        let octets = STANDARD
+            .decode(&package.audio_assets["coin_perso"])
+            .expect("base64 valide");
+        let clip = crate::audio_file::decode_wav(&octets, "coin_perso")
+            .expect("le WAV embarqué est relisible");
+        assert_eq!(clip.sample_rate, 8_000, "fréquence d'origine conservée");
+        assert_eq!(clip.samples.len(), 100);
+        assert!((clip.samples[0] - 0.5).abs() < 1e-3, "PCM16 quantifié");
+
+        // Le champ survit au JSON du paquet (et un ancien paquet sans lui reste lisible).
+        let relu = KaractiGamePackage::from_json(&package.to_json().expect("sérialisation"))
+            .expect("paquet relu");
+        assert_eq!(relu.audio_assets, package.audio_assets);
+
+        // Instance neuve : l'import reconstruit la banque et le son est jouable.
+        let mut cible = jeu_reference();
+        assert!(cible.sound_bank.is_empty(), "instance neuve sans son");
+        StandaloneExporter::import_package(&mut cible, &package);
+        assert!(
+            cible.sound_bank.contains_key("coin_perso"),
+            "l'import installe le WAV embarqué"
+        );
+        assert!(cible.play_sound_id("coin_perso"));
+        assert_eq!(
+            cible.audio.clip_voice_count(),
+            1,
+            "le clip importé alimente une voix de mixage"
+        );
+    }
+
+    #[test]
+    fn test_preflight_signale_un_playsound_sans_fichier_ni_son_procedural() {
+        let mut jeu = jeu_reference();
+        let mut graphe = Graph::new("graphe_son", "Graphe son", "Test pré-vol audio");
+        graphe.add_node(kvl_core::Node::new(
+            "n_son",
+            "Jouer un son",
+            kvl_core::Category::Audio,
+            "Action PlaySound personnalisée",
+            kvl_core::NodeKind::Action {
+                action_type: "PlaySound:son_absent_du_projet".into(),
+            },
+        ));
+        jeu.kvl_graphs.insert("graphe_son_test".to_string(), graphe);
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
+        assert!(!report.ok, "un PlaySound sans source doit bloquer : {}", report.summary());
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| {
+                issue.code == "asset-manquant"
+                    && issue.message.contains("son_absent_du_projet")
+            })
+            .expect("diagnostic asset-manquant attendu pour PlaySound");
+        assert_eq!(issue.severity, PreflightSeverity::Blocking);
+
+        // Une clé procédurale connue reste acceptée : le repli historique n'est
+        // pas signalé comme un asset manquant.
+        let mut graphe_coin = Graph::new("graphe_coin", "Graphe pièce", "");
+        graphe_coin.add_node(kvl_core::Node::new(
+            "n_coin",
+            "Jouer pièce",
+            kvl_core::Category::Audio,
+            "Son intégré",
+            kvl_core::NodeKind::Action { action_type: "PlaySound:coin".into() },
+        ));
+        jeu.kvl_graphs.insert("graphe_coin_test".to_string(), graphe_coin);
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
+        assert!(
+            !report.issues.iter().any(|issue| issue.code == "asset-manquant"
+                && issue.message.contains("PlaySound:coin")),
+            "le son procédural « coin » ne doit pas être bloqué"
+        );
+    }
+
+    #[test]
+    fn test_preflight_wav_manquant_est_asset_manquant() {
+        let mut jeu = jeu_reference();
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "son_fantome".to_string(),
+                kind: crate::assets_manifest::AssetKind::Audio,
+                path: format!(
+                    "assets/audio/son_prevol_fantome_{}.wav",
+                    std::process::id()
+                ),
+                bytes: 64,
+                hash: crate::ai_dictionary::hash_text(b"wav-fantome"),
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".to_string()),
+                    created_at: "2026-11-16".to_string(),
+                },
+                dimensions: None,
+                duration_ms: Some(500),
+            })
+            .expect("entrée audio acceptée");
+        jeu.assets_manifest = Some(manifeste);
+
+        let report = StandaloneExporter::preflight_with_runtime_dir(&jeu, None);
+        assert!(!report.ok, "un WAV manquant doit bloquer : {}", report.summary());
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.code == "asset-manquant" && issue.message.contains("son_fantome"))
+            .expect("diagnostic asset-manquant attendu pour le WAV");
+        assert_eq!(issue.severity, PreflightSeverity::Blocking);
+        assert!(
+            issue.message.contains("assets/audio/"),
+            "le message indique où déposer le fichier : {}",
+            issue.message
         );
     }
 }

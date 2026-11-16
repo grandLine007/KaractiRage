@@ -1,5 +1,6 @@
 use crate::adaptation::AdaptationManager;
 use crate::audio::{AudioEngine, SoundType};
+use crate::audio_file::{decode_wav, lister_wav_locaux, read_wav_source, SoundClip};
 use crate::camera::Camera2D;
 use crate::dialogue::{DialogueAction, DialogueBox, QuestTracker};
 use crate::editor::{EditorMode, EditorState, GameRecipeWizardState, SelectedEntity, StudioCommand, StudioTool, WizardCategory};
@@ -16,6 +17,7 @@ use kvl_core::*;
 use kvl_runtime::*;
 use std::collections::HashMap;
 use std::fs;
+use std::sync::Arc;
 use winit::keyboard::KeyCode;
 
 pub const AVAILABLE_SCENES: &[(&str, &str)] = &[
@@ -304,6 +306,19 @@ pub struct GameState {
     /// prioritaires dans [`crate::vector::SvgCache`] et réinstallés avec les
     /// sources aux reconstructions (`start_game`, `next_level`, `reload`).
     pub embedded_svg_anims: HashMap<String, String>,
+    /// Banque de sons **WAV** du projet (`identifiant -> clip décodé`).
+    ///
+    /// Remplie au chargement du projet (manifeste d'assets + balayage de
+    /// `assets/audio/`) puis par l'import de paquet (`audio_assets` base64).
+    /// Chaque clip est partagé par `Arc` : le décodage n'a lieu qu'une fois et
+    /// les voix de mixage ne copient jamais les échantillons. La banque est
+    /// recopiée (clonage d'`Arc`, pas des données) par
+    /// [`Self::inherit_exported_package`], donc elle survit à `start_game`,
+    /// `next_level` et `reload` — reconstructions qui repartent d'une scène nue.
+    ///
+    /// Vide hors projet : `PlaySound:<id>` retombe alors sur la synthèse
+    /// procédurale historique, comportement inchangé.
+    pub sound_bank: HashMap<String, Arc<SoundClip>>,
     /// Caméra 3D déclarative du projet (`project.camera3d`), consommée par le packet 3D.
     pub camera3d: Option<crate::subsystems::Camera3DData>,
     /// Lumières 3D déclaratives du projet (`project.lights`), consommées par le packet 3D.
@@ -366,6 +381,39 @@ fn resolve_script_content(script_path: &str) -> Option<String> {
         Some(include_str!("../../../assets/scripts/ref_boss_verrou.kvl.json").to_string())
     } else {
         None
+    }
+}
+
+/// Décode un WAV et l'ajoute à la banque de sons, une seule fois par contenu.
+///
+/// `deja_charges` mémorise les octets déjà installés : un fichier déclaré au
+/// manifeste puis retrouvé par le balayage de `assets/audio/` n'apparaît pas
+/// deux fois (sinon l'export embarquerait le même WAV sous deux identifiants).
+/// Un WAV invalide ou dans un format refusé est signalé en log et ignoré.
+fn installer_wav(
+    banque: &mut HashMap<String, Arc<SoundClip>>,
+    deja_charges: &mut Vec<Vec<u8>>,
+    identifiant: &str,
+    octets: &[u8],
+    origine: &str,
+) {
+    if deja_charges.iter().any(|deja| deja.as_slice() == octets) {
+        return;
+    }
+    let identifiant = identifiant.trim();
+    if identifiant.is_empty() {
+        return;
+    }
+    match decode_wav(octets, origine) {
+        Ok(clip) => {
+            deja_charges.push(octets.to_vec());
+            banque.insert(identifiant.to_string(), Arc::new(clip));
+        }
+        Err(erreur) => tracing::warn!(
+            son = %identifiant,
+            origine = %origine,
+            "banque de sons : WAV refusé ({erreur})"
+        ),
     }
 }
 
@@ -1259,6 +1307,7 @@ impl GameState {
             embedded_sheets: HashMap::new(),
             embedded_svg_assets: HashMap::new(),
             embedded_svg_anims: HashMap::new(),
+            sound_bank: HashMap::new(),
             camera3d: None,
             lights: Vec::new(),
             save_config: crate::subsystems::SaveConfig::default(),
@@ -1361,6 +1410,151 @@ impl GameState {
         self.sprite_cache = sprite_cache;
         self.sheet_cache = sheet_cache;
         self.anim_states = anim_states;
+    }
+
+    /// (Re)charge la banque de sons WAV du projet.
+    ///
+    /// Deux sources, dans cet ordre de priorité :
+    /// 1. les entrées `AssetKind::Audio` du manifeste d'assets (chemin explicite
+    ///    et identifiant stable — c'est la voie recommandée et vérifiable) ;
+    /// 2. un balayage d'un niveau de `assets/audio/*.wav`, pour que déposer un
+    ///    fichier suffise à le rendre jouable (`PlaySound:<nom_du_fichier>`).
+    ///
+    /// Un même contenu n'est chargé qu'une fois (un WAV déclaré au manifeste
+    /// n'est pas ré-ajouté par le balayage). Un fichier illisible ou dans un
+    /// format refusé produit un avertissement de log, jamais une panique ni un
+    /// échec de chargement du projet : un son manquant ne doit pas empêcher de
+    /// jouer. Sous wasm, les deux sources sont vides (pas de disque) et ce sont
+    /// les clips embarqués du paquet qui alimentent la banque.
+    fn recharger_banque_sons(&mut self) {
+        let manifeste = self.assets_manifest.clone();
+        let mut banque: HashMap<String, Arc<SoundClip>> = HashMap::new();
+        // Octets déjà chargés : dédoublonne manifeste et balayage sans
+        // comparer les chemins (le même fichier peut être nommé différemment).
+        let mut deja_charges: Vec<Vec<u8>> = Vec::new();
+
+        if let Some(manifeste) = &manifeste {
+            for entree in &manifeste.entries {
+                if entree.kind != crate::assets_manifest::AssetKind::Audio {
+                    continue;
+                }
+                let Some(octets) = read_wav_source(&entree.path) else {
+                    tracing::warn!(
+                        son = %entree.id,
+                        chemin = %entree.path,
+                        "banque de sons : WAV déclaré introuvable, le son sera absent"
+                    );
+                    continue;
+                };
+                installer_wav(&mut banque, &mut deja_charges, &entree.id, &octets, &entree.path);
+            }
+        }
+
+        for (identifiant, octets) in lister_wav_locaux() {
+            installer_wav(&mut banque, &mut deja_charges, &identifiant, &octets, &identifiant);
+        }
+
+        if !banque.is_empty() {
+            tracing::info!(sons = banque.len(), "banque de sons WAV chargée");
+        }
+        self.sound_bank = banque;
+    }
+
+    /// Cherche un clip chargé pour un identifiant `PlaySound:<id>`.
+    ///
+    /// Tolère les formes équivalentes d'un même son :
+    /// - la clé exacte de la banque (identifiant du manifeste ou nom de fichier) ;
+    /// - le nom de fichier sans extension (`assets/audio/coin.wav` → `coin`) ;
+    /// - la clé `assets/audio/<nom>.wav` ;
+    /// - le nom de fichier porté par le clip lui-même, quand la banque est
+    ///   indexée par un identifiant de manifeste différent du nom de fichier.
+    ///
+    /// `None` signifie « pas de clip » : l'appelant retombe alors sur la
+    /// synthèse procédurale, comportement historique préservé.
+    fn chercher_clip(&self, id: &str) -> Option<Arc<SoundClip>> {
+        let id = id.trim();
+        if id.is_empty() {
+            return None;
+        }
+        if let Some(clip) = self.sound_bank.get(id) {
+            return Some(Arc::clone(clip));
+        }
+
+        let base = id.rsplit(['/', '\\']).next().unwrap_or(id);
+        let sans_extension = if base.len() > 4 && base[base.len() - 4..].eq_ignore_ascii_case(".wav") {
+            &base[..base.len() - 4]
+        } else {
+            base
+        };
+
+        if let Some(clip) = self.sound_bank.get(sans_extension) {
+            return Some(Arc::clone(clip));
+        }
+        let chemin_attendu = format!("assets/audio/{sans_extension}.wav");
+        if let Some(clip) = self.sound_bank.get(&chemin_attendu) {
+            return Some(Arc::clone(clip));
+        }
+        // Dernier recours : le clip connaît son nom de fichier d'origine, même
+        // si la banque est indexée par l'identifiant du manifeste.
+        self.sound_bank
+            .values()
+            .find(|clip| {
+                let nom = clip.name.rsplit(['/', '\\']).next().unwrap_or(&clip.name);
+                let nom = if nom.len() > 4 && nom[nom.len() - 4..].eq_ignore_ascii_case(".wav") {
+                    &nom[..nom.len() - 4]
+                } else {
+                    nom
+                };
+                nom == sans_extension
+            })
+            .map(Arc::clone)
+    }
+
+    /// Clip WAV chargé correspondant à un identifiant, s'il existe.
+    ///
+    /// Même résolution tolérante que [`Self::chercher_clip`] : identifiant de
+    /// manifeste, nom de fichier, chemin `assets/audio/…` ou nom porté par le
+    /// clip. Sert au pré-vol d'export et aux diagnostics du Studio.
+    pub fn sound_clip(&self, id: &str) -> Option<Arc<SoundClip>> {
+        self.chercher_clip(id)
+    }
+
+    /// Joue immédiatement un son identifié (`PlaySound:<id>`).
+    ///
+    /// Priorité au **clip WAV du projet** : dès qu'un fichier chargé porte cet
+    /// identifiant, il remplace le son synthétisé. Sinon, repli sur
+    /// [`SoundType::from_key`] : les clés historiques (`coin`, `alarm`,
+    /// `impact`…) continuent de sonner exactement comme avant, et une clé
+    /// inconnue reste silencieuse (compatibilité ascendante).
+    ///
+    /// Renvoie `true` quand une voix a effectivement été programmée.
+    pub fn play_sound_id(&mut self, id: &str) -> bool {
+        let id = id.trim();
+        if id.is_empty() {
+            return false;
+        }
+        if let Some(clip) = self.chercher_clip(id) {
+            return self.audio.play_clip(clip, crate::audio::VOLUME_EFFET);
+        }
+        if let Some(sound) = SoundType::from_key(id) {
+            self.audio.play(sound);
+            return true;
+        }
+        false
+    }
+
+    /// Installe les clips WAV embarqués d'un paquet (`audio_assets`).
+    ///
+    /// Fusionne dans la banque existante : un paquet historique sans audio
+    /// n'efface pas les sons déjà chargés, et un ré-import met à jour les
+    /// identifiants qu'il fournit. `Arc` est cloné, jamais les échantillons.
+    pub fn apply_embedded_audio(&mut self, clips: HashMap<String, Arc<SoundClip>>) {
+        if clips.is_empty() {
+            return;
+        }
+        for (id, clip) in clips {
+            self.sound_bank.insert(id, clip);
+        }
     }
 
     /// Installe les sources SVG embarquées d'un paquet, puis re-résout les
@@ -1471,6 +1665,10 @@ impl GameState {
         self.embedded_sheets = source.embedded_sheets.clone();
         self.embedded_svg_assets = source.embedded_svg_assets.clone();
         self.embedded_svg_anims = source.embedded_svg_anims.clone();
+        // La banque de sons est partagée par `Arc` : un clonage de la map suffit
+        // (aucun échantillon recopié) et les WAV embarqués restent jouables
+        // après `start_game`, `next_level` ou `reload`.
+        self.sound_bank = source.sound_bank.clone();
         self.restore_exported_package();
     }
 
@@ -1702,6 +1900,9 @@ impl GameState {
         self.level_index = 0;
         self.project_id = project.metadata.id.clone();
         self.assets_manifest = project.assets;
+        // Sons WAV du projet : manifeste puis `assets/audio/`. Fait ici (et non
+        // dans `resoudre_assets_rendu`) car la banque ne dépend pas des entités.
+        self.recharger_banque_sons();
         self.camera3d = project.camera3d;
         self.lights = project.lights;
         self.save_config = project.save_config;
@@ -6514,9 +6715,8 @@ fn key_to_char(key: KeyCode, shift: bool, layout: crate::editor::KeyboardLayout)
         self.kvl_context
             .set_var("sound_request", Value::String(String::new()));
 
-        if let Some(sound) = SoundType::from_key(&requested) {
-            self.audio.play(sound);
-        }
+        // Priorité aux WAV du projet, repli procédural inchangé sinon.
+        self.play_sound_id(&requested);
     }
 
     /// Enregistre la télémétrie d'une frame complète et déclenche l'adaptation
@@ -15672,6 +15872,165 @@ mod tests {
         assert!(del_ok);
         assert_eq!(state.entities.len(), initial_count - 1);
         assert!(!state.entities.iter().any(|e| e.id == target_id));
+    }
+
+    /// Clip WAV de test : 100 échantillons de 0,5 à 8 kHz (durée ~12,5 ms).
+    fn clip_wav_de_test(nom: &str) -> Arc<SoundClip> {
+        Arc::new(SoundClip {
+            sample_rate: 8_000,
+            samples: vec![0.5; 100],
+            name: nom.to_string(),
+        })
+    }
+
+    #[test]
+    fn play_sound_id_priorite_au_clip_wav_puis_repli_procedural() {
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("Scène chargée");
+        state.audio.stop_clips();
+        state.audio.set_muted(false);
+
+        // Aucun clip : « coin » reste le son procédural historique.
+        assert!(state.play_sound_id("coin"));
+        assert_eq!(state.audio.clip_voice_count(), 0, "repli procédural");
+        assert_eq!(state.audio.active_voice_count(), 1);
+
+        // Un WAV nommé « coin » prend désormais la priorité sur la synthèse.
+        state
+            .sound_bank
+            .insert("coin".to_string(), clip_wav_de_test("coin.wav"));
+        assert!(state.play_sound_id("coin"));
+        assert_eq!(
+            state.audio.clip_voice_count(),
+            1,
+            "un fichier chargé remplace le son intégré"
+        );
+
+        // Formes équivalentes : chemin complet et nom de fichier avec extension.
+        state.audio.stop_clips();
+        assert!(state.play_sound_id("assets/audio/coin.wav"));
+        assert_eq!(state.audio.clip_voice_count(), 1);
+        state.audio.stop_clips();
+        assert!(state.play_sound_id("coin.wav"));
+        assert_eq!(state.audio.clip_voice_count(), 1);
+
+        // Clé inconnue : silencieuse, comme avant (aucune voix).
+        state.audio.stop_clips();
+        let avant = state.audio.active_voice_count();
+        assert!(!state.play_sound_id("son_totalement_inconnu"));
+        assert_eq!(state.audio.active_voice_count(), avant);
+    }
+
+    #[test]
+    fn drain_sound_request_joue_le_clip_et_efface_la_demande() {
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("Scène chargée");
+        state.sound_bank.insert(
+            "porte_perso".to_string(),
+            clip_wav_de_test("porte_perso.wav"),
+        );
+        state
+            .kvl_context
+            .set_var("sound_request", Value::String("porte_perso".to_string()));
+
+        state.drain_sound_request();
+
+        assert_eq!(
+            state.audio.clip_voice_count(),
+            1,
+            "PlaySound:<id> doit empiler une voix de clip"
+        );
+        assert_eq!(
+            state.kvl_context.get_var("sound_request"),
+            Some(&Value::String(String::new())),
+            "la demande est consommée une seule fois"
+        );
+    }
+
+    #[test]
+    fn load_project_charge_les_wav_declares_au_manifeste() {
+        // Fichier temporaire sous `tests/fixtures/` : le manifeste n'accepte que
+        // des chemins relatifs, et le test doit rester indépendant du cwd
+        // (`read_wav_source` essaie cwd, ../../ et la racine du dépôt).
+        /// Supprime le WAV temporaire même si une assertion échoue.
+        struct Nettoyage(std::path::PathBuf);
+        impl Drop for Nettoyage {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+
+        let relatif = format!("tests/fixtures/son_manifeste_{}.wav", std::process::id());
+        let absolu = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&relatif);
+        let wav = crate::audio_file::encode_wav_pcm16_mono(&[0.5f32; 400], 8_000);
+        std::fs::create_dir_all(absolu.parent().expect("dossier fixtures"))
+            .expect("création du dossier fixtures");
+        std::fs::write(&absolu, &wav).expect("écriture du WAV de test");
+        let _nettoyage = Nettoyage(absolu.clone());
+
+        let mut manifeste = crate::assets_manifest::AssetsManifest::default();
+        manifeste
+            .register(crate::assets_manifest::AssetEntry {
+                id: "son_manifeste".to_string(),
+                kind: crate::assets_manifest::AssetKind::Audio,
+                path: relatif.clone(),
+                bytes: wav.len() as u64,
+                hash: crate::ai_dictionary::hash_text(&wav),
+                provenance: crate::assets_manifest::Provenance {
+                    source: crate::assets_manifest::ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".to_string()),
+                    created_at: "2026-11-16".to_string(),
+                },
+                dimensions: None,
+                duration_ms: Some(50),
+            })
+            .expect("entrée audio acceptée");
+
+        let mut state = GameState::load_from_scene(get_test_scene_path()).expect("Scène chargée");
+        let mut project = crate::project::KaractiProject::new_empty(
+            "Projet sonore",
+            "auteur",
+            crate::recipe::GameGenre::Adventure,
+        );
+        project.assets = Some(manifeste);
+
+        state.load_project(project);
+
+        let clip = state
+            .sound_bank
+            .get("son_manifeste")
+            .expect("le WAV déclaré est chargé dans la banque");
+        assert_eq!(clip.sample_rate, 8_000);
+        assert_eq!(clip.samples.len(), 400);
+        assert!(
+            state.play_sound_id("son_manifeste"),
+            "le son du manifeste est jouable"
+        );
+        assert_eq!(state.audio.clip_voice_count(), 1);
+    }
+
+    #[test]
+    fn la_banque_de_sons_survit_a_une_reconstruction() {
+        let mut state = state_with_screens();
+        state.levels = vec![level_scene("NIVEAU SON 1"), level_scene("NIVEAU SON 2")];
+        state.sound_bank.insert(
+            "musique_menu".to_string(),
+            clip_wav_de_test("musique_menu.wav"),
+        );
+
+        state.start_game();
+        assert!(
+            state.sound_bank.contains_key("musique_menu"),
+            "start_game repart d'une scène nue mais garde la banque de sons"
+        );
+        assert_eq!(
+            Arc::strong_count(&state.sound_bank["musique_menu"]),
+            1,
+            "le clip est partagé par Arc, pas recopié"
+        );
+
+        state.sound_bank.insert("ambiance".to_string(), clip_wav_de_test("ambiance.wav"));
+        assert!(state.next_level());
+        assert!(state.sound_bank.contains_key("musique_menu"));
+        assert!(state.sound_bank.contains_key("ambiance"));
     }
 
     #[test]

@@ -1,5 +1,22 @@
+use crate::audio_file::SoundClip;
 use std::sync::{Arc, Mutex};
 use tinyaudio::prelude::*;
+
+/// Volume par défaut d'un son de jeu (effet ou clip WAV).
+///
+/// Identique au volume historique des voix procédurales : un effet fourni par
+/// le créateur ne doit pas « sauter aux oreilles » comparé aux sons intégrés.
+pub const VOLUME_EFFET: f32 = 0.25;
+
+/// Volume par défaut d'une musique de fond bouclée (plus discrète qu'un effet).
+pub const VOLUME_MUSIQUE: f32 = 0.18;
+
+/// Nombre maximal de voix simultanées, clips WAV compris.
+///
+/// Les voix procédurales gardent leur plafond historique de 16 (voir
+/// [`AudioEngine::play`]) ; les clips disposent de ce plafond global plus large
+/// pour qu'une musique de fond ne soit pas évincée par une volée d'effets.
+const MAX_VOIX: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoundType {
@@ -69,14 +86,14 @@ impl SoundType {
     }
 }
 
-struct ActiveVoice {
+struct ProceduralVoice {
     sound: SoundType,
     cursor: usize,
     duration_samples: usize,
     volume: f32,
 }
 
-impl ActiveVoice {
+impl ProceduralVoice {
     fn new(sound: SoundType, sample_rate: usize) -> Self {
         let duration_secs = match sound {
             SoundType::UiClick => 0.03,
@@ -405,6 +422,110 @@ impl ActiveVoice {
     }
 }
 
+/// Voix lisant un **clip WAV** fourni par le projet.
+///
+/// Le curseur est fractionnaire : il avance de `fréquence du clip / fréquence
+/// de l'appareil` par échantillon de sortie. Un clip 8 kHz joué sur un appareil
+/// à 44,1 kHz est donc lu ~5,5 fois plus vite en index, sans changer sa hauteur
+/// (les échantillons sont interpolés, pas rejoués par blocs). L'interpolation
+/// est **linéaire** : meilleur compromis qualité/coût pour le profil Low-End,
+/// suffisant pour des sons de jeu (le plus proche voisin crée un bruit de
+/// quantification audible sur les aigus).
+struct ClipVoice {
+    clip: Arc<SoundClip>,
+    /// Position de lecture dans `clip.samples`, en échantillons (fractionnaire).
+    cursor: f64,
+    volume: f32,
+    /// `true` : la musique de fond reboucle sans fin jusqu'à [`AudioEngine::stop_loops`].
+    looping: bool,
+}
+
+impl ClipVoice {
+    fn new(clip: Arc<SoundClip>, volume: f32, looping: bool) -> Self {
+        let volume = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { VOLUME_EFFET };
+        Self { clip, cursor: 0.0, volume, looping }
+    }
+
+    /// Lit l'échantillon interpolé à la position courante puis avance le curseur.
+    fn sample(&mut self, device_rate: f32) -> f32 {
+        let len = self.clip.samples.len();
+        if len == 0 {
+            return 0.0;
+        }
+        let longueur = len as f64;
+        if self.cursor >= longueur {
+            if !self.looping {
+                return 0.0;
+            }
+            // Boucle propre : on repart au début en conservant le reste
+            // fractionnaire (pas de clic d'arrondi à chaque tour).
+            self.cursor %= longueur;
+        }
+
+        let index = self.cursor.floor() as usize;
+        let fraction = (self.cursor - index as f64) as f32;
+        let suivant = if self.looping {
+            (index + 1) % len
+        } else {
+            (index + 1).min(len - 1)
+        };
+        let a = self.clip.samples[index];
+        let b = self.clip.samples[suivant];
+        let echantillon = a + (b - a) * fraction;
+
+        let ratio = if device_rate > 0.0 {
+            self.clip.sample_rate as f64 / device_rate as f64
+        } else {
+            1.0
+        };
+        self.cursor += ratio;
+        echantillon * self.volume
+    }
+
+    fn is_finished(&self) -> bool {
+        !self.looping && self.cursor >= self.clip.samples.len() as f64
+    }
+}
+
+/// Une voix du mixer : synthèse procédurale historique **ou** clip WAV du projet.
+enum ActiveVoice {
+    Procedural(ProceduralVoice),
+    Clip(ClipVoice),
+}
+
+impl ActiveVoice {
+    /// Voix procédurale (compatibilité : le plafond de 16 reste dans `play`).
+    fn new(sound: SoundType, sample_rate: usize) -> Self {
+        Self::Procedural(ProceduralVoice::new(sound, sample_rate))
+    }
+
+    fn clip(clip: Arc<SoundClip>, volume: f32, looping: bool) -> Self {
+        Self::Clip(ClipVoice::new(clip, volume, looping))
+    }
+
+    fn sample(&mut self, sample_rate: f32) -> f32 {
+        match self {
+            Self::Procedural(voice) => voice.sample(sample_rate),
+            Self::Clip(voice) => voice.sample(sample_rate),
+        }
+    }
+
+    fn is_finished(&self) -> bool {
+        match self {
+            Self::Procedural(voice) => voice.is_finished(),
+            Self::Clip(voice) => voice.is_finished(),
+        }
+    }
+
+    fn is_clip(&self) -> bool {
+        matches!(self, Self::Clip(_))
+    }
+
+    fn is_looping_clip(&self) -> bool {
+        matches!(self, Self::Clip(voice) if voice.looping)
+    }
+}
+
 struct SharedAudioState {
     voices: Vec<ActiveVoice>,
     is_muted: bool,
@@ -559,6 +680,81 @@ impl AudioEngine {
         }
     }
 
+    /// Joue un **clip WAV** du projet une seule fois.
+    ///
+    /// `volume` est un facteur par voix, borné à `[0, 1]` ; il est ensuite
+    /// multiplié par le volume maître et le mute existants, sans changer leur
+    /// comportement. Renvoie `false` si le plafond global de voix est atteint ou
+    /// si le clip est vide (rien n'est alors ajouté au mixer).
+    pub fn play_clip(&self, clip: Arc<SoundClip>, volume: f32) -> bool {
+        if clip.samples.is_empty() {
+            return false;
+        }
+        if let Ok(mut st) = self.state.lock() {
+            if st.voices.len() >= MAX_VOIX {
+                return false;
+            }
+            st.voices.push(ActiveVoice::clip(clip, volume, false));
+            return true;
+        }
+        false
+    }
+
+    /// Joue une **musique de fond bouclée**.
+    ///
+    /// Remplace la boucle précédente (une seule musique à la fois) puis boucle
+    /// jusqu'à [`Self::stop_loops`], [`Self::stop_clips`], un mute ou la fin de
+    /// la session. La boucle ne se termine donc jamais seule : c'est un choix
+    /// explicite, aucun `PlaySound` ne doit couper la musique sans le demander.
+    pub fn loop_clip(&self, clip: Arc<SoundClip>, volume: f32) -> bool {
+        if clip.samples.is_empty() {
+            return false;
+        }
+        if let Ok(mut st) = self.state.lock() {
+            st.voices.retain(|voice| !voice.is_looping_clip());
+            if st.voices.len() >= MAX_VOIX {
+                return false;
+            }
+            st.voices.push(ActiveVoice::clip(clip, volume, true));
+            return true;
+        }
+        false
+    }
+
+    /// Coupe les musiques de fond bouclées ; renvoie le nombre de voix arrêtées.
+    pub fn stop_loops(&self) -> usize {
+        if let Ok(mut st) = self.state.lock() {
+            let avant = st.voices.len();
+            st.voices.retain(|voice| !voice.is_looping_clip());
+            return avant - st.voices.len();
+        }
+        0
+    }
+
+    /// Coupe **tous** les clips WAV (musiques et effets fournis) ; les voix
+    /// procédurales continuent. Renvoie le nombre de voix arrêtées.
+    pub fn stop_clips(&self) -> usize {
+        if let Ok(mut st) = self.state.lock() {
+            let avant = st.voices.len();
+            st.voices.retain(|voice| !voice.is_clip());
+            return avant - st.voices.len();
+        }
+        0
+    }
+
+    /// Nombre total de voix en cours (procédurales + clips), hors voix terminées.
+    pub fn active_voice_count(&self) -> usize {
+        self.state.lock().map(|st| st.voices.len()).unwrap_or(0)
+    }
+
+    /// Nombre de voix lisant un clip WAV (utile aux diagnostics et aux tests).
+    pub fn clip_voice_count(&self) -> usize {
+        self.state
+            .lock()
+            .map(|st| st.voices.iter().filter(|voice| voice.is_clip()).count())
+            .unwrap_or(0)
+    }
+
     pub fn toggle_mute(&self) -> bool {
         if let Ok(mut st) = self.state.lock() {
             st.is_muted = !st.is_muted;
@@ -694,5 +890,115 @@ mod tests {
             let st = engine.state.lock().expect("lock state");
             assert_eq!(st.voices.len(), 2, "Two voices should be queued");
         }
+    }
+
+    fn clip_de_test(valeur: f32, longueur: usize, sample_rate: u32) -> Arc<SoundClip> {
+        Arc::new(SoundClip {
+            sample_rate,
+            samples: vec![valeur; longueur],
+            name: "test".to_string(),
+        })
+    }
+
+    #[test]
+    fn deux_clips_melanges_sans_saturation() {
+        // Somme brute 1,7 : le mixeur doit borner la sortie à 1,0 sans déborder.
+        let mut st = SharedAudioState {
+            voices: vec![
+                ActiveVoice::clip(clip_de_test(0.9, 400, 8_000), 1.0, false),
+                ActiveVoice::clip(clip_de_test(0.8, 400, 8_000), 1.0, false),
+            ],
+            is_muted: false,
+            master_volume: 1.0,
+            sample_rate: 8_000,
+        };
+        let mut tampon = vec![0.0f32; 64];
+        remplir_tampon(&mut st, &mut tampon);
+
+        assert!(
+            tampon.iter().any(|s| s.abs() > 0.5),
+            "deux clips doivent produire du signal"
+        );
+        assert!(
+            tampon.iter().all(|s| (-1.0..=1.0).contains(s)),
+            "le mixage ne doit jamais sortir de [-1, 1]"
+        );
+        assert!((tampon[0] - 1.0).abs() < 1e-6, "somme 1,7 bornée à 1,0");
+        assert_eq!(st.voices.len(), 2, "les clips ne sont pas terminés");
+    }
+
+    #[test]
+    fn un_clip_termine_libere_sa_voix() {
+        let engine = AudioEngine::new();
+        assert!(engine.play_clip(clip_de_test(0.5, 10, 8_000), 0.5));
+        assert_eq!(engine.clip_voice_count(), 1);
+
+        // 8 000 Hz des deux côtés : 10 échantillons de clip = 10 de sortie.
+        {
+            let mut st = engine.state.lock().expect("lock state");
+            let mut tampon = vec![0.0f32; 64];
+            remplir_tampon(&mut st, &mut tampon);
+        }
+        assert_eq!(engine.clip_voice_count(), 0, "voix terminée libérée");
+        assert_eq!(engine.active_voice_count(), 0);
+    }
+
+    #[test]
+    fn le_reechantillonnage_conserve_la_duree() {
+        // Clip 8 kHz de 100 échantillons (12,5 ms) joué sur un appareil 16 kHz :
+        // il doit durer 200 échantillons de sortie, puis se libérer.
+        let engine = AudioEngine::new();
+        assert!(engine.play_clip(clip_de_test(0.5, 100, 8_000), 1.0));
+        {
+            let mut st = engine.state.lock().expect("lock state");
+            st.sample_rate = 16_000;
+            let mut tampon = vec![0.0f32; 199];
+            remplir_tampon(&mut st, &mut tampon);
+            assert_eq!(st.voices.len(), 1, "pas encore terminé après 199 échantillons");
+            let mut fin = vec![0.0f32; 2];
+            remplir_tampon(&mut st, &mut fin);
+            assert_eq!(st.voices.len(), 0, "terminé après ~200 échantillons");
+        }
+    }
+
+    #[test]
+    fn la_musique_boucle_et_se_coupe() {
+        let engine = AudioEngine::new();
+        assert!(engine.loop_clip(clip_de_test(0.3, 50, 8_000), VOLUME_MUSIQUE));
+        assert_eq!(engine.clip_voice_count(), 1);
+
+        // Bien plus long que le clip : une boucle ne se termine jamais seule.
+        {
+            let mut st = engine.state.lock().expect("lock state");
+            let mut tampon = vec![0.0f32; 4_000];
+            remplir_tampon(&mut st, &mut tampon);
+            assert!(
+                tampon.iter().any(|s| s.abs() > 0.01),
+                "la musique bouclée doit encore produire du son après plusieurs tours"
+            );
+        }
+        assert_eq!(engine.clip_voice_count(), 1, "la boucle survit au-delà du clip");
+
+        // Une seconde musique remplace la première, `stop_loops` la coupe.
+        assert!(engine.loop_clip(clip_de_test(0.2, 50, 8_000), VOLUME_MUSIQUE));
+        assert_eq!(engine.clip_voice_count(), 1, "une seule musique à la fois");
+        assert_eq!(engine.stop_loops(), 1);
+        assert_eq!(engine.clip_voice_count(), 0);
+    }
+
+    #[test]
+    fn un_clip_vide_ou_muet_ne_produit_rien() {
+        let engine = AudioEngine::new();
+        assert!(!engine.play_clip(clip_de_test(0.5, 0, 8_000), 1.0), "clip vide refusé");
+        assert!(engine.play_clip(clip_de_test(0.5, 100, 8_000), 1.0));
+
+        engine.set_muted(true);
+        {
+            let mut st = engine.state.lock().expect("lock state");
+            let mut tampon = vec![0.0f32; 32];
+            remplir_tampon(&mut st, &mut tampon);
+            assert!(tampon.iter().all(|&s| s == 0.0), "le mute s'applique aux clips");
+        }
+        assert_eq!(engine.stop_clips(), 1);
     }
 }
