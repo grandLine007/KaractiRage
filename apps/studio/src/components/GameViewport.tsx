@@ -4,6 +4,18 @@ import { invoke } from '@tauri-apps/api/core';
 import { detectRenderCapabilities, type RenderCapabilities } from '../render3d/capabilities';
 import { retryEngineBoot } from '../services/engineBridge';
 
+/**
+ * Envoie une commande au moteur uniquement dans la fenêtre Tauri.
+ *
+ * Dans un navigateur (audit, aperçu web, HMR), `__TAURI_INTERNALS__` n'existe pas :
+ * `invoke` lèverait « Cannot read properties of undefined ». On ignore alors la
+ * commande au lieu de polluer la console.
+ */
+function envoyerMoteur(command: string, args?: Record<string, unknown>): void {
+  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return;
+  void invoke(command, args).catch(() => {});
+}
+
 interface GameViewportProps {
   onTelemetryUpdate?: (metrics: { fps: number; cpuUs: number; score: number; status: string }) => void;
   onSceneChanged?: () => void;
@@ -188,7 +200,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
       const pendingMouse = pendingMouseRef.current;
       if (pendingMouse) {
         pendingMouseRef.current = null;
-        void invoke('engine_on_mouse_move', { x: pendingMouse.x, y: pendingMouse.y });
+        envoyerMoteur('engine_on_mouse_move', { x: pendingMouse.x, y: pendingMouse.y });
       }
 
       // 1. Avance la simulation native et récupère le framebuffer RGBA
@@ -285,7 +297,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
 
       const keyVal = KEY_MAP[e.code];
       if (keyVal !== undefined) {
-        void invoke('engine_on_key_down', { key: keyVal });
+        envoyerMoteur('engine_on_key_down', { key: keyVal });
         if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace'].includes(e.code)) {
           e.preventDefault();
         }
@@ -298,7 +310,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
       }
       const keyVal = KEY_MAP[e.code];
       if (keyVal !== undefined) {
-        void invoke('engine_on_key_up', { key: keyVal });
+        envoyerMoteur('engine_on_key_up', { key: keyVal });
       }
     }
 
@@ -339,14 +351,14 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const p = toCanvasCoords(e.clientX, e.clientY);
-    if (p) void invoke('engine_on_mouse_move', { x: p.x, y: p.y });
+    if (p) envoyerMoteur('engine_on_mouse_move', { x: p.x, y: p.y });
     const button = e.button === 2 ? 2 : 0;
-    void invoke('engine_on_mouse_down', { button });
+    envoyerMoteur('engine_on_mouse_down', { button });
   }, [toCanvasCoords]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const button = e.button === 2 ? 2 : 0;
-    void invoke('engine_on_mouse_up', { button });
+    envoyerMoteur('engine_on_mouse_up', { button });
     // La sélection / le déplacement sont traités côté moteur à la frame suivante.
     window.setTimeout(() => onSceneChanged?.(), 60);
   }, [onSceneChanged]);
@@ -372,11 +384,11 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
     localStorage.setItem('karactirage.viewportZoom', z);
   };
   const toggleRadarAction = () => {
-    void invoke('engine_toggle_radar');
+    envoyerMoteur('engine_toggle_radar');
     setShowRadar(prev => !prev);
   };
   const toggleGridAction = () => {
-    void invoke('engine_toggle_spatial_grid');
+    envoyerMoteur('engine_toggle_spatial_grid');
     setShowGrid(prev => !prev);
   };
 

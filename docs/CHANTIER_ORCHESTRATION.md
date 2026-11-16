@@ -230,6 +230,17 @@ réseau).
 plateforme). Un veilleur par interrogation de mtime, testable, suffit pour un
 rechargement sous la seconde.
 
+## 3novodecies. Vague 18 — en cours (consolidation P2 avant P3)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| agent-12 | Chemins d'assets relatifs + `LoopSound`/`StopSounds` KVL | carte Tiled déplacée toujours rendue ; musique de fond pilotable par un graphe |
+| meneur | Console propre hors Tauri (`GameViewport`) | plus d'`invoke` non gardé dans un navigateur |
+
+**Pourquoi consolider** : P2 est clos (4 lots), mais deux dettes inscrites aux rapports
+v0.4.2/v0.4.3 valent mieux que d'ouvrir P3 : un projet Tiled déplacé cassait son rendu
+natif, et une musique de fond n'était pas déclenchable depuis KVL.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
