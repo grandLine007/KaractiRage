@@ -38,6 +38,14 @@ thiserror = "1.0"
 uuid = { version = "1.10", features = ["v4", "serde", "js"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+tiled = { path = "vendor/tiled-0.16.0", default-features = false }
 winit = "0.29"
 softbuffer = "0.4"
 
+# ---------------------------------------------------------------------------
+# Vendoring local (P2.2) : crates.io est inaccessible (index/API bloqués) mais
+# les archives restent téléchargeables. Ces deux crates sont donc fournis en
+# source pour que `tiled` compile hors ligne.
+# ---------------------------------------------------------------------------
+[patch.crates-io]
+quick-xml = { path = "vendor/quick-xml-0.31.0" }
