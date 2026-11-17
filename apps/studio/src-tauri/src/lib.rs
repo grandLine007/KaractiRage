@@ -1365,6 +1365,82 @@ fn engine_import_tiled(
         .map_err(|erreur| format!("Rapport d'import Tiled illisible : {erreur}"))
 }
 
+/// Importe un modèle 3D (`.glb`/`.gltf` autoporteur) dans le projet ouvert.
+///
+/// Écrit `<projet>/assets/meshes/<id>.<ext>`, enregistre une `AssetEntry`
+/// (`kind: Mesh`, hash FNV, provenance `Imported { tool: "host" }`, licence
+/// optionnelle) dans le manifeste du `.karacti`, puis renvoie l'identifiant
+/// stable. Refus explicite si aucun projet n'est ouvert, si le nom est invalide,
+/// si le contenu n'est pas un glTF 2.0 autonome ou si le budget est dépassé.
+///
+/// La licence est un paramètre optionnel : son absence est un avertissement de
+/// pré-vol, jamais un blocage (voir `AssetsManifest::validate`).
+#[tauri::command]
+fn engine_import_mesh_asset(
+    name: String,
+    bytes_b64: String,
+    license: Option<String>,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    use karactirage_engine::mesh_assets;
+
+    let mut eng = engine
+        .lock()
+        .map_err(|erreur| format!("Moteur indisponible : {erreur}"))?;
+    let project_file = eng
+        .project_file()
+        .ok_or_else(|| {
+            "Aucun projet ouvert : créez ou ouvrez un projet avant d'importer un modèle 3D."
+                .to_string()
+        })?
+        .to_path_buf();
+    let racine = project_file
+        .parent()
+        .ok_or_else(|| {
+            format!(
+                "Projet « {} » sans dossier parent : impossible d'écrire assets/meshes.",
+                project_file.display()
+            )
+        })?
+        .to_path_buf();
+
+    let bytes = mesh_assets::decoder_base64(&bytes_b64).map_err(|erreur| erreur.to_string())?;
+    let mut manifeste = eng.game.assets_manifest.clone().unwrap_or_default();
+    let cree_le = mesh_assets::date_iso_aujourdhui();
+    let importe = mesh_assets::enregistrer_mesh_importe(
+        &racine,
+        &mut manifeste,
+        &name,
+        &bytes,
+        license.as_deref(),
+        &cree_le,
+    )
+    .map_err(|erreur| erreur.to_string())?;
+
+    // Le fichier `.karacti` est la source de vérité persistante du manifeste ;
+    // on ne remplace que `assets` pour ne pas écraser les autres champs du projet.
+    let mut projet = karactirage_engine::project::KaractiProject::load_from_file(&project_file)
+        .map_err(|erreur| {
+            format!(
+                "Projet « {} » illisible, modèle non enregistré : {erreur}",
+                project_file.display()
+            )
+        })?;
+    projet.assets = Some(manifeste.clone());
+    if let Err(erreur) = projet.save_to_file(&project_file) {
+        // Pas d'orphelin dans assets/meshes/ si le projet n'a pas pu être écrit.
+        let _ = std::fs::remove_file(racine.join(&importe.path));
+        return Err(format!(
+            "Écriture du projet « {} » impossible : {erreur}",
+            project_file.display()
+        ));
+    }
+
+    // Le moteur voit le nouvel asset immédiatement (sans rouvrir le projet).
+    eng.game.assets_manifest = Some(manifeste);
+    Ok(importe.id)
+}
+
 #[tauri::command]
 fn engine_recent_projects() -> String {
     let registry = ProjectRegistry::open();
@@ -1783,6 +1859,7 @@ pub fn run() {
             engine_create_project,
             engine_open_project,
             engine_import_tiled,
+            engine_import_mesh_asset,
             engine_recent_projects,
             engine_remove_recent,
             engine_duplicate_project,

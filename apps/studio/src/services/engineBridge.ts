@@ -152,6 +152,28 @@ export async function importTiledMap(path: string): Promise<TiledImportResult> {
 }
 
 /**
+ * Importe un modèle 3D (GLB ou glTF JSON autoporteur) dans le projet ouvert.
+ *
+ * Le backend écrit `<projet>/assets/meshes/<id>.<ext>` et enregistre l'entrée
+ * `kind: Mesh` (hash FNV, provenance `Imported { tool: "host" }`, licence
+ * optionnelle) dans le manifeste du `.karacti`. Renvoie l'identifiant stable.
+ *
+ * Refus explicite hors Tauri, sans projet ouvert, nom invalide, glTF
+ * multi-fichiers ou budget dépassé.
+ */
+export async function importMeshAsset(
+  name: string,
+  bytesB64: string,
+  license?: string,
+): Promise<string> {
+  return await invoke('engine_import_mesh_asset', {
+    name,
+    bytesB64,
+    license: license?.trim() ? license.trim() : null,
+  });
+}
+
+/**
  * Exporte l'état complet du projet actuel au format JSON .karacti
  */
 export async function exportProjectJson(): Promise<string> {

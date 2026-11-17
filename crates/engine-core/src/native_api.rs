@@ -337,6 +337,15 @@ impl NativeEngine {
         self.save_manager = SaveManager::with_root(config, root.into());
     }
 
+    /// Fichier `.karacti` actuellement ouvert sur disque, s'il y en a un.
+    ///
+    /// `None` pour un projet créé en mémoire (scène de démo, JSON importé sans
+    /// chemin) : les commandes d'import qui écrivent dans `<projet>/assets/`
+    /// doivent alors refuser explicitement plutôt que choisir une racine au hasard.
+    pub fn project_file(&self) -> Option<&std::path::Path> {
+        self.projet_ouvert.as_deref()
+    }
+
     /// Racine du projet pour les écritures d'authoring.
     pub fn workspace_root(&self) -> std::path::PathBuf {
         self.workspace_root.clone().unwrap_or_else(|| {

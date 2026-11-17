@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Archive, ArrowLeft, ArrowRight, Bot, Check, ChevronDown,
+  AlertTriangle, Archive, ArrowLeft, ArrowRight, Bot, Box, Check, ChevronDown,
   Compass, Copy, Cpu, FolderOpen, FolderSearch, Gamepad2, Layers, Loader2,
-  Pencil, Play, Plus, RefreshCw, Search, Sparkles, Upload, Wrench, X, Zap,
+  Pencil, Play, Plus, RefreshCw, Save, Search, Sparkles, Upload, Wrench, X, Zap,
 } from 'lucide-react';
 import {
   archiveProject, createProject, duplicateProject, isTauri, listProjects, openProject,
   removeRecent, renameProject, revealProject, systemDiagnostics,
   type NewProjectConfig, type ProjectEntry, type SystemDiagnostics,
 } from '../services/projectBridge';
-import { importTiledMap, loadProjectJson } from '../services/engineBridge';
+import { importMeshAsset, importTiledMap, loadProjectJson } from '../services/engineBridge';
+// Import de TYPE seulement : la preview three.js (WebGPU + GLTFLoader) reste
+// dans un chunk séparé, chargé à la sélection d'un fichier — le Hub ne paie pas
+// le poids de three.js à l'ouverture.
+import type { MeshPreviewController, MeshPreviewStats } from '../render3d/meshPreview';
 import { ARCHETYPES } from '../services/archetypes';
 
 interface ProjectHubModalProps {
@@ -106,6 +110,30 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
+/** Base64 par blocs : évite de dépasser la pile sur un GLB de plusieurs Mo. */
+function bufferVersBase64(buffer: ArrayBuffer): string {
+  const octets = new Uint8Array(buffer);
+  const bloc = 0x8000;
+  let binaire = '';
+  for (let i = 0; i < octets.length; i += bloc) {
+    binaire += String.fromCharCode(...octets.subarray(i, i + bloc));
+  }
+  return btoa(binaire);
+}
+
+/** Détection de format sans charger three.js (miroir de `meshPreview.ts`). */
+function detecterFormat3D(buffer: ArrayBuffer): 'glb' | 'gltf' | null {
+  const octets = new Uint8Array(buffer);
+  if (
+    octets.length >= 4 &&
+    octets[0] === 0x67 && octets[1] === 0x6c && octets[2] === 0x54 && octets[3] === 0x46
+  ) {
+    return 'glb';
+  }
+  const debut = new TextDecoder().decode(octets.subarray(0, Math.min(octets.length, 512)));
+  return debut.trimStart()[0] === '{' ? 'gltf' : null;
+}
+
 function formatDate(epoch: number): string {
   if (!epoch) return '—';
   return new Date(epoch * 1000).toLocaleDateString('fr-FR', {
@@ -198,6 +226,22 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   const [importingTiled, setImportingTiled] = useState(false);
   // Verrou synchrone : deux drops rapprochés ne lancent pas deux imports.
   const importingTiledRef = useRef(false);
+
+  // --- Import 3D (C2) : aperçu local au Hub, enregistrement réservé à Tauri ---
+  const meshPreviewHostRef = useRef<HTMLDivElement | null>(null);
+  const meshPreviewCtlRef = useRef<MeshPreviewController | null>(null);
+  // Les octets restent hors de l'état React : un GLB de plusieurs Mo n'a pas à
+  // provoquer de rendu ni de copie à chaque frappe dans le champ licence.
+  const meshBytesRef = useRef<ArrayBuffer | null>(null);
+  const meshLoadSeqRef = useRef(0);
+  const [meshFileName, setMeshFileName] = useState('');
+  const [meshStats, setMeshStats] = useState<MeshPreviewStats | null>(null);
+  const [meshBusy, setMeshBusy] = useState(false);
+  const [meshSaving, setMeshSaving] = useState(false);
+  const [meshError, setMeshError] = useState('');
+  const [meshLicense, setMeshLicense] = useState('');
+  const [meshSavedId, setMeshSavedId] = useState('');
+  const [meshPreviewActive, setMeshPreviewActive] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -333,6 +377,25 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
     }
   }, [isOpen, advancedOpen]);
 
+  useEffect(() => {
+    // Aperçu 3D : le device GPU n'est créé qu'à la sélection d'un fichier, puis
+    // libéré dès que « Avancé » se replie ou que le Hub change d'écran. Sortir
+    // de la section ne doit pas laisser un renderer orphelin en arrière-plan.
+    // L'état React est remis à zéro par les gestionnaires de navigation (pas ici :
+    // un setState synchrone dans un effet déclencherait un rendu en cascade).
+    if (advancedOpen && view === 'home') return;
+    meshLoadSeqRef.current++;
+    meshPreviewCtlRef.current?.dispose();
+    meshPreviewCtlRef.current = null;
+  }, [advancedOpen, view]);
+
+  useEffect(() => () => {
+    // Démontage du Hub (fermeture : App remonte le composant via sa `key`).
+    meshLoadSeqRef.current++;
+    meshPreviewCtlRef.current?.dispose();
+    meshPreviewCtlRef.current = null;
+  }, []);
+
   const visible = useMemo(() => {
     let list = [...projects];
     if (filter === 'scene') list = list.filter(p => p.kind === 'scene');
@@ -354,6 +417,19 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   if (!isOpen) return null;
 
   const tauriDisponible = isTauri();
+
+  /** Ferme l'aperçu 3D et oublie la sélection (changement de section/écran). */
+  const reinitialiserApercuMesh = () => {
+    meshLoadSeqRef.current++;
+    meshPreviewCtlRef.current?.dispose();
+    meshPreviewCtlRef.current = null;
+    meshBytesRef.current = null;
+    setMeshPreviewActive(false);
+    setMeshStats(null);
+    setMeshFileName('');
+    setMeshSavedId('');
+    setMeshError('');
+  };
 
   /** Parcours guidé : un nom + un modèle → création directe en mode Jouer. */
   const handleQuickCreate = async () => {
@@ -476,7 +552,118 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
     }
   };
 
+  /** Crée le renderer d'aperçu à la demande (une seule fois par ouverture). */
+  const obtenirApercuMesh = async (): Promise<MeshPreviewController> => {
+    if (meshPreviewCtlRef.current) return meshPreviewCtlRef.current;
+    const hote = meshPreviewHostRef.current;
+    if (!hote) {
+      throw new Error("Zone d'aperçu 3D indisponible : rouvrez la section « Avancé ».");
+    }
+    const { startMeshPreview } = await import('../render3d/meshPreview');
+    const controleur = await startMeshPreview(hote, (message) => {
+      // La libération GPU ne doit jamais faire échouer l'import déjà enregistré.
+      console.warn(`Aperçu 3D : ${message}`);
+    });
+    meshPreviewCtlRef.current = controleur;
+    setMeshPreviewActive(true);
+    return controleur;
+  };
+
+  /**
+   * Lit le fichier choisi et l'affiche. Un format invalide laisse l'état
+   * précédent intact : aucun octet, aucun résumé, aucune entrée de projet.
+   */
+  const handleMeshFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Permet de re-sélectionner le même fichier après une erreur.
+    e.target.value = '';
+    if (!file) return;
+
+    if (!/\.(glb|gltf)$/i.test(file.name)) {
+      setMeshError(
+        `Format non reconnu : « ${file.name} ». Choisissez un fichier .glb ou .gltf (export glTF 2.0).`,
+      );
+      return;
+    }
+
+    const seq = ++meshLoadSeqRef.current;
+    setMeshBusy(true);
+    setMeshError('');
+    setMeshSavedId('');
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const format = detecterFormat3D(buffer);
+      if (!format) {
+        setMeshError(
+          'Contenu 3D non reconnu : le fichier doit être un GLB (magic « glTF ») ou un glTF JSON. Aucun état du projet n’a été modifié.',
+        );
+        return;
+      }
+
+      const controleur = await obtenirApercuMesh();
+      if (seq !== meshLoadSeqRef.current) return;
+      const stats = await controleur.load(buffer, file.name);
+      if (seq !== meshLoadSeqRef.current) return;
+
+      meshBytesRef.current = buffer;
+      setMeshFileName(file.name);
+      setMeshStats(stats);
+      notify(
+        `Modèle 3D chargé : ${stats.meshes} mesh(es), ${stats.triangles} triangles, ${stats.materials} matériau(x).`,
+        'success',
+      );
+    } catch (err: any) {
+      meshBytesRef.current = null;
+      setMeshStats(null);
+      setMeshFileName('');
+      setMeshError(
+        `Aperçu 3D impossible : ${err?.message ?? String(err)}`,
+      );
+      notify(`Aperçu 3D impossible : ${err?.message ?? String(err)}`, 'error');
+    } finally {
+      if (seq === meshLoadSeqRef.current) setMeshBusy(false);
+    }
+  };
+
+  /** Enregistre le modèle affiché dans `<projet>/assets/meshes/` (Tauri seul). */
+  const enregistrerMesh = async () => {
+    if (!tauriDisponible) {
+      setMeshError(
+        "Mode navigateur : l’aperçu fonctionne, mais l’enregistrement dans le projet nécessite la fenêtre native du Studio Tauri.",
+      );
+      return;
+    }
+    const bytes = meshBytesRef.current;
+    if (!bytes || !meshFileName) {
+      setMeshError('Chargez d’abord un modèle 3D (.glb ou .gltf) dans l’aperçu.');
+      return;
+    }
+    setMeshSaving(true);
+    setMeshError('');
+    try {
+      const id = await importMeshAsset(meshFileName, bufferVersBase64(bytes), meshLicense);
+      if (!id) throw new Error('réponse vide du moteur (projet non écrit ?)');
+      setMeshSavedId(id);
+      notify(
+        `Modèle 3D enregistré : identifiant « ${id} » (assets/meshes/${id}.${meshStats?.format ?? 'glb'}).`,
+        'success',
+      );
+    } catch (err: any) {
+      setMeshError(`Enregistrement impossible : ${err?.message ?? String(err)}`);
+    } finally {
+      setMeshSaving(false);
+    }
+  };
+
+  /** Toute sortie du Hub libère le contexte WebGPU de l'aperçu 3D. */
+  const fermerHub = () => {
+    reinitialiserApercuMesh();
+    onClose();
+  };
+
   const goHome = () => {
+    reinitialiserApercuMesh();
     setView('home');
     setError('');
   };
@@ -500,7 +687,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={fermerHub}
             className="flex items-center justify-center w-8 h-8 shrink-0 text-[#94a3b8] hover:text-[#f8fafc] hover:bg-[#1e1338] rounded-lg transition"
             aria-label="Fermer"
           >
@@ -659,6 +846,146 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                       Mode navigateur : l'import Tiled nécessite la fenêtre native du Studio.
                     </p>
                   )}
+
+                  {/* ============ Import d'un modèle 3D (C2) ============ */}
+                  <div className="p-4 bg-[#150d27] border border-[#2d1b4e] rounded-lg space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <h4 className="flex items-center gap-2 text-xs font-bold text-[#f8fafc]">
+                          <Box size={14} className="text-[#a855f7]" aria-hidden="true" />
+                          Importer un modèle 3D
+                        </h4>
+                        <p className="mt-1 text-[11px] leading-relaxed text-[#94a3b8]">
+                          Fichiers <span className="font-mono text-[#f8fafc]">.glb</span> ou{' '}
+                          <span className="font-mono text-[#f8fafc]">.gltf</span> autoporteur
+                          (glTF 2.0). L’aperçu s’affiche ici, sans toucher à la scène du jeu.
+                        </p>
+                      </div>
+                      <label className="flex items-center justify-center gap-1.5 min-h-[40px] px-3 rounded border border-[#a855f7] bg-[#2d1b4e] text-[11px] font-semibold text-[#f8fafc] cursor-pointer transition hover:bg-[#3b0764]">
+                        <input
+                          data-testid="mesh-file-input"
+                          type="file"
+                          accept=".glb,.gltf,model/gltf-binary,model/gltf+json"
+                          className="hidden"
+                          aria-label="Importer un modèle 3D (.glb, .gltf)"
+                          onChange={handleMeshFile}
+                        />
+                        {meshBusy
+                          ? <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                          : <Upload size={13} aria-hidden="true" />}
+                        {meshBusy ? 'Chargement…' : 'Importer un modèle 3D (.glb, .gltf)'}
+                      </label>
+                    </div>
+
+                    {/* Zone d'aperçu : le canvas three.js est ajouté ici à la demande. */}
+                    <div
+                      data-testid="mesh-preview"
+                      className="relative h-56 overflow-hidden rounded border border-[#2d1b4e] bg-[#0b0d14]"
+                    >
+                      <div ref={meshPreviewHostRef} className="absolute inset-0" />
+                      {!meshPreviewActive && (
+                        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 text-center">
+                          <Box size={28} className="text-[#2d1b4e]" aria-hidden="true" />
+                          <p className="text-[11px] font-medium text-[#94a3b8]">
+                            Aucun modèle chargé
+                          </p>
+                          <p className="text-[10px] text-[#64748b]">
+                            Glisser-déposer non requis : utilisez le bouton ci-dessus.
+                          </p>
+                        </div>
+                      )}
+                      {meshPreviewActive && (
+                        <span className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 font-mono text-[10px] text-[#94a3b8]">
+                          glisser pour orbiter · molette pour zoomer
+                        </span>
+                      )}
+                    </div>
+
+                    {meshError && (
+                      <p
+                        role="alert"
+                        data-testid="mesh-import-error"
+                        className="flex items-start gap-1.5 rounded border border-[#f43f5e] bg-[#0d0819] px-2.5 py-2 text-[11px] text-[#fecaca]"
+                      >
+                        <AlertTriangle size={13} className="mt-0.5 shrink-0 text-[#f43f5e]" aria-hidden="true" />
+                        <span className="flex-1">{meshError}</span>
+                      </p>
+                    )}
+
+                    {meshStats && (
+                      <div
+                        data-testid="mesh-preview-summary"
+                        data-meshes={meshStats.meshes}
+                        data-triangles={meshStats.triangles}
+                        data-materials={meshStats.materials}
+                        data-animations={meshStats.animations}
+                        data-format={meshStats.format}
+                        className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+                      >
+                        <MeshStat label="Meshes" value={String(meshStats.meshes)} testId="mesh-summary-meshes" />
+                        <MeshStat label="Triangles" value={String(meshStats.triangles)} testId="mesh-summary-triangles" />
+                        <MeshStat label="Matériaux" value={String(meshStats.materials)} testId="mesh-summary-materials" />
+                        <MeshStat label="Animations" value={String(meshStats.animations)} testId="mesh-summary-animations" />
+                        <p className="col-span-2 truncate text-[10px] text-[#94a3b8] sm:col-span-4" title={meshFileName}>
+                          <span className="font-medium text-[#f8fafc]">{meshFileName}</span>
+                          {' · '}{formatBytes(meshStats.sizeBytes)}
+                          {' · '}{meshStats.nodes} nœud(s)
+                          {' · '}{meshStats.textures} texture(s)
+                          {' · '}boîte {meshStats.bounds.x} × {meshStats.bounds.y} × {meshStats.bounds.z}
+                          {meshStats.animations > 0 && ` · clips : ${meshStats.animationNames.join(', ')}`}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                      <label className="flex-1 text-[11px] text-[#94a3b8]">
+                        Licence (optionnelle)
+                        <input
+                          data-testid="mesh-license"
+                          value={meshLicense}
+                          onChange={e => setMeshLicense(e.target.value)}
+                          placeholder="CC0-1.0, CC-BY-4.0, licence maison…"
+                          className="mt-1 w-full px-3 py-2 bg-[#0d0819] border border-[#2d1b4e] rounded text-xs text-[#f8fafc] focus:border-[#a855f7]"
+                        />
+                      </label>
+                      <button
+                        data-testid="mesh-save"
+                        type="button"
+                        onClick={() => void enregistrerMesh()}
+                        disabled={!tauriDisponible || !meshStats || meshBusy || meshSaving}
+                        className="flex min-h-[40px] items-center justify-center gap-1.5 rounded border border-[#a855f7] bg-[#2d1b4e] px-3 text-xs font-bold text-[#f8fafc] transition hover:bg-[#3b0764] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {meshSaving
+                          ? <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                          : <Save size={14} aria-hidden="true" />}
+                        {meshSaving ? 'Enregistrement…' : 'Enregistrer dans le projet'}
+                      </button>
+                    </div>
+
+                    {!tauriDisponible && (
+                      <p data-testid="mesh-save-disabled" className="text-[10px] leading-relaxed text-[#f59e0b]">
+                        Mode navigateur : l’aperçu 3D fonctionne, mais l’enregistrement dans le
+                        projet est désactivé (la fenêtre native Tauri est requise pour écrire
+                        assets/meshes et le manifeste).
+                      </p>
+                    )}
+
+                    {meshSavedId && (
+                      <p data-testid="mesh-saved" className="text-[11px] text-[#34d399]">
+                        Enregistré dans le projet : <span className="font-mono">{meshSavedId}</span>
+                        {' · '}provenance <span className="font-mono">Imported {'{'} tool: &quot;host&quot; {'}'}</span>
+                        {' · '}licence <span className="font-mono">{meshLicense.trim() || 'non déclarée'}</span>
+                      </p>
+                    )}
+
+                    <p data-testid="mesh-placement-limite" className="text-[10px] leading-relaxed text-[#64748b]">
+                      Placement en scène non proposé à cette étape : le <span className="font-mono">RenderPacket</span>{' '}
+                      ne transporte que des identifiants de primitives (cube, sphère, plan, capsule). Une entité
+                      peut déjà porter <span className="font-mono">MeshRef::Asset</span>, mais le renderer trois.js
+                      ne résout pas encore les maillages glTF : la placer maintenant afficherait un cube de repli.
+                      Le bouton « Placer dans la scène » arrivera avec le résolveur glTF du renderer.
+                    </p>
+                  </div>
 
                   {/* Formulaire technique — valeurs par défaut saines, jamais montrées au débutant. */}
                   <div className="p-4 bg-[#150d27] border border-[#2d1b4e] rounded-lg space-y-3">
@@ -1035,7 +1362,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
               : 'Mode web (lecture seule) — Échap pour fermer'}
           </span>
           <button
-            onClick={onClose}
+            onClick={fermerHub}
             className="min-h-[36px] px-4 py-2 bg-[#1e1338] hover:bg-[#2d1b4e] text-[#f8fafc] rounded-lg text-xs font-medium transition"
           >
             Fermer [Échap]
@@ -1068,6 +1395,15 @@ function IconButton({
     >
       {children}
     </button>
+  );
+}
+
+function MeshStat({ label, value, testId }: { label: string; value: string; testId: string }) {
+  return (
+    <div className="rounded border border-[#2d1b4e] bg-[#0d0819] px-2 py-1.5">
+      <div className="text-[10px] uppercase tracking-wide text-[#94a3b8]">{label}</div>
+      <div data-testid={testId} className="font-mono text-sm font-bold text-[#f8fafc]">{value}</div>
+    </div>
   );
 }
 

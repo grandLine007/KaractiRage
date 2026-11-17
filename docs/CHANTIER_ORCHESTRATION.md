@@ -254,7 +254,7 @@ comme une demande de confort.
 **Règle que j'applique désormais** : aucun lot n'est déclaré terminé sans une recette
 humaine de 5 minutes ([`RECETTE_DEMARRAGE.md`](RECETTE_DEMARRAGE.md)).
 
-## 3septiesdecies. Vague 20 — en cours (import GLB et aperçu 3D)
+## 3septiesdecies. Vague 20 — terminée (import GLB et aperçu 3D)
 
 | Agent | Tâche | Critère de sortie |
 |---|---|---|
