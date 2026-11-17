@@ -77,6 +77,15 @@ jobs:
       - name: cargo test
         run: cargo test -p engine-core -p kvl-core -p kvl-runtime -p kvl-cli
 
+      - name: Les tests ne salissent pas les assets versionnés
+        run: |
+          if ! git diff --quiet -- assets/; then
+            echo "❌ des fichiers de assets/ ont été modifiés (auto-save ou test) :" >&2
+            git diff --stat -- assets/ >&2
+            exit 1
+          fi
+          echo "✅ assets/ intact après les tests."
+
       - name: Non-dérive du dictionnaire IA (dist/ai)
         run: bash scripts/ci_ai_dictionary.sh
 

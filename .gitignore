@@ -56,3 +56,6 @@ Screenshot*.png
 # Artefacts générés par l'export (ne jamais commiter)
 /crates/engine-core/export/
 /export/
+
+# Générés par le parcours guidé du Studio (auto-save) — jamais commités.
+/assets/scripts/guided_*
