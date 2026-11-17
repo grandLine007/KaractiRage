@@ -241,6 +241,19 @@ rechargement sous la seconde.
 v0.4.2/v0.4.3 valent mieux que d'ouvrir P3 : un projet Tiled déplacé cassait son rendu
 natif, et une musique de fond n'était pas déclenchable depuis KVL.
 
+## 3vicesies. Vague 19 — en cours (démarrage : 3 gestes, chrono intégré)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| agent-13 | Refonte de l'accueil du Hub + parcours « Créer un jeu » en 2 écrans + chrono AC1 dans l'app | un débutant crée un jeu en 3 gestes, le temps s'affiche, Tiled passe dans « Avancé » |
+
+**Origine** : retour réel du propriétaire — « je ne sais pas comment créer un jeu ».
+L'audit a inscrit ce point comme un critère de B **non satisfait** (§3.1 du contrat), pas
+comme une demande de confort.
+
+**Règle que j'applique désormais** : aucun lot n'est déclaré terminé sans une recette
+humaine de 5 minutes ([`RECETTE_DEMARRAGE.md`](RECETTE_DEMARRAGE.md)).
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |

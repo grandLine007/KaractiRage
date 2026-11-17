@@ -1,0 +1,18 @@
+{
+  "id": "root_logic",
+  "name": "Logique Racine",
+  "description": "Graph KVL initial",
+  "version": 1,
+  "variables": {
+    "score": {
+      "name": "score",
+      "data_type": "Int",
+      "initial_value": {
+        "type": "Int",
+        "value": 0
+      }
+    }
+  },
+  "nodes": {},
+  "connections": []
+}
