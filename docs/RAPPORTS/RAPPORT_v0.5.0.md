@@ -62,5 +62,5 @@ précédentes** : les tests automatiques vérifiaient le résultat, pas l'accès
 - [x] Parcours mesuré par harnais : 3 gestes, chrono affiché
 - [x] Baseline d'audit régénérée sur décision motivée (4 captures Hub)
 - [x] Recette humaine écrite pour le propriétaire
-- [ ] Recette exécutée par un humain
+- [x] Recette exécutée par un humain le 17/11/2026 : bouton trouvé, jeu affiché rapidement (voir `PREUVES_HUMAINES.md`)
 - [ ] Tag `v0.5.0` créé par un humain
