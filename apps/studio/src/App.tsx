@@ -11,6 +11,7 @@ import { ToastCenter, type Toast } from './components/ToastCenter';
 import { AiAssistantModal } from './components/AiAssistantModal';
 import { InlineAiBar } from './components/InlineAiBar';
 import { ProjectHubModal } from './components/ProjectHubModal';
+import { FirstRunHint } from './components/FirstRunHint';
 import { ArchetypesModal } from './components/ArchetypesModal';
 import { RecipeWizardModal } from './components/RecipeWizardModal';
 import { KvlGraphEditor } from './components/KvlGraphEditor';
@@ -57,6 +58,9 @@ import { prewarm3D } from './render3d/prewarm';
  */
 const HOT_RELOAD_POLL_MS = 800;
 
+/** Télémétrie du viewport (une trame sur dix, `GameViewport`). */
+type ViewportTelemetry = { fps: number; cpuUs: number; score: number; status: string };
+
 export function App() {
   const [currentMode, setCurrentMode] = useState<StudioMode>(() => {
     const saved = localStorage.getItem('karactirage.lastMode');
@@ -65,6 +69,16 @@ export function App() {
   // Le Hub des Projets est l'écran d'accueil : il s'affiche au lancement (le moteur
   // boote en arrière-plan derrière l'overlay, la scène n'est pas lancée d'emblée).
   const [isHubOpen, setIsHubOpen] = useState(true);
+  // Chrono AC1 « Hub affiché → état jouable » : mesuré dans le produit, pas par
+  // le harnais. `firstGameElapsedMs` est figé au premier rendu jouable.
+  const [firstGameElapsedMs, setFirstGameElapsedMs] = useState<number | null>(null);
+  // Aide au premier lancement : un seul affichage par session (ref, pas de storage).
+  const [showFirstRunHint, setShowFirstRunHint] = useState(false);
+  const hubShownAtRef = useRef<number | null>(null);
+  const creationPendingRef = useRef(false);
+  const awaitingPlayableRef = useRef(false);
+  const firstGameFallbackRef = useRef<number | null>(null);
+  const firstHintShownRef = useRef(false);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [isArchetypesOpen, setIsArchetypesOpen] = useState(false);
@@ -107,6 +121,19 @@ export function App() {
     editorStateRef.current = editorState;
   }, [editorState]);
 
+  // Le Hub est affiché au montage : point de départ du chrono de la première
+  // création. Une réouverture (H) remet le chrono à zéro, sans effet de bord.
+  useEffect(() => {
+    if (!isHubOpen) return;
+    hubShownAtRef.current = performance.now();
+    creationPendingRef.current = false;
+    awaitingPlayableRef.current = false;
+    if (firstGameFallbackRef.current !== null) {
+      window.clearTimeout(firstGameFallbackRef.current);
+      firstGameFallbackRef.current = null;
+    }
+  }, [isHubOpen]);
+
   const toastIdRef = useRef(0);
   // Empêche deux contrôles de rechargement simultanés (IPC lente ou moteur
   // occupé) : le tick suivant est simplement ignoré, pas empilé.
@@ -123,6 +150,46 @@ export function App() {
   const dismissToast = useCallback((id: number) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
+
+  /**
+   * Fin du chrono de la première création : figé au premier rendu jouable.
+   * Affiche la valeur dans le pied de page et, une seule fois par session,
+   * l'aide aux commandes en mode Jouer.
+   */
+  const stopFirstGameChrono = useCallback(() => {
+    const startedAt = hubShownAtRef.current;
+    hubShownAtRef.current = null;
+    if (firstGameFallbackRef.current !== null) {
+      window.clearTimeout(firstGameFallbackRef.current);
+      firstGameFallbackRef.current = null;
+    }
+    if (startedAt === null) return;
+    setFirstGameElapsedMs(Math.max(0, Math.round(performance.now() - startedAt)));
+    if (!firstHintShownRef.current) {
+      firstHintShownRef.current = true;
+      setShowFirstRunHint(true);
+    }
+  }, []);
+
+  /** Clic « Créer et jouer » : le chrono ne démarre qu'à une création réelle. */
+  const handleCreateStart = useCallback(() => {
+    creationPendingRef.current = true;
+  }, []);
+
+  const dismissFirstRunHint = useCallback(() => setShowFirstRunHint(false), []);
+
+  /**
+   * La télémétrie ne termine le chrono qu'une fois le projet ouvert **et** le
+   * mode Jouer appliqué : un tick déjà en vol pendant l'IPC faussait la mesure.
+   */
+  const handleTelemetry = useCallback((telemetry: ViewportTelemetry) => {
+    setMetrics(telemetry);
+    if (awaitingPlayableRef.current) {
+      awaitingPlayableRef.current = false;
+      creationPendingRef.current = false;
+      stopFirstGameChrono();
+    }
+  }, [stopFirstGameChrono]);
 
   // Panneau Sauvegardes : fermeture + retour du focus au bouton d'ouverture (Échap).
   // On ne retire du sommet de pile que si c'est bien cette couche qui y était :
@@ -676,6 +743,20 @@ export function App() {
       ...prev,
       status: `Projet '${entry.title}' ouvert • Mode ${mode === 'edit' ? 'Studio' : 'Jeu'} 60 FPS`
     }));
+
+    if (mode === 'play' && creationPendingRef.current) {
+      // « Jouable » = première trame télémétrée après l'ouverture (le viewport
+      // émet toutes les 10 frames). Repli à 3 s si le moteur ne répond pas, pour
+      // que la mesure affichée ne reste jamais bloquée.
+      awaitingPlayableRef.current = true;
+      firstGameFallbackRef.current = window.setTimeout(() => {
+        firstGameFallbackRef.current = null;
+        if (!awaitingPlayableRef.current) return;
+        awaitingPlayableRef.current = false;
+        creationPendingRef.current = false;
+        stopFirstGameChrono();
+      }, 3000);
+    }
   };
 
   // Application du Payload généré par l'IA dans la scène native
@@ -805,7 +886,7 @@ export function App() {
                 />
               )}
               <GameViewport
-                onTelemetryUpdate={setMetrics}
+                onTelemetryUpdate={handleTelemetry}
                 onSceneChanged={refresh}
                 onSpawnAtScreen={handleSpawnAtScreen}
                 isEditMode={currentMode === 'edit'}
@@ -851,6 +932,17 @@ export function App() {
         <div className="flex items-center gap-2 min-w-0">
           <span className="w-2 h-2 rounded-full bg-[#34d399] animate-pulse shrink-0" />
           <span className="font-medium text-[#cbd5e1] truncate">{metrics.status}</span>
+          {/* Mesure AC1 dans le produit : Hub affiché → premier rendu jouable. */}
+          {firstGameElapsedMs !== null && !isHubOpen && (
+            <span
+              data-testid="first-game-elapsed"
+              data-elapsed-ms={firstGameElapsedMs}
+              title="Mesuré dans l'application : de l'affichage du Hub au premier rendu jouable."
+              className="shrink-0 px-2 py-0.5 rounded-full border border-[#2d1b4e] bg-[#150d27] text-[11px] font-medium text-[#94a3b8] tabular-nums"
+            >
+              Prêt en {Math.max(1, Math.round(firstGameElapsedMs / 1000))} s
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <button
@@ -950,6 +1042,9 @@ export function App() {
 
       {/* 5. Modales Flottantes */}
       <ProjectHubModal
+        // Remonté à chaque ouverture : le Hub revient toujours sur l'accueil
+        // (CTA « Créer un jeu »), jamais sur un écran intermédiaire abandonné.
+        key={isHubOpen ? 'hub-open' : 'hub-closed'}
         isOpen={isHubOpen}
         onClose={() => setIsHubOpen(false)}
         onOpenArchetypes={() => {
@@ -966,6 +1061,7 @@ export function App() {
         }}
         onProjectOpened={handleProjectOpened}
         onNotify={pushToast}
+        onCreateStart={handleCreateStart}
       />
 
       <ArchetypesModal
@@ -995,6 +1091,11 @@ export function App() {
 
       {/* 6. Notifications non bloquantes */}
       <ToastCenter toasts={toasts} onDismiss={dismissToast} />
+
+      {/* 7. Aide au premier lancement — surcouche non bloquante, une fois par session. */}
+      {currentMode === 'play' && !isHubOpen && (
+        <FirstRunHint show={showFirstRunHint} onDismiss={dismissFirstRunHint} />
+      )}
     </div>
   );
 }
