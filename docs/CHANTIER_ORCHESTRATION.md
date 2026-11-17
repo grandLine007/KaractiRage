@@ -254,6 +254,18 @@ comme une demande de confort.
 **Règle que j'applique désormais** : aucun lot n'est déclaré terminé sans une recette
 humaine de 5 minutes ([`RECETTE_DEMARRAGE.md`](RECETTE_DEMARRAGE.md)).
 
+## 3septiesdecies. Vague 20 — en cours (import GLB et aperçu 3D)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| agent-14 | Importer un `.glb`/`.gltf` depuis « Avancé », l'afficher dans la prévisualisation three.js, enregistrer sa provenance | un GLB réel s'ouvre, le résumé (meshes/triangles/anims) s'affiche, l'asset entre au manifeste |
+
+**Pourquoi** : porte d'entrée de la 3D déclarative (contrat §2.1, §8.3). Le runtime exporté
+reste 2D ; cette vague branche l'import et la prévisualisation, pas encore le rendu en jeu.
+
+**Validé par un humain (17/11)** : le parcours « Créer un jeu » est trouvé et rapide
+([`PREUVES_HUMAINES.md`](PREUVES_HUMAINES.md)).
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
