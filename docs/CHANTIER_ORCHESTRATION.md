@@ -266,6 +266,17 @@ reste 2D ; cette vague branche l'import et la prévisualisation, pas encore le r
 **Validé par un humain (17/11)** : le parcours « Créer un jeu » est trouvé et rapide
 ([`PREUVES_HUMAINES.md`](PREUVES_HUMAINES.md)).
 
+## 3duodevicesies. Vague 21 — en cours (le GLB doit aller quelque part)
+
+| Agent | Tâche | Critère de sortie |
+|---|---|---|
+| agent-15 | Placer le GLB importé dans la scène + licence en liste | après import, « Placer dans la scène » crée une entité rendue dans le viewport 3D ; la licence se choisit parmi des identifiants connus |
+
+**Retour réel du propriétaire** : « l'aperçu s'affiche mais quand on continue, il n'y a
+rien ». L'aperçu seul ne suffit pas : un asset importé doit entrer dans le projet et se
+voir. Le moteur avait déjà `MeshRef::Asset` et un encodage `Gltf` dans le paquet de
+rendu ; il manquait le manifeste, la commande d'octets et le chargeur côté Studio.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |
