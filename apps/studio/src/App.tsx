@@ -47,6 +47,7 @@ import {
   getExportPreflight,
   hotReloadCheck,
   type StudioEntitySummary,
+  setEntityTransform3d,
 } from './services/engineBridge';
 import { Check, X, HelpCircle, Volume2, VolumeX, Save } from 'lucide-react';
 import type { ProjectEntry } from './services/projectBridge';
@@ -650,6 +651,24 @@ export function App() {
     void selectEntity(id).then(() => refresh());
   }, [refresh]);
 
+  /** Voie utilisateur de la transformée 3D (l'IA passe par SetTransform3D, même moteur). */
+  const handleUpdateTransform3d = useCallback(
+    async (
+      id: number,
+      position: [number, number, number],
+      rotation: [number, number, number],
+      scale: [number, number, number],
+    ) => {
+      try {
+        await setEntityTransform3d(id, position, rotation, scale);
+        refresh();
+      } catch (err: any) {
+        pushToast(`Transformée 3D refusée : ${err?.message ?? String(err)}`, 'error');
+      }
+    },
+    [pushToast, refresh],
+  );
+
   const handleUpdateTransform = useCallback((id: number, x: number, y: number, w: number, h: number) => {
     // Une édition manuelle désarme l'annulation IA : Ctrl+Z ne doit plus viser l'IA.
     setLastAiTransaction(null);
@@ -944,6 +963,7 @@ export function App() {
           <EntityInspector
             selectedEntity={selectedEntity}
             onUpdateTransform={handleUpdateTransform}
+            onUpdateTransform3d={(id, p, r, sc) => void handleUpdateTransform3d(id, p, r, sc)}
             onDuplicate={handleDuplicate}
             onDelete={handleDelete}
             onAiEdit={openAiEdit}

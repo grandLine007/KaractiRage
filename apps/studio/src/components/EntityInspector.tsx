@@ -6,6 +6,13 @@ import { AiSparkle } from './AiSparkle';
 interface EntityInspectorProps {
   selectedEntity: StudioEntitySummary | null;
   onUpdateTransform: (id: number, x: number, y: number, w: number, h: number) => void;
+  /** Voie utilisateur de la transformée 3D — même fonction moteur que l'op IA SetTransform3D. */
+  onUpdateTransform3d?: (
+    id: number,
+    position: [number, number, number],
+    rotation_euler_deg: [number, number, number],
+    scale: [number, number, number],
+  ) => void;
   onDuplicate: (id: number) => void;
   onDelete: (id: number) => void;
   /** Ouvre la barre d'édition IA avec le champ d'origine en indice. */
@@ -35,10 +42,14 @@ const TAG_COLORS: Record<string, string> = {
 export const EntityInspector: React.FC<EntityInspectorProps> = ({
   selectedEntity,
   onUpdateTransform,
+  onUpdateTransform3d,
   onDuplicate,
   onDelete,
   onAiEdit,
 }) => {
+  const [pos3d, setPos3d] = useState<[number, number, number]>([0, 0, 0]);
+  const [rot3d, setRot3d] = useState<[number, number, number]>([0, 0, 0]);
+  const [scale3d, setScale3d] = useState<[number, number, number]>([1, 1, 1]);
   const [x, setX] = useState(0);
   const [y, setY] = useState(0);
   const [w, setW] = useState(0);
@@ -50,6 +61,12 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
       setY(selectedEntity.y);
       setW(selectedEntity.w);
       setH(selectedEntity.h);
+    }
+    const t3 = selectedEntity?.transform3d;
+    if (t3) {
+      setPos3d([...t3.position] as [number, number, number]);
+      setRot3d([...t3.rotation_euler_deg] as [number, number, number]);
+      setScale3d([...t3.scale] as [number, number, number]);
     }
   }, [selectedEntity?.id]);
 
@@ -115,6 +132,65 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
             </span>
             <span className="text-[9px] text-[#94a3b8] font-normal normal-case">Entrée pour valider</span>
           </div>
+          {selectedEntity.transform3d ? (
+            <div data-testid="transform-3d" className="grid grid-cols-3 gap-2">
+              {(['X', 'Y', 'Z'] as const).map((axe, i) => (
+                <label key={`p${axe}`} className="text-[10px] text-[#94a3b8]">
+                  {axe}
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={Number(pos3d[i].toFixed(2))}
+                    onChange={e => {
+                      const v = [...pos3d] as [number, number, number];
+                      v[i] = parseFloat(e.target.value) || 0;
+                      setPos3d(v);
+                    }}
+                    onBlur={() => onUpdateTransform3d?.(selectedEntity.id, pos3d, rot3d, scale3d)}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    className="mt-0.5 w-full text-xs font-mono py-1 px-1.5 bg-[#07040d] border border-[#2d1b4e] rounded focus:border-[#a855f7]"
+                  />
+                </label>
+              ))}
+              {(['RX', 'RY', 'RZ'] as const).map((axe, i) => (
+                <label key={`r${axe}`} className="text-[10px] text-[#94a3b8]">
+                  {axe}°
+                  <input
+                    type="number"
+                    step="1"
+                    value={Number(rot3d[i].toFixed(1))}
+                    onChange={e => {
+                      const v = [...rot3d] as [number, number, number];
+                      v[i] = parseFloat(e.target.value) || 0;
+                      setRot3d(v);
+                    }}
+                    onBlur={() => onUpdateTransform3d?.(selectedEntity.id, pos3d, rot3d, scale3d)}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    className="mt-0.5 w-full text-xs font-mono py-1 px-1.5 bg-[#07040d] border border-[#2d1b4e] rounded focus:border-[#a855f7]"
+                  />
+                </label>
+              ))}
+              {(['SX', 'SY', 'SZ'] as const).map((axe, i) => (
+                <label key={`s${axe}`} className="text-[10px] text-[#94a3b8]">
+                  {axe}
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0.01"
+                    value={Number(scale3d[i].toFixed(2))}
+                    onChange={e => {
+                      const v = [...scale3d] as [number, number, number];
+                      v[i] = parseFloat(e.target.value) || 1;
+                      setScale3d(v);
+                    }}
+                    onBlur={() => onUpdateTransform3d?.(selectedEntity.id, pos3d, rot3d, scale3d)}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    className="mt-0.5 w-full text-xs font-mono py-1 px-1.5 bg-[#07040d] border border-[#2d1b4e] rounded focus:border-[#a855f7]"
+                  />
+                </label>
+              ))}
+            </div>
+          ) : (
           <div className="grid grid-cols-2 gap-2">
             {[
               { id: 'x', label: 'X', value: x, set: setX, aiLabel: 'la position X' },
@@ -147,6 +223,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
               </div>
             ))}
           </div>
+          )}
         </div>
 
         {/* Propriétés (lecture seule) */}

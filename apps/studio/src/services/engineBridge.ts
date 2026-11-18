@@ -179,6 +179,24 @@ export async function getProjectDimension(): Promise<string> {
   }
 }
 
+/**
+ * Applique une transformée 3D. Même chemin moteur que l'opération IA
+ * `SetTransform3D` : la validation (échelle > 0, valeurs finies) est identique.
+ */
+export async function setEntityTransform3d(
+  id: number,
+  position: [number, number, number],
+  rotationEulerDeg: [number, number, number],
+  scale: [number, number, number],
+): Promise<void> {
+  await invoke('engine_set_entity_transform3d', {
+    id,
+    position,
+    rotationEulerDeg,
+    scale,
+  });
+}
+
 export async function placeMeshAsset(id: string, scale?: number): Promise<string> {
   return await invoke('engine_place_mesh_asset', {
     id,
@@ -266,6 +284,12 @@ export interface StudioEntitySummary {
   has_vision: boolean;
   vision_range?: number;
   is_player_controlled: boolean;
+  /** Transformée 3D de l'entité (absente pour une entité purement 2D). */
+  transform3d?: {
+    position: [number, number, number];
+    rotation_euler_deg: [number, number, number];
+    scale: [number, number, number];
+  } | null;
 }
 
 export interface BrushTileInfo {

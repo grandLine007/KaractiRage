@@ -2174,6 +2174,14 @@ impl GameState {
             has_vision: bool,
             vision_range: Option<f32>,
             is_player_controlled: bool,
+            transform3d: Option<Transform3DSummary>,
+        }
+
+        #[derive(serde::Serialize)]
+        struct Transform3DSummary {
+            position: [f32; 3],
+            rotation_euler_deg: [f32; 3],
+            scale: [f32; 3],
         }
 
         let summaries: Vec<EntitySummary> = self.entities.iter().map(|e| {
@@ -2198,6 +2206,14 @@ impl GameState {
                 has_vision: e.vision.is_some(),
                 vision_range: e.vision.as_ref().map(|v| v.range),
                 is_player_controlled: e.movement.as_ref().map_or(false, |m| m.is_player_controlled),
+                transform3d: e.transform3d.as_ref().map(|t| {
+                    let (rx, ry, rz) = t.rotation.to_euler(glam::EulerRot::XYZ);
+                    Transform3DSummary {
+                        position: t.position.to_array(),
+                        rotation_euler_deg: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
+                        scale: t.scale.to_array(),
+                    }
+                }),
             }
         }).collect();
 

@@ -3082,6 +3082,45 @@ mod tests {
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
     }
 
+    /// La transformée 3D de l'interface passe par la même validation que l'op IA.
+    #[test]
+    fn test_set_entity_transform3d_valide_et_refuse() {
+        use crate::assets_manifest::{AssetEntry, AssetKind, AssetsManifest, Provenance, ProvenanceSource};
+
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let mut manifeste = AssetsManifest::default();
+        manifeste
+            .register(AssetEntry {
+                id: "bloc".into(),
+                kind: AssetKind::Mesh,
+                path: "assets/meshes/bloc.glb".into(),
+                bytes: 64,
+                hash: "abcdef0123456789".into(),
+                provenance: Provenance {
+                    source: ProvenanceSource::Imported { tool: "host".into() },
+                    license: Some("CC0-1.0".into()),
+                    created_at: "2026-11-18".into(),
+                },
+                dimensions: None,
+                duration_ms: None,
+            })
+            .unwrap();
+        engine.game.assets_manifest = Some(manifeste);
+        let id = engine.place_mesh_asset("bloc", Some(1.0)).unwrap();
+
+        engine
+            .set_entity_transform3d(id, [1.0, 2.0, 3.0], [0.0, 90.0, 0.0], [2.0, 2.0, 2.0])
+            .expect("transformée acceptée");
+        let t = engine.game.entities.iter().find(|e| e.id == id).unwrap().transform3d.as_ref().unwrap();
+        assert_eq!(t.position, glam::Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(t.scale, glam::Vec3::splat(2.0));
+        assert!(t.rotation.is_normalized());
+
+        assert!(engine.set_entity_transform3d(id, [0.0; 3], [0.0; 3], [0.0, 1.0, 1.0]).is_err(), "échelle nulle refusée");
+        assert!(engine.set_entity_transform3d(id, [f32::NAN, 0.0, 0.0], [0.0; 3], [1.0; 3]).is_err(), "NaN refusé");
+        assert!(engine.set_entity_transform3d(999_999, [0.0; 3], [0.0; 3], [1.0; 3]).is_err(), "entité inconnue refusée");
+    }
+
     /// Un GLB déclaré dans le manifeste du projet doit être **placé** dans la
     /// scène et **encodé** dans le paquet avec l'`asset_id` de son identifiant
     /// (et non un cube de repli).
