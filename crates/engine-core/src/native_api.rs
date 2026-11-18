@@ -11,6 +11,7 @@ use crate::entity::{Entity, MaterialRef, MeshRef, Renderable3D, Transform2D, Tra
 use crate::game::GameState;
 use crate::hot_reload::Veilleur;
 use crate::input::InputState;
+use crate::mesh_assets::{MeshAssetKind, MeshManifest};
 use crate::renderer::Canvas;
 use crate::save::SaveManager;
 use glam::Vec3;
@@ -118,8 +119,39 @@ fn locate_scene() -> String {
     "assets/scenes/level_01.scene.json".to_string()
 }
 
-fn web_key_to_keycode(key: u32) -> Option<KeyCode> {
-    match key {
+/// Nom lisible d'un asset importé : `assets/meshes/robot_lourd.glb` → « Robot lourd ».
+///
+/// Le nom du fichier reste la seule source disponible sans binaire : il évite un
+/// « 3d_42 » incompréhensible dans la hiérarchie du Studio.
+fn nom_lisible_mesh(asset_id: &str, chemin: &str) -> String {
+    let base = Path::new(chemin)
+        .file_stem()
+        .and_then(|valeur| valeur.to_str())
+        .unwrap_or(asset_id);
+    let mut nom = String::with_capacity(base.len());
+    // Phrase case : seule la première lettre est forcée en majuscule. Les mots
+    // suivants gardent la casse du fichier (« robot_lourd » → « Robot lourd »,
+    // pas « Robot Lourd »).
+    let mut premier = true;
+    for caractere in base.chars() {
+        if caractere == '_' || caractere == '-' {
+            nom.push(' ');
+        } else if premier {
+            nom.extend(caractere.to_uppercase());
+            premier = false;
+        } else {
+            nom.push(caractere);
+        }
+    }
+    let nom = nom.trim().to_string();
+    if nom.is_empty() {
+        asset_id.to_string()
+    } else {
+        nom
+    }
+}
+
+fn web_key_to_keycode(key: u32) -> Option<KeyCode> {    match key {
         0 => Some(KeyCode::ArrowLeft),
         1 => Some(KeyCode::ArrowRight),
         2 => Some(KeyCode::ArrowUp),
@@ -344,6 +376,87 @@ impl NativeEngine {
     /// doivent alors refuser explicitement plutôt que choisir une racine au hasard.
     pub fn project_file(&self) -> Option<&std::path::Path> {
         self.projet_ouvert.as_deref()
+    }
+
+    /// Manifeste de meshes **effectif** : GLB/glTF importés du projet + assets
+    /// procéduraux intégrés (voir [`MeshManifest::from_project`]).
+    ///
+    /// C'est la seule source utilisée par le `RenderPacket`, par la commande
+    /// `engine_mesh_asset_bytes` et par la palette de spawn : un GLB importé
+    /// apparaît donc réellement dans la scène, et pas seulement dans l'aperçu
+    /// du Hub.
+    pub fn mesh_manifest(&self) -> MeshManifest {
+        match &self.game.assets_manifest {
+            Some(manifeste) => MeshManifest::from_project(manifeste),
+            None => MeshManifest::builtin(),
+        }
+    }
+
+    /// Place un maillage importé au centre de la caméra et le sélectionne.
+    ///
+    /// L'entité créée porte `MeshRef::Asset { id }` (résolu par le manifeste du
+    /// projet) et un nom lisible déduit du fichier (`robot.glb` → « Robot »).
+    /// `scale` est optionnel : le Studio propose une échelle d'ajustement pour
+    /// qu'un modèle exporté en centimètres ou en kilomètres reste visible ; la
+    /// valeur est bornée pour éviter une transformation dégénérée.
+    ///
+    /// Échoue explicitement si l'asset n'existe pas ou n'est pas un glTF : placer
+    /// un cube de repli silencieux serait exactement le défaut d'origine.
+    pub fn place_mesh_asset(&mut self, asset_id: &str, scale: Option<f32>) -> Result<usize, String> {
+        let manifeste = self.mesh_manifest();
+        let def = manifeste.resolve(asset_id).ok_or_else(|| {
+            format!(
+                "Asset 3D « {asset_id} » introuvable dans le manifeste du projet. Réimporte le modèle ou vérifie son identifiant."
+            )
+        })?;
+        let node = match &def.kind {
+            MeshAssetKind::Gltf { node, .. } => node.clone(),
+            MeshAssetKind::Procedural { .. } => {
+                return Err(format!(
+                    "« {asset_id} » est un mesh procédural : utilise un preset 3D pour le placer, pas « Placer dans la scène »."
+                ))
+            }
+        };
+        let fichier = match &def.kind {
+            MeshAssetKind::Gltf { file, .. } => file.clone(),
+            MeshAssetKind::Procedural { .. } => unreachable!("filtré ci-dessus"),
+        };
+
+        // « Au centre de la caméra » = la cible de la caméra, posée au sol : le
+        // modèle apparaît droit devant, à l'endroit que l'auteur regarde.
+        let cible = self
+            .game
+            .camera3d
+            .as_ref()
+            .map(|camera| Vec3::from_array(camera.target))
+            .unwrap_or(self.camera3d.target);
+        let echelle = scale
+            .filter(|valeur| valeur.is_finite() && *valeur > 0.0)
+            .map(|valeur| valeur.clamp(0.001, 1000.0))
+            .unwrap_or(1.0);
+
+        let id = self.spawn_3d_entity(
+            MeshRef::Asset {
+                id: asset_id.to_string(),
+                node,
+            },
+            MaterialRef::Solid {
+                color: 0xFFFF_FFFF,
+                roughness: 0.4,
+                metalness: 0.0,
+            },
+            Vec3::new(cible.x, 0.0, cible.z),
+            Vec3::splat(echelle),
+            Vec3::ZERO,
+        );
+
+        let nom = nom_lisible_mesh(asset_id, &fichier);
+        if let Some(entite) = self.game.entities.iter_mut().find(|e| e.id == id) {
+            entite.name = nom;
+            entite.tag = "mesh3d".to_string();
+        }
+        let _ = self.game.select_entity_by_id(id);
+        Ok(id)
     }
 
     /// Racine du projet pour les écritures d'authoring.
@@ -598,7 +711,7 @@ impl NativeEngine {
                 Vec3::new(-90.0, 0.0, 0.0),
             ),
             _ => {
-                if crate::mesh_assets::MeshManifest::builtin().resolve(preset).is_some() {
+                if self.mesh_manifest().resolve(preset).is_some() {
                     (
                         MeshRef::Asset { id: preset.to_string(), node: None },
                         MaterialRef::Solid { color: 0xFFFFFFFF, roughness: 0.4, metalness: 0.0 },
@@ -858,7 +971,9 @@ impl NativeEngine {
 
     /// Construit le `RenderPacket` depuis les entités 3D réelles de la scène.
     fn build_3d_packet(&self) -> crate::render_packet::RenderPacket {
-        let manifest = crate::mesh_assets::MeshManifest::builtin();
+        // Manifeste du projet : GLB importés + assets intégrés. Sans cela, une
+        // entité `MeshRef::Asset` importée retombait sur un cube de repli.
+        let manifest = self.mesh_manifest();
         let refs: Vec<&Entity> = self
             .game
             .entities
@@ -2921,6 +3036,94 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    /// Un GLB déclaré dans le manifeste du projet doit être **placé** dans la
+    /// scène et **encodé** dans le paquet avec l'`asset_id` de son identifiant
+    /// (et non un cube de repli).
+    #[test]
+    fn test_place_mesh_asset_importe_entre_dans_le_paquet() {
+        use crate::assets_manifest::{
+            AssetEntry, AssetKind, AssetsManifest, Provenance, ProvenanceSource,
+        };
+
+        let mut engine = NativeEngine::init().expect("init moteur");
+        let mut manifeste = AssetsManifest::default();
+        manifeste
+            .register(AssetEntry {
+                id: "robot_lourd".into(),
+                kind: AssetKind::Mesh,
+                path: "assets/meshes/robot_lourd.glb".into(),
+                bytes: 128,
+                hash: "0123456789abcdef".into(),
+                provenance: Provenance {
+                    source: ProvenanceSource::Imported {
+                        tool: "host".into(),
+                    },
+                    license: Some("CC-BY-4.0".into()),
+                    created_at: "2026-11-17".into(),
+                },
+                dimensions: None,
+                duration_ms: None,
+            })
+            .expect("entrée de manifeste acceptée");
+        engine.game.assets_manifest = Some(manifeste);
+
+        // Le manifeste effectif résout bien le fichier importé.
+        let manifeste_effectif = engine.mesh_manifest();
+        assert_eq!(
+            manifeste_effectif.gltf_file("robot_lourd"),
+            Some("assets/meshes/robot_lourd.glb")
+        );
+        assert!(manifeste_effectif.resolve("pillar").is_some(), "les assets intégrés restent disponibles");
+
+        // Caméra du projet : le modèle doit être placé au centre de la vue (XZ).
+        engine.game.camera3d = Some(crate::subsystems::Camera3DData {
+            position: [0.0, 6.0, 12.0],
+            target: [2.5, 0.0, -1.5],
+        });
+
+        let id = engine
+            .place_mesh_asset("robot_lourd", Some(0.5))
+            .expect("placement accepté");
+
+        let entite = engine
+            .game
+            .entities
+            .iter()
+            .find(|e| e.id == id)
+            .expect("entité créée");
+        assert_eq!(entite.name, "Robot lourd", "nom lisible déduit du fichier");
+        assert_eq!(entite.tag, "mesh3d");
+        let t3d = entite.transform3d.as_ref().expect("Transform3D présent");
+        assert_eq!(t3d.position, Vec3::new(2.5, 0.0, -1.5));
+        assert_eq!(t3d.scale, Vec3::splat(0.5));
+        match &entite.renderable3d.as_ref().expect("Renderable3D présent").mesh {
+            MeshRef::Asset { id: asset, node } => {
+                assert_eq!(asset, "robot_lourd");
+                assert!(node.is_none());
+            }
+            autre => panic!("MeshRef::Asset attendu, trouvé {autre:?}"),
+        }
+
+        // Le paquet encode l'identifiant d'asset stable (≥ 8), pas la primitive 0.
+        let packet = crate::render_packet::RenderPacket::decode(
+            &engine.render_packet_frame(1.0 / 60.0),
+        )
+        .expect("paquet décodé");
+        let attendu = crate::render_packet::asset_mesh_id("robot_lourd");
+        assert!(attendu >= 8, "identifiant d'asset hors plage primitive : {attendu}");
+        let batch = packet
+            .batches
+            .iter()
+            .find(|batch| batch.mesh_id == attendu)
+            .expect("batch du GLB importé");
+        assert_eq!(batch.mesh_id, attendu);
+        assert_eq!(batch.instances.len(), 1);
+        assert_eq!(batch.instances[0].entity_id, id as u32);
+
+        // Un asset inconnu est refusé explicitement (pas de cube silencieux).
+        assert!(engine.place_mesh_asset("inconnu", None).is_err());
     }
 
     #[test]

@@ -9,7 +9,7 @@ import {
   removeRecent, renameProject, revealProject, systemDiagnostics,
   type NewProjectConfig, type ProjectEntry, type SystemDiagnostics,
 } from '../services/projectBridge';
-import { importMeshAsset, importTiledMap, loadProjectJson } from '../services/engineBridge';
+import { importMeshAsset, importTiledMap, loadProjectJson, placeMeshAsset } from '../services/engineBridge';
 // Import de TYPE seulement : la preview three.js (WebGPU + GLTFLoader) reste
 // dans un chunk séparé, chargé à la sélection d'un fichier — le Hub ne paie pas
 // le poids de three.js à l'ouverture.
@@ -28,6 +28,8 @@ interface ProjectHubModalProps {
    * les erreurs restent dans le bandeau du Hub.
    */
   onNotify?: (message: string, kind?: 'info' | 'success' | 'error') => void;
+  /** Appelé après une modification du projet depuis le Hub (placement d'asset). */
+  onSceneChanged?: () => void;
   /**
    * Appelé au clic sur « Créer et jouer » (parcours guidé) : l'App démarre le
    * chrono AC1 « Hub affiché → état jouable » et l'affiche après création.
@@ -50,6 +52,24 @@ const GENRE_KEYS: Record<string, string> = {
 };
 
 const DIMENSIONS = ['2D', '2.5D', '3D'];
+
+/**
+ * Licences connues proposées à l'import d'un asset.
+ *
+ * On stocke l'identifiant canonique (SPDX quand il existe), pas le libellé :
+ * c'est lui qui permettra d'afficher les obligations d'attribution dans le paquet
+ * exporté. « Inconnue » est le défaut sûr ; « Autre » ouvre un champ libre.
+ */
+const MESH_LICENCES: { id: string; label: string }[] = [
+  { id: 'Inconnue', label: 'Inconnue (à vérifier avant publication)' },
+  { id: 'CC0-1.0', label: 'CC0 1.0 — domaine public' },
+  { id: 'CC-BY-4.0', label: 'CC BY 4.0 — attribution' },
+  { id: 'CC-BY-SA-4.0', label: 'CC BY-SA 4.0 — attribution, partage à l’identique' },
+  { id: 'CC-BY-NC-4.0', label: 'CC BY-NC 4.0 — attribution, pas d’usage commercial' },
+  { id: 'MIT', label: 'MIT' },
+  { id: 'Apache-2.0', label: 'Apache 2.0' },
+  { id: 'Autre', label: 'Autre… (préciser)' },
+];
 
 type Filter = 'all' | 'scene' | 'project' | 'recent';
 type SortKey = 'date' | 'name' | 'genre';
@@ -199,7 +219,7 @@ function SceneThumbnail({ entry }: { entry: ProjectEntry }) {
 }
 
 export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
-  isOpen, onClose, onOpenArchetypes, onOpenWizard, onOpenAiTab, onProjectOpened, onNotify,
+  isOpen, onClose, onOpenArchetypes, onOpenWizard, onOpenAiTab, onProjectOpened, onNotify, onSceneChanged,
   onCreateStart,
 }) => {
   // Parcours débutant : accueil (1 CTA) → création (nom + modèle) → jeu.
@@ -239,8 +259,14 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   const [meshBusy, setMeshBusy] = useState(false);
   const [meshSaving, setMeshSaving] = useState(false);
   const [meshError, setMeshError] = useState('');
-  const [meshLicense, setMeshLicense] = useState('');
+  // Licence : identifiant canonique choisi dans une liste, jamais un texte libre seul.
+  const [meshLicenseId, setMeshLicenseId] = useState('Inconnue');
+  const [meshLicenseCustom, setMeshLicenseCustom] = useState('');
+  const licenceEffective = meshLicenseId === 'Autre'
+    ? meshLicenseCustom.trim()
+    : meshLicenseId;
   const [meshSavedId, setMeshSavedId] = useState('');
+  const [meshPlacing, setMeshPlacing] = useState(false);
   const [meshPreviewActive, setMeshPreviewActive] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -642,7 +668,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
     setMeshSaving(true);
     setMeshError('');
     try {
-      const id = await importMeshAsset(meshFileName, bufferVersBase64(bytes), meshLicense);
+      const id = await importMeshAsset(meshFileName, bufferVersBase64(bytes), licenceEffective);
       if (!id) throw new Error('réponse vide du moteur (projet non écrit ?)');
       setMeshSavedId(id);
       notify(
@@ -660,6 +686,21 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   const fermerHub = () => {
     reinitialiserApercuMesh();
     onClose();
+  };
+
+  /** Place le modèle enregistré dans la scène courante (entité réelle, sauvegardée). */
+  const placerMesh = async () => {
+    if (!meshSavedId || meshPlacing) return;
+    setMeshPlacing(true);
+    try {
+      const entityId = await placeMeshAsset(meshSavedId);
+      onNotify?.(`Modèle placé dans la scène (entité ${entityId}).`, 'success');
+      onSceneChanged?.();
+    } catch (err: any) {
+      setMeshError(`Placement impossible : ${err?.message ?? String(err)}`);
+    } finally {
+      setMeshPlacing(false);
+    }
   };
 
   const goHome = () => {
@@ -940,14 +981,29 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                       <label className="flex-1 text-[11px] text-[#94a3b8]">
                         Licence (optionnelle)
-                        <input
+                        <select
                           data-testid="mesh-license"
-                          value={meshLicense}
-                          onChange={e => setMeshLicense(e.target.value)}
-                          placeholder="CC0-1.0, CC-BY-4.0, licence maison…"
+                          value={meshLicenseId}
+                          onChange={e => setMeshLicenseId(e.target.value)}
                           className="mt-1 w-full px-3 py-2 bg-[#0d0819] border border-[#2d1b4e] rounded text-xs text-[#f8fafc] focus:border-[#a855f7]"
-                        />
+                        >
+                          {MESH_LICENCES.map(licence => (
+                            <option key={licence.id} value={licence.id}>{licence.label}</option>
+                          ))}
+                        </select>
                       </label>
+                      {meshLicenseId === 'Autre' && (
+                        <label className="flex-1 text-[11px] text-[#94a3b8]">
+                          Précisez la licence
+                          <input
+                            data-testid="mesh-license-custom"
+                            value={meshLicenseCustom}
+                            onChange={e => setMeshLicenseCustom(e.target.value)}
+                            placeholder="nom ou identifiant de la licence"
+                            className="mt-1 w-full px-3 py-2 bg-[#0d0819] border border-[#2d1b4e] rounded text-xs text-[#f8fafc] focus:border-[#a855f7]"
+                          />
+                        </label>
+                      )}
                       <button
                         data-testid="mesh-save"
                         type="button"
@@ -974,16 +1030,29 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                       <p data-testid="mesh-saved" className="text-[11px] text-[#34d399]">
                         Enregistré dans le projet : <span className="font-mono">{meshSavedId}</span>
                         {' · '}provenance <span className="font-mono">Imported {'{'} tool: &quot;host&quot; {'}'}</span>
-                        {' · '}licence <span className="font-mono">{meshLicense.trim() || 'non déclarée'}</span>
+                        {' · '}licence <span className="font-mono">{licenceEffective || 'non déclarée'}</span>
                       </p>
                     )}
 
-                    <p data-testid="mesh-placement-limite" className="text-[10px] leading-relaxed text-[#64748b]">
-                      Placement en scène non proposé à cette étape : le <span className="font-mono">RenderPacket</span>{' '}
-                      ne transporte que des identifiants de primitives (cube, sphère, plan, capsule). Une entité
-                      peut déjà porter <span className="font-mono">MeshRef::Asset</span>, mais le renderer trois.js
-                      ne résout pas encore les maillages glTF : la placer maintenant afficherait un cube de repli.
-                      Le bouton « Placer dans la scène » arrivera avec le résolveur glTF du renderer.
+                    {meshSavedId && (
+                      <button
+                        data-testid="mesh-place"
+                        type="button"
+                        onClick={() => void placerMesh()}
+                        disabled={meshPlacing}
+                        className="flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded border border-[#34d399] bg-[#052e1b] px-3 text-xs font-bold text-[#d1fae5] transition hover:bg-[#064e2f] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {meshPlacing
+                          ? <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                          : <Box size={14} aria-hidden="true" />}
+                        {meshPlacing ? 'Placement…' : 'Placer dans la scène'}
+                      </button>
+                    )}
+
+                    <p data-testid="mesh-placement-limite" className="text-[10px] leading-relaxed text-[#94a3b8]">
+                      Le modèle placé devient une entité du projet (hiérarchie, sauvegarde). Le viewport
+                      3D le dessine via le chargeur glTF ; si le fichier est illisible, un cube de repli
+                      signale l'entité sans casser le rendu.
                     </p>
                   </div>
 

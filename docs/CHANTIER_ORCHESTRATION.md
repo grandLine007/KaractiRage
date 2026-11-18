@@ -266,7 +266,7 @@ reste 2D ; cette vague branche l'import et la prévisualisation, pas encore le r
 **Validé par un humain (17/11)** : le parcours « Créer un jeu » est trouvé et rapide
 ([`PREUVES_HUMAINES.md`](PREUVES_HUMAINES.md)).
 
-## 3duodevicesies. Vague 21 — en cours (le GLB doit aller quelque part)
+## 3duodevicesies. Vague 21 — terminée (le GLB entre dans la scène)
 
 | Agent | Tâche | Critère de sortie |
 |---|---|---|

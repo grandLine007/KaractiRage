@@ -19,6 +19,7 @@ import {
   PointLight,
   SpotLight,
   Object3D,
+  Group,
   Matrix4,
   Vector2,
   Vector3,
@@ -250,6 +251,86 @@ export async function startScene3D(
 
   const material = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.15 });
   const pool = new Map<string, { mesh: InstancedMesh; entityIds: number[] }>();
+
+  // --- Maillages glTF importés -------------------------------------------------
+  // Le paquet transporte un `meshId` >= 4 pour un asset du manifeste. On charge le
+  // binaire à la demande (une seule fois par id) et on clone la scène par instance.
+  interface GltfEntry {
+    root: Object3D | null;
+    pending: boolean;
+    failed: boolean;
+    group: Group;
+  }
+  const gltfPool = new Map<number, GltfEntry>();
+  /** Diagnostic pour les tests et l'UI : nombre de maillages glTF chargés. */
+  (window as unknown as { __scene3dGltfAssets?: number }).__scene3dGltfAssets = 0;
+
+  const ensureGltfLoaded = (meshId: number, entry: GltfEntry) => {
+    if (entry.pending || entry.root || entry.failed) return;
+    entry.pending = true;
+    void (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+        const base64 = await invoke<string>('engine_mesh_asset_bytes', { id: meshId });
+        const binaire = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+        await new Promise<void>((resolve, reject) => {
+          new GLTFLoader().parse(
+            binaire.buffer,
+            '',
+            gltf => {
+              entry.root = gltf.scene;
+              entry.pending = false;
+              (window as unknown as { __scene3dGltfAssets?: number }).__scene3dGltfAssets =
+                ((window as unknown as { __scene3dGltfAssets?: number }).__scene3dGltfAssets ?? 0) + 1;
+              resolve();
+            },
+            erreur => {
+              entry.failed = true;
+              entry.pending = false;
+              console.warn(`Maillage 3D ${meshId} illisible : ${String(erreur)}`);
+              reject(erreur);
+            },
+          );
+        });
+      } catch {
+        // Repli : le cube coloré de l'instance reste affiché, la frame continue.
+        entry.failed = true;
+        entry.pending = false;
+      }
+    })();
+  };
+
+  /** Dessine les instances d'un batch de maillages glTF (clone par instance). */
+  function applyGltfBatch(b: DecodedPacket['batches'][number], alpha: number): number {
+    let entry = gltfPool.get(b.meshId);
+    if (!entry) {
+      entry = { root: null, pending: false, failed: false, group: new Group() };
+      gltfPool.set(b.meshId, entry);
+      scene.add(entry.group);
+    }
+    ensureGltfLoaded(b.meshId, entry);
+    if (!entry.root) return 0;
+
+    // Un clone par instance, reconstruit si le nombre change.
+    if (entry.group.children.length !== b.instances.length) {
+      for (const enfant of [...entry.group.children]) entry.group.remove(enfant);
+      for (let i = 0; i < b.instances.length; i++) {
+        const clone = entry.root.clone(true);
+        clone.matrixAutoUpdate = false;
+        entry.group.add(clone);
+      }
+    }
+    for (let i = 0; i < b.instances.length; i++) {
+      const inst = b.instances[i];
+      for (let k = 0; k < 16; k++) {
+        lerped[k] = inst.prevMatrix[k] + (inst.matrix[k] - inst.prevMatrix[k]) * alpha;
+      }
+      const enfant = entry.group.children[i];
+      if (enfant) enfant.matrix.fromArray(lerped);
+    }
+    return b.instances.length;
+  }
   const tmpMatrix = new Matrix4();
   const tmpColor = new Color();
   const lerped = new Float32Array(16);
@@ -267,6 +348,11 @@ export async function startScene3D(
 
     let total = 0;
     for (const b of p.batches) {
+      // meshId >= 4 : maillage glTF du manifeste (les primitives sont 0-3).
+      if (b.meshId >= 4) {
+        total += applyGltfBatch(b, alpha);
+        continue;
+      }
       const key = `${b.meshId}:${b.materialId}`;
       let entry = pool.get(key);
       if (!entry) {

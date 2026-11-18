@@ -398,7 +398,7 @@ fn entity_draw_items(
                 kind: MeshAssetKind::Gltf { .. },
                 ..
             }) => {
-                items.push((asset_id(id), material_id, instance_at(entity_mat, prev_entity_mat, tint, entity_id)));
+                items.push((asset_mesh_id(id), material_id, instance_at(entity_mat, prev_entity_mat, tint, entity_id)));
             }
             None => {
                 items.push((0, material_id, instance_at(entity_mat, prev_entity_mat, 0xFFF43F5E, entity_id)));
@@ -412,12 +412,16 @@ fn entity_draw_items(
 fn material_id_of(m: &MaterialRef) -> u16 {
     match m {
         MaterialRef::Solid { .. } => 0,
-        MaterialRef::Asset { id } => asset_id(id),
+        MaterialRef::Asset { id } => asset_mesh_id(id),
     }
 }
 
 /// Identifiant stable ≥ 8 pour les assets (hachage FNV-1a 32 bits tronqué sur 15 bits).
-fn asset_id(id: &str) -> u16 {
+///
+/// Public : la commande `engine_mesh_asset_bytes` reçoit cet identifiant numérique
+/// (celui du `RenderPacket`) et doit retrouver le fichier correspondant dans le
+/// manifeste du projet, sans que le Studio ait à connaître les identifiants texte.
+pub fn asset_mesh_id(id: &str) -> u16 {
     let mut h: u32 = 0x811c9dc5;
     for b in id.bytes() {
         h ^= b as u32;
@@ -888,9 +892,128 @@ mod producer_tests {
         assert_eq!(packet.batches[0].instances[0].tint, 0xFFF43F5E);
     }
 
+    /// Un asset glTF du manifeste du projet encode l'`asset_id` stable (≥ 8),
+    /// pas la primitive de repli 0.
     #[test]
-    fn test_demo_3d_packet_roundtrips() {
-        let p = demo_3d_packet(1.0, 7);
+    fn test_gltf_du_manifeste_projet_encode_asset_id() {
+        use crate::assets_manifest::{
+            AssetEntry, AssetKind, AssetsManifest, Provenance, ProvenanceSource,
+        };
+
+        let mut assets = AssetsManifest::default();
+        assets
+            .register(AssetEntry {
+                id: "robot".into(),
+                kind: AssetKind::Mesh,
+                path: "assets/meshes/robot.glb".into(),
+                bytes: 64,
+                hash: "0123456789abcdef".into(),
+                provenance: Provenance {
+                    source: ProvenanceSource::Imported {
+                        tool: "host".into(),
+                    },
+                    license: Some("CC0-1.0".into()),
+                    created_at: "2026-11-17".into(),
+                },
+                dimensions: None,
+                duration_ms: None,
+            })
+            .expect("entrée mesh acceptée");
+        let manifeste = MeshManifest::from_project(&assets);
+        assert_eq!(
+            manifeste.gltf_file("robot"),
+            Some("assets/meshes/robot.glb"),
+            "le manifeste effectif résout le fichier importé"
+        );
+
+        let mut entite = Entity::new(7, "Robot", "mesh3d", Transform2D::new(0.0, 0.0, 1.0, 1.0));
+        entite.transform3d = Some(Transform3D::new(
+            Vec3::new(1.0, 0.0, 2.0),
+            Quat::IDENTITY,
+            Vec3::ONE,
+        ));
+        entite.renderable3d = Some(Renderable3D {
+            mesh: MeshRef::Asset {
+                id: "robot".into(),
+                node: None,
+            },
+            material: MaterialRef::Solid {
+                color: 0xFFFF_FFFF,
+                roughness: 0.4,
+                metalness: 0.0,
+            },
+            cast_shadow: true,
+            receive_shadow: true,
+        });
+
+        let cam = Camera3D::perspective(Vec3::new(0.0, 4.0, 10.0), Vec3::ZERO, 60.0, 0.1, 100.0, 1.0);
+        let packet = packet_from_entities(&manifeste, &cam, &[&entite], 3);
+        let attendu = asset_mesh_id("robot");
+        assert!(attendu >= 8, "asset_id hors plage primitive : {attendu}");
+        assert_eq!(packet.batches.len(), 1);
+        assert_eq!(packet.batches[0].mesh_id, attendu);
+        assert_eq!(packet.batches[0].instances.len(), 1);
+        assert_eq!(packet.batches[0].instances[0].entity_id, 7);
+        // Sans le manifeste du projet, l'asset retombait sur le cube de repli.
+        let repli = packet_from_entities(&MeshManifest::builtin(), &cam, &[&entite], 4);
+        assert_eq!(repli.batches[0].mesh_id, 0);
+        assert_eq!(repli.batches[0].instances[0].tint, 0xFFF43F5E);
+    }
+
+    /// L'entité `Renderable3D { mesh: MeshRef::Asset }` doit survivre au
+    /// roundtrip JSON du projet (sinon le GLB disparaît au rechargement).
+    #[test]
+    fn test_entite_mesh_asset_survit_au_roundtrip_projet() {
+        use crate::recipe::GameGenre;
+
+        let mut projet = crate::project::KaractiProject::new_empty(
+            "Test GLB",
+            "Atelier KaractiRage",
+            GameGenre::Adventure,
+        );
+        let mut entite = Entity::new(99, "Robot", "mesh3d", Transform2D::new(0.0, 0.0, 1.0, 1.0));
+        entite.transform3d = Some(Transform3D::from_euler_deg(
+            Vec3::new(1.5, 0.0, -2.5),
+            Vec3::new(0.0, 45.0, 0.0),
+            Vec3::splat(0.75),
+        ));
+        entite.renderable3d = Some(Renderable3D {
+            mesh: MeshRef::Asset {
+                id: "robot".into(),
+                node: Some("Body".into()),
+            },
+            material: MaterialRef::Solid {
+                color: 0xFFFF_FFFF,
+                roughness: 0.4,
+                metalness: 0.0,
+            },
+            cast_shadow: true,
+            receive_shadow: false,
+        });
+        projet.scene.entities.push(entite.clone());
+        projet.scenes[0].entities.push(entite.clone());
+
+        let json = projet.to_json().expect("projet sérialisé");
+        let relu = crate::project::KaractiProject::from_json(&json).expect("projet relu");
+        let retrouvee = relu.scenes[0]
+            .entities
+            .iter()
+            .find(|candidate| candidate.id == 99)
+            .expect("entité persistée");
+        assert_eq!(retrouvee.name, "Robot");
+        assert_eq!(
+            retrouvee.renderable3d.as_ref().map(|r| &r.mesh),
+            Some(&MeshRef::Asset {
+                id: "robot".into(),
+                node: Some("Body".into()),
+            })
+        );
+        assert_eq!(retrouvee.transform3d, entite.transform3d);
+        assert_eq!(relu.scene.entities.iter().any(|e| e.id == 99), true, "miroir scene à jour");
+    }
+
+    #[test]
+    fn test_demo_3d_packet_roundtrips() {        let p = demo_3d_packet(1.0, 7);
         assert_eq!(p.batches.len(), 2);
         let instances: usize = p.batches.iter().map(|b| b.instances.len()).sum();
         assert_eq!(instances, 109, "100 cubes + 8 parties de pilliers + 1 sol");

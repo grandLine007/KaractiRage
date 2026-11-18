@@ -1062,6 +1062,7 @@ export function App() {
         onProjectOpened={handleProjectOpened}
         onNotify={pushToast}
         onCreateStart={handleCreateStart}
+        onSceneChanged={refresh}
       />
 
       <ArchetypesModal

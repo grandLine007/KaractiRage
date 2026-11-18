@@ -687,9 +687,9 @@ fn engine_frame_packet(dt: f32, engine: tauri::State<'_, SharedEngine>) -> tauri
 }
 
 #[tauri::command]
-fn engine_list_mesh_assets() -> String {
-    use karactirage_engine::mesh_assets::{MeshAssetKind, MeshManifest};
-    let manifest = MeshManifest::builtin();
+fn engine_list_mesh_assets(engine: tauri::State<'_, SharedEngine>) -> String {
+    use karactirage_engine::mesh_assets::MeshAssetKind;
+    let manifest = engine.lock().unwrap().mesh_manifest();
     let summary: Vec<serde_json::Value> = manifest
         .assets
         .iter()
@@ -698,10 +698,142 @@ fn engine_list_mesh_assets() -> String {
                 MeshAssetKind::Procedural { parts } => ("procedural", parts.len()),
                 MeshAssetKind::Gltf { .. } => ("gltf", 1),
             };
-            serde_json::json!({ "id": a.id, "kind": kind, "parts": parts })
+            serde_json::json!({
+                "id": a.id,
+                "kind": kind,
+                "parts": parts,
+                // Identifiant numérique encodé dans le RenderPacket : la palette
+                // peut l'utiliser pour prévisualiser le maillage importé.
+                "mesh_id": karactirage_engine::render_packet::asset_mesh_id(&a.id),
+            })
         })
         .collect();
     serde_json::to_string(&summary).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Octets du maillage importé, en base64, pour un `mesh_id` du `RenderPacket`.
+///
+/// Le Studio (`scene3d.ts`) ne connaît que l'identifiant numérique stable de
+/// l'asset ; cette commande le retraduit en chemin de fichier via le manifeste
+/// effectif du projet, puis renvoie le contenu que `GLTFLoader.parse` consomme.
+/// Un identifiant inconnu produit une erreur explicite : le renderer affiche un
+/// placeholder coloré au lieu de casser la frame.
+#[tauri::command]
+fn engine_mesh_asset_bytes(
+    id: u16,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    use karactirage_engine::mesh_assets::{encoder_base64, MeshAssetKind};
+
+    let eng = engine
+        .lock()
+        .map_err(|erreur| format!("Moteur indisponible : {erreur}"))?;
+    let manifeste = eng.mesh_manifest();
+    let asset = manifeste
+        .assets
+        .iter()
+        .find(|asset| {
+            matches!(&asset.kind, MeshAssetKind::Gltf { .. })
+                && karactirage_engine::render_packet::asset_mesh_id(&asset.id) == id
+        })
+        .ok_or_else(|| {
+            format!(
+                "Aucun maillage glTF importé ne correspond à l'identifiant {id} dans le projet ouvert."
+            )
+        })?;
+    let fichier = manifeste.gltf_file(&asset.id).ok_or_else(|| {
+        format!(
+            "« {} » est déclaré sans fichier glTF dans le manifeste.",
+            asset.id
+        )
+    })?;
+
+    // Les chemins du manifeste sont relatifs à la racine du projet (`assets/...`).
+    let racine = eng
+        .project_file()
+        .and_then(std::path::Path::parent)
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| eng.workspace_root());
+    let chemin = racine.join(fichier);
+    let bytes = std::fs::read(&chemin).map_err(|erreur| {
+        format!(
+            "Maillage « {} » illisible ({} : {}). Réimporte le modèle dans le Hub.",
+            asset.id,
+            chemin.display(),
+            erreur
+        )
+    })?;
+    Ok(encoder_base64(&bytes))
+}
+
+/// Place un maillage importé au centre de la caméra, puis **persiste l'entité**
+/// dans le `.karacti` du projet pour qu'elle survive à la sauvegarde.
+///
+/// Renvoie un JSON `{ entity_id, name, asset_id }` que le Hub affiche et que le
+/// test Playwright vérifie.
+#[tauri::command]
+fn engine_place_mesh_asset(
+    id: String,
+    scale: Option<f32>,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<String, String> {
+    let mut eng = engine
+        .lock()
+        .map_err(|erreur| format!("Moteur indisponible : {erreur}"))?;
+    let project_file = eng
+        .project_file()
+        .ok_or_else(|| {
+            "Aucun projet ouvert : ouvrez un projet avant de placer un modèle 3D.".to_string()
+        })?
+        .to_path_buf();
+
+    let entity_id = eng.place_mesh_asset(&id, scale)?;
+    let entite = eng
+        .game
+        .entities
+        .iter()
+        .find(|entite| entite.id == entity_id)
+        .cloned()
+        .ok_or_else(|| format!("Entité {entity_id} introuvable après placement."))?;
+    let nom = entite.name.clone();
+
+    // Le `.karacti` est la source de vérité : `save_scene` n'écrit que le
+    // `.scene.json` legacy. On ajoute l'entité au niveau courant et on réécrit
+    // les assets pour rester cohérent avec l'import qui vient d'avoir lieu.
+    let mut projet = karactirage_engine::project::KaractiProject::load_from_file(&project_file)
+        .map_err(|erreur| format!("Projet « {} » illisible : {erreur}", project_file.display()))?;
+    projet.assets = eng.game.assets_manifest.clone().or(projet.assets);
+    let niveau = eng.game.level_index;
+    // L'index est calculé avant l'emprunt : `projet.scenes` ne peut pas être
+    // emprunté mutablement et lu dans la même expression.
+    let index_niveau = if projet.scenes.is_empty() {
+        None
+    } else {
+        Some(niveau.min(projet.scenes.len() - 1))
+    };
+    let cible = match index_niveau {
+        Some(index) => &mut projet.scenes[index],
+        None => &mut projet.scene,
+    };
+    cible.entities.retain(|existante| existante.id != entity_id);
+    cible.entities.push(entite);
+    projet.scene = projet.scenes.first().cloned().unwrap_or_else(|| projet.scene.clone());
+    if let Err(erreur) = projet.save_to_file(&project_file) {
+        // Pas d'entité fantôme en mémoire si le disque refuse : le Hub affichera
+        // l'erreur et l'utilisateur pourra réessayer.
+        eng.game.entities.retain(|existante| existante.id != entity_id);
+        return Err(format!(
+            "Écriture du projet « {} » impossible, modèle non placé : {erreur}",
+            project_file.display()
+        ));
+    }
+
+    Ok(serde_json::json!({
+        "entity_id": entity_id,
+        "name": nom,
+        "asset_id": id,
+    })
+    .to_string())
 }
 
 #[tauri::command]
@@ -1758,6 +1890,8 @@ pub fn run() {
             engine_frame,
             engine_frame_packet,
             engine_list_mesh_assets,
+            engine_mesh_asset_bytes,
+            engine_place_mesh_asset,
             engine_spawn_3d_preset,
             engine_new_3d_scene,
             engine_move_entity_3d,

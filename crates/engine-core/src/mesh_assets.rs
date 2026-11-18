@@ -107,6 +107,48 @@ impl MeshManifest {
         self.assets.iter().find(|a| a.id == id)
     }
 
+    /// Manifest **effectif d'un projet** : les maillages glTF importés
+    /// (`AssetKind::Mesh` du manifeste d'assets) d'abord, puis les assets
+    /// procéduraux intégrés dont l'identifiant n'est pas déjà pris.
+    ///
+    /// Les imports passent en premier pour qu'un GLB nommé `pillar` remplace
+    /// réellement le pilier procédural du même identifiant (intention explicite
+    /// de l'auteur), au lieu d'être silencieusement masqué par le manifeste
+    /// intégré. Le `RenderPacket` et la commande `engine_mesh_asset_bytes`
+    /// doivent tous deux utiliser ce manifeste : c'est ce qui garantit que
+    /// l'`asset_id` encodé dans le paquet désigne bien le fichier du projet.
+    pub fn from_project(assets: &AssetsManifest) -> Self {
+        let mut manifeste = Self::default();
+        for entree in &assets.entries {
+            if entree.kind != AssetKind::Mesh {
+                continue;
+            }
+            // Le format est déjà validé à l'import (GLB ou glTF JSON autoporteur) :
+            // le renderer résout le fichier par son chemin relatif au projet.
+            manifeste.assets.push(MeshAssetDef {
+                id: entree.id.clone(),
+                kind: MeshAssetKind::Gltf {
+                    file: entree.path.clone(),
+                    node: None,
+                },
+            });
+        }
+        for asset in Self::builtin().assets {
+            if manifeste.resolve(&asset.id).is_none() {
+                manifeste.assets.push(asset);
+            }
+        }
+        manifeste
+    }
+
+    /// Asset glTF (fichier) portant cet identifiant, s'il existe.
+    pub fn gltf_file(&self, id: &str) -> Option<&str> {
+        match self.resolve(id)?.kind {
+            MeshAssetKind::Gltf { ref file, .. } => Some(file),
+            MeshAssetKind::Procedural { .. } => None,
+        }
+    }
+
     /// Manifest intégré : assets procéduraux de démonstration (aucun binaire requis).
     pub fn builtin() -> Self {
         let mut m = Self::default();
@@ -332,6 +374,12 @@ pub fn decoder_base64(texte: &str) -> Result<Vec<u8>, MeshImportError> {
     base64::engine::general_purpose::STANDARD
         .decode(texte.trim())
         .map_err(|erreur| MeshImportError::Base64(erreur.to_string()))
+}
+
+/// Encode des octets en base64 standard (réponse `engine_mesh_asset_bytes`).
+pub fn encoder_base64(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 /// Détecte le format d'après le **contenu**, jamais d'après l'extension.
@@ -614,6 +662,74 @@ mod tests {
             MeshAssetKind::Procedural { parts } => assert_eq!(parts.len(), 2),
             _ => panic!("pillar doit être procédural"),
         }
+    }
+
+    /// Le manifeste effectif d'un projet expose ses GLB importés comme
+    /// `Gltf { file }`, sans perdre les assets procéduraux intégrés.
+    #[test]
+    fn manifest_from_project_resout_les_gltf_importes() {
+        let mut assets = AssetsManifest::default();
+        assets
+            .register(AssetEntry {
+                id: "robot".into(),
+                kind: AssetKind::Mesh,
+                path: "assets/meshes/robot.glb".into(),
+                bytes: 42,
+                hash: "0123456789abcdef".into(),
+                provenance: Provenance {
+                    source: ProvenanceSource::Imported {
+                        tool: "host".into(),
+                    },
+                    license: Some("CC-BY-4.0".into()),
+                    created_at: "2026-11-17".into(),
+                },
+                dimensions: None,
+                duration_ms: None,
+            })
+            .expect("entrée mesh acceptée");
+        // Une entrée non-mesh ne doit pas devenir un maillage.
+        assets
+            .register(AssetEntry {
+                id: "hero".into(),
+                kind: AssetKind::Sprite,
+                path: "assets/sprites/hero.png".into(),
+                bytes: 42,
+                hash: "0123456789abcdef".into(),
+                provenance: Provenance {
+                    source: ProvenanceSource::Studio,
+                    license: Some("CC0-1.0".into()),
+                    created_at: "2026-11-17".into(),
+                },
+                dimensions: Some((32, 32)),
+                duration_ms: None,
+            })
+            .expect("entrée sprite acceptée");
+
+        let manifeste = MeshManifest::from_project(&assets);
+
+        match &manifeste.resolve("robot").expect("robot résolu").kind {
+            MeshAssetKind::Gltf { file, node } => {
+                assert_eq!(file, "assets/meshes/robot.glb");
+                assert!(node.is_none());
+            }
+            autre => panic!("Gltf attendu pour robot, trouvé {autre:?}"),
+        }
+        assert_eq!(
+            manifeste.gltf_file("robot"),
+            Some("assets/meshes/robot.glb")
+        );
+        assert!(manifeste.resolve("hero").is_none(), "un sprite n'est pas un maillage");
+        assert!(manifeste.resolve("pillar").is_some(), "assets intégrés conservés");
+        assert_eq!(manifeste.gltf_file("pillar"), None, "pillar reste procédural");
+    }
+
+    /// La base64 de `engine_mesh_asset_bytes` doit être exactement décodable par
+    /// le `decoder_base64` utilisé à l'import (aucune variante exotique).
+    #[test]
+    fn encoder_base64_est_le_miroir_du_decoder() {
+        let octets = glb_minimal();
+        let encode = encoder_base64(&octets);
+        assert_eq!(decoder_base64(&encode).expect("décodage"), octets);
     }
 
     #[test]

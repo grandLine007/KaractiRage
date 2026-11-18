@@ -161,6 +161,17 @@ export async function importTiledMap(path: string): Promise<TiledImportResult> {
  * Refus explicite hors Tauri, sans projet ouvert, nom invalide, glTF
  * multi-fichiers ou budget dépassé.
  */
+/**
+ * Place un modèle 3D importé dans la scène courante (entité + sauvegarde projet).
+ * Refus explicite hors Tauri ou sans projet ouvert.
+ */
+export async function placeMeshAsset(id: string, scale?: number): Promise<string> {
+  return await invoke('engine_place_mesh_asset', {
+    id,
+    scale: typeof scale === 'number' && Number.isFinite(scale) ? scale : null,
+  });
+}
+
 export async function importMeshAsset(
   name: string,
   bytesB64: string,
