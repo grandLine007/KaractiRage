@@ -875,6 +875,21 @@ fn engine_new_3d_scene(engine: tauri::State<'_, SharedEngine>) -> usize {
 
 /// Applique une transformée 3D à une entité (position, rotation en degrés, échelle).
 /// Même chemin que l'opération IA `SetTransform3D` : une seule règle de validation.
+/// Change le matériau 3D (voie utilisateur de l'opération IA `SetMaterial`).
+#[tauri::command]
+fn engine_set_entity_material3d(
+    id: usize,
+    color: u32,
+    roughness: f32,
+    metalness: f32,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<(), String> {
+    engine
+        .lock()
+        .map_err(|erreur| format!("Moteur indisponible : {erreur}"))?
+        .set_entity_material3d(id, color, roughness, metalness)
+}
+
 #[tauri::command]
 fn engine_lights(engine: tauri::State<'_, SharedEngine>) -> String {
     engine.lock().unwrap().lights_json()
@@ -1983,6 +1998,7 @@ pub fn run() {
             engine_set_camera3d,
             engine_get_camera3d,
             engine_lights,
+            engine_set_entity_material3d,
             engine_add_light,
             engine_remove_light,
             engine_canvas_width,

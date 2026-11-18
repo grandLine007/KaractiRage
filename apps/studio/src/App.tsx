@@ -37,6 +37,7 @@ import {
   undo,
   redo,
   saveScene,
+  setEntityMaterial3d,
   spawnEntityAtScreen,
   spawn3dPreset,
   setEditorMode,
@@ -651,6 +652,18 @@ export function App() {
     void selectEntity(id).then(() => refresh());
   }, [refresh]);
 
+  const handleUpdateMaterial3d = useCallback(
+    async (id: number, color: number, roughness: number, metalness: number) => {
+      try {
+        await setEntityMaterial3d(id, color, roughness, metalness);
+        refresh();
+      } catch (err: any) {
+        pushToast(`Matériau refusé : ${err?.message ?? String(err)}`, 'error');
+      }
+    },
+    [pushToast, refresh],
+  );
+
   /** Voie utilisateur de la transformée 3D (l'IA passe par SetTransform3D, même moteur). */
   const handleUpdateTransform3d = useCallback(
     async (
@@ -966,6 +979,7 @@ export function App() {
             selectedEntity={selectedEntity}
             onUpdateTransform={handleUpdateTransform}
             onUpdateTransform3d={(id, p, r, sc) => void handleUpdateTransform3d(id, p, r, sc)}
+            onUpdateMaterial3d={(id, c, r, m) => void handleUpdateMaterial3d(id, c, r, m)}
             onDuplicate={handleDuplicate}
             onDelete={handleDelete}
             onAiEdit={openAiEdit}

@@ -13,6 +13,8 @@ interface EntityInspectorProps {
     rotation_euler_deg: [number, number, number],
     scale: [number, number, number],
   ) => void;
+  /** Voie utilisateur du matériau 3D — même état que l'opération IA SetMaterial. */
+  onUpdateMaterial3d?: (id: number, color: number, roughness: number, metalness: number) => void;
   onDuplicate: (id: number) => void;
   onDelete: (id: number) => void;
   /** Ouvre la barre d'édition IA avec le champ d'origine en indice. */
@@ -43,6 +45,7 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
   selectedEntity,
   onUpdateTransform,
   onUpdateTransform3d,
+  onUpdateMaterial3d,
   onDuplicate,
   onDelete,
   onAiEdit,
@@ -50,6 +53,9 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
   const [pos3d, setPos3d] = useState<[number, number, number]>([0, 0, 0]);
   const [rot3d, setRot3d] = useState<[number, number, number]>([0, 0, 0]);
   const [scale3d, setScale3d] = useState<[number, number, number]>([1, 1, 1]);
+  const [matColor, setMatColor] = useState('#ffffff');
+  const [matRough, setMatRough] = useState(0.4);
+  const [matMetal, setMatMetal] = useState(0.0);
   const [x, setX] = useState(0);
   const [y, setY] = useState(0);
   const [w, setW] = useState(0);
@@ -61,6 +67,12 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
       setY(selectedEntity.y);
       setW(selectedEntity.w);
       setH(selectedEntity.h);
+    }
+    const mat = selectedEntity?.material;
+    if (mat) {
+      setMatColor(`#${(mat.color & 0xffffff).toString(16).padStart(6, '0')}`);
+      setMatRough(mat.roughness);
+      setMatMetal(mat.metalness);
     }
     const t3 = selectedEntity?.transform3d;
     if (t3) {
@@ -225,6 +237,44 @@ export const EntityInspector: React.FC<EntityInspectorProps> = ({
           </div>
           )}
         </div>
+
+        {selectedEntity.material && (
+          <div data-testid="material-3d" className="p-2.5 bg-[#150d27] border border-[#2d1b4e] rounded-lg space-y-2">
+            <div className="flex items-center justify-between font-bold text-[11px] text-[#c084fc] uppercase tracking-wider">
+              <span>Matériau 3D</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <label className="text-[10px] text-[#94a3b8]">
+                Couleur
+                <input
+                  type="color"
+                  value={matColor}
+                  onChange={e => setMatColor(e.target.value)}
+                  onBlur={() => onUpdateMaterial3d?.(selectedEntity.id, parseInt(matColor.slice(1), 16), matRough, matMetal)}
+                  className="mt-0.5 w-full h-7 bg-[#07040d] border border-[#2d1b4e] rounded"
+                />
+              </label>
+              <label className="text-[10px] text-[#94a3b8]">
+                Rugosité
+                <input
+                  type="number" step="0.05" min="0" max="1" value={matRough}
+                  onChange={e => setMatRough(parseFloat(e.target.value) || 0)}
+                  onBlur={() => onUpdateMaterial3d?.(selectedEntity.id, parseInt(matColor.slice(1), 16), matRough, matMetal)}
+                  className="mt-0.5 w-full text-xs font-mono py-1 px-1.5 bg-[#07040d] border border-[#2d1b4e] rounded"
+                />
+              </label>
+              <label className="text-[10px] text-[#94a3b8]">
+                Métal
+                <input
+                  type="number" step="0.05" min="0" max="1" value={matMetal}
+                  onChange={e => setMatMetal(parseFloat(e.target.value) || 0)}
+                  onBlur={() => onUpdateMaterial3d?.(selectedEntity.id, parseInt(matColor.slice(1), 16), matRough, matMetal)}
+                  className="mt-0.5 w-full text-xs font-mono py-1 px-1.5 bg-[#07040d] border border-[#2d1b4e] rounded"
+                />
+              </label>
+            </div>
+          </div>
+        )}
 
         {/* Propriétés (lecture seule) */}
         <div className="p-2.5 bg-[#150d27] border border-[#2d1b4e] rounded-lg space-y-2">

@@ -231,6 +231,11 @@ export async function setCamera3d(position: [number, number, number], target: [n
   await invoke('engine_set_camera3d', { position, target });
 }
 
+/** Change le matériau 3D : même état que l'opération IA `SetMaterial`. */
+export async function setEntityMaterial3d(id: number, color: number, roughness: number, metalness: number): Promise<void> {
+  await invoke('engine_set_entity_material3d', { id, color, roughness, metalness });
+}
+
 export async function setEntityTransform3d(
   id: number,
   position: [number, number, number],
@@ -338,6 +343,8 @@ export interface StudioEntitySummary {
     rotation_euler_deg: [number, number, number];
     scale: [number, number, number];
   } | null;
+  /** Matériau 3D (couleur, rugosité, métal). Absent si le matériau n'est pas uni. */
+  material?: { color: number; roughness: number; metalness: number } | null;
 }
 
 export interface BrushTileInfo {

@@ -1546,6 +1546,42 @@ impl NativeEngine {
         self.game.get_entities_summary_json()
     }
 
+    /// Change le matériau 3D d'une entité (couleur 24 bits, rugosité, métal).
+    ///
+    /// Même état `MaterialRef::Solid` que l'opération IA `SetMaterial` (qui utilise
+    /// des préréglages) : les bornes sont vérifiées ici, une fois.
+    pub fn set_entity_material3d(
+        &mut self,
+        id: usize,
+        color: u32,
+        roughness: f32,
+        metalness: f32,
+    ) -> Result<(), String> {
+        if !roughness.is_finite() || !(0.0..=1.0).contains(&roughness) {
+            return Err(format!("rugosité hors plage 0–1 : {roughness}"));
+        }
+        if !metalness.is_finite() || !(0.0..=1.0).contains(&metalness) {
+            return Err(format!("métallicité hors plage 0–1 : {metalness}"));
+        }
+        let entite = self
+            .game
+            .entities
+            .iter_mut()
+            .find(|e| e.id == id)
+            .ok_or_else(|| format!("entité {id} introuvable"))?;
+        let nom = entite.name.clone();
+        let rendu = entite
+            .renderable3d
+            .as_mut()
+            .ok_or_else(|| format!("l'entité « {nom} » n'a pas de rendu 3D"))?;
+        rendu.material = crate::entity::MaterialRef::Solid {
+            color: color & 0x00FF_FFFF,
+            roughness,
+            metalness,
+        };
+        Ok(())
+    }
+
     /// Ajoute une lumière 3D. Même état que l'opération IA `AddLight`, avec
     /// position, couleur et intensité explicites (l'IA garde ses valeurs par défaut).
     pub fn add_light(
@@ -3152,6 +3188,41 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    /// Le matériau 3D de l'interface passe par le même état que l'op IA `SetMaterial`.
+    #[test]
+    fn test_set_entity_material3d_applique_et_refuse() {
+        let mut engine = NativeEngine::init().unwrap();
+        engine.populate_default_3d_scene();
+        let id = engine
+            .game
+            .entities
+            .iter()
+            .find(|e| e.renderable3d.is_some())
+            .map(|e| e.id)
+            .expect("une entité 3D par défaut");
+
+        engine.set_entity_material3d(id, 0x00FF8800, 0.25, 0.8).unwrap();
+        let mat = engine
+            .game
+            .entities
+            .iter()
+            .find(|e| e.id == id)
+            .and_then(|e| e.renderable3d.as_ref())
+            .map(|r| r.material.clone())
+            .unwrap();
+        match mat {
+            crate::entity::MaterialRef::Solid { color, roughness, metalness } => {
+                assert_eq!(color, 0x00FF8800);
+                assert!((roughness - 0.25).abs() < 1e-6);
+                assert!((metalness - 0.8).abs() < 1e-6);
+            }
+            autre => panic!("matériau uni attendu, trouvé {autre:?}"),
+        }
+        assert!(engine.set_entity_material3d(id, 0, 2.0, 0.0).is_err(), "rugosité > 1 refusée");
+        assert!(engine.set_entity_material3d(id, 0, 0.0, -0.1).is_err(), "métal < 0 refusé");
+        assert!(engine.set_entity_material3d(999_999, 0, 0.2, 0.2).is_err(), "entité inconnue refusée");
     }
 
     /// Les lumières de l'interface passent par le même état que l'op IA `AddLight`.

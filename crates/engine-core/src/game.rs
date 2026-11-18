@@ -2175,6 +2175,14 @@ impl GameState {
             vision_range: Option<f32>,
             is_player_controlled: bool,
             transform3d: Option<Transform3DSummary>,
+            material: Option<MaterialSummary>,
+        }
+
+        #[derive(serde::Serialize)]
+        struct MaterialSummary {
+            color: u32,
+            roughness: f32,
+            metalness: f32,
         }
 
         #[derive(serde::Serialize)]
@@ -2206,6 +2214,14 @@ impl GameState {
                 has_vision: e.vision.is_some(),
                 vision_range: e.vision.as_ref().map(|v| v.range),
                 is_player_controlled: e.movement.as_ref().map_or(false, |m| m.is_player_controlled),
+                material: e.renderable3d.as_ref().and_then(|r| match &r.material {
+                    crate::entity::MaterialRef::Solid { color, roughness, metalness } => Some(MaterialSummary {
+                        color: *color,
+                        roughness: *roughness,
+                        metalness: *metalness,
+                    }),
+                    _ => None,
+                }),
                 transform3d: e.transform3d.as_ref().map(|t| {
                     let (rx, ry, rz) = t.rotation.to_euler(glam::EulerRot::XYZ);
                     Transform3DSummary {
