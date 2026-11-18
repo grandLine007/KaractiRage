@@ -40,14 +40,16 @@ export const SPAWN_PRESET_IDS = PRESETS.map(p => p.id);
 interface SpawnPaletteProps {
   onSpawnAtCenter: (preset: string) => void;
   onSpawn3d: (preset: string) => void;
+  /** En 3D, seuls les meshes ont un sens : les onglets 2D disparaissent. */
+  dimension?: '2D' | '2.5D' | '3D';
 }
 
 /**
  * Palette d'ajout rapide : clic = placement au centre du viewport,
  * glisser-déposer = placement à la position exacte du curseur.
  */
-export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onSpawn3d }) => {
-  const [tab, setTab] = useState<'objets' | 'sprites' | 'anims' | 'atlas' | 'mesh'>('objets');
+export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onSpawn3d, dimension = '2D' }) => {
+  const [tab, setTab] = useState<'objets' | 'sprites' | 'anims' | 'atlas' | 'mesh'>(dimension === '2D' ? 'objets' : 'mesh');
   const [sprites, setSprites] = useState<SpriteAsset[]>([]);
   const [anims, setAnims] = useState<AnimAsset[]>([]);
   const [sheets, setSheets] = useState<SheetAsset[]>([]);
@@ -87,6 +89,9 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
     { id: 'atlas', label: 'Atlas' },
     { id: 'mesh', label: 'Mesh 3D' },
   ];
+  // Projet 3D : un seul onglet utile, les quatre autres sont de la 2D.
+  const onglets = dimension === '2D' ? TABS : TABS.filter(t => t.id === 'mesh');
+  const ongletActif = dimension === '2D' ? tab : 'mesh';
 
   return (
     <div className="flex flex-col gap-2 p-2.5 bg-[#0d0819] border-b border-[#2d1b4e]">
@@ -100,12 +105,12 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
       </div>
 
       <div className="flex gap-1">
-        {TABS.map(t => (
+        {onglets.map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             className={`flex-1 px-1 py-1 rounded-md text-[10px] font-semibold transition border ${
-              tab === t.id
+              ongletActif === t.id
                 ? 'bg-[#3b0764] text-[#f3e8ff] border-[#a855f7]'
                 : 'bg-[#150d27] text-[#94a3b8] border-[#2d1b4e] hover:text-[#f8fafc]'
             }`}
@@ -115,7 +120,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
         ))}
       </div>
 
-      {tab === 'objets' && (
+      {ongletActif === 'objets' && (
         <div className="grid grid-cols-4 gap-1.5">
           {PRESETS.map(p => (
             <button
@@ -135,7 +140,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
         </div>
       )}
 
-      {tab === 'sprites' && (
+      {ongletActif === 'sprites' && (
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between px-0.5">
             <span className="text-[10px] font-bold uppercase tracking-wider text-[#a855f7]">
@@ -178,7 +183,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
         </div>
       )}
 
-      {tab === 'anims' && (
+      {ongletActif === 'anims' && (
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between px-0.5">
             <span className="text-[10px] font-bold uppercase tracking-wider text-[#a855f7]">
@@ -225,7 +230,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
         </div>
       )}
 
-      {tab === 'atlas' && (
+      {ongletActif === 'atlas' && (
         <div className="flex flex-col gap-2">
           {sheets.length === 0 ? (
             <span className="text-[10px] text-[#94a3b8] px-1">Aucun atlas.</span>
@@ -265,7 +270,7 @@ export const SpawnPalette: React.FC<SpawnPaletteProps> = ({ onSpawnAtCenter, onS
         </div>
       )}
 
-      {tab === 'mesh' && (
+      {ongletActif === 'mesh' && (
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between px-0.5">
             <span className="text-[10px] font-bold uppercase tracking-wider text-[#38bdf8]">Meshes 3D</span>

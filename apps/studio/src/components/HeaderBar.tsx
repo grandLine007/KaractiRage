@@ -8,6 +8,8 @@ interface HeaderBarProps {
   onOpenHub: () => void;
   onOpenAiAssistant: () => void;
   onExportStandalone: () => void;
+  /** Dimension du projet : `2D` masque les modes 2D (`pixel`, `vector`). */
+  dimension?: '2D' | '2.5D' | '3D';
 }
 
 const MODES: { id: StudioMode; label: string; full: string; icon: React.ReactNode }[] = [
@@ -24,7 +26,10 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenHub,
   onOpenAiAssistant,
   onExportStandalone,
+  dimension = '2D',
 }) => {
+  // Les modes pixel art et vectorisation n'ont de sens qu'en 2D.
+  const modes = dimension === '2D' ? MODES : MODES.filter(m => m.id !== 'pixel' && m.id !== 'vector');
   return (
     <header data-testid="header" className="flex items-center justify-between gap-3 px-3 h-14 min-h-[56px] bg-[#0d0819] border-b border-[#2d1b4e] select-none shrink-0">
       {/* Zone gauche : marque discrète */}
@@ -37,7 +42,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
       {/* Zone centre : modes (libellés courts + ARIA) */}
       <nav data-testid="header-modes" className="flex items-center gap-0.5 p-0.5 bg-[#07040d] border border-[#2d1b4e] rounded-lg shrink-0" aria-label="Modes de l'atelier">
-        {MODES.map((m) => {
+        {modes.map((m) => {
           const active = currentMode === m.id;
           return (
             <button
@@ -57,6 +62,16 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           );
         })}
       </nav>
+
+      {dimension !== '2D' && (
+        <span
+          data-testid="dimension-badge"
+          className="shrink-0 px-2 py-0.5 rounded border border-[#a855f7] bg-[#2e1065] text-[10px] font-bold uppercase tracking-wider text-[#e9d5ff]"
+          title="Projet 3D : les outils 2D (pixel art, vectorisation) ne sont pas affichés."
+        >
+          {dimension}
+        </span>
+      )}
 
       {/* Zone droite : actions secondaires (cibles ≥ 32 px) */}
       <div className="flex items-center gap-1 shrink-0">

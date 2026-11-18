@@ -817,6 +817,9 @@ fn engine_place_mesh_asset(
     };
     cible.entities.retain(|existante| existante.id != entity_id);
     cible.entities.push(entite);
+    // Un maillage glTF dans la scène change la nature du projet : les outils 2D
+    // (tuiles, sprites, pixel art) ne s'appliquent plus. On l'inscrit dans le projet.
+    projet.metadata.dimension = Some("3D".to_string());
     projet.scene = projet.scenes.first().cloned().unwrap_or_else(|| projet.scene.clone());
     if let Err(erreur) = projet.save_to_file(&project_file) {
         // Pas d'entité fantôme en mémoire si le disque refuse : le Hub affichera
@@ -834,6 +837,19 @@ fn engine_place_mesh_asset(
         "asset_id": id,
     })
     .to_string())
+}
+
+/// Dimension du projet ouvert : `2D`, `2.5D` ou `3D` (défaut `2D`).
+#[tauri::command]
+fn engine_project_dimension(engine: tauri::State<'_, SharedEngine>) -> String {
+    let eng = engine.lock().unwrap();
+    eng.project_file()
+        .and_then(|chemin| {
+            karactirage_engine::project::KaractiProject::load_from_file(chemin)
+                .ok()
+                .and_then(|projet| projet.metadata.dimension)
+        })
+        .unwrap_or_else(|| "2D".to_string())
 }
 
 #[tauri::command]
@@ -1893,6 +1909,7 @@ pub fn run() {
             engine_mesh_asset_bytes,
             engine_place_mesh_asset,
             engine_spawn_3d_preset,
+            engine_project_dimension,
             engine_new_3d_scene,
             engine_move_entity_3d,
             engine_canvas_width,

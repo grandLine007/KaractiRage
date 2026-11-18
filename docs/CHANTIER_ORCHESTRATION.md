@@ -277,6 +277,18 @@ rien ». L'aperçu seul ne suffit pas : un asset importé doit entrer dans le pr
 voir. Le moteur avait déjà `MeshRef::Asset` et un encodage `Gltf` dans le paquet de
 rendu ; il manquait le manifeste, la commande d'octets et le chargeur côté Studio.
 
+## 3terdecies. Vague 22 — terminée (un projet 3D n'affiche plus d'outils 2D)
+
+| Mesure | 2D | 3D (après placement d'un GLB) |
+|---|---|---|
+| Modes de l'atelier | 5 | **3** (Jouer, Créer, Logique) |
+| Onglets de palette | 5 | **1** (Mesh 3D) |
+| Outils de tuiles | 2 | **0** |
+| Viewport | 2D | **3D** forcé + badge `3D` |
+
+Testé par le meneur (Playwright) et par gates complètes : 610 tests, audit 39 captures
+0 violation, export 167,2 FPS.
+
 ## 4. Vague 3 — décisions à prendre par le propriétaire
 
 | Sujet | Options | Recommandation |

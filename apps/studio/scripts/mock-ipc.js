@@ -93,6 +93,9 @@
     return new Uint8Array(CANVAS_W * CANVAS_H * 4).buffer; // noir opaque
   }
 
+  // Dimension du projet simulée : le placement d'un maillage 3D la fait passer à 3D.
+  let DIMENSION_PROJET = '2D';
+
   const HANDLERS = {
     // Boot & état
     engine_status: () => ({ state: 'ready', error: null, init_ms: 120 }),
@@ -121,7 +124,8 @@
 
     // Modèles 3D importés (C2) : un triangle GLB minimal, suffisant pour l'aperçu.
     engine_import_mesh_asset: () => 'triangle_test',
-    engine_place_mesh_asset: () => '42',
+    engine_project_dimension: () => DIMENSION_PROJET,
+    engine_place_mesh_asset: () => { DIMENSION_PROJET = '3D'; return '42'; },
     engine_mesh_asset_bytes: () => 'Z2xURgIAAAC8AQAAfAEAAEpTT057ImFzc2V0Ijp7InZlcnNpb24iOiIyLjAiLCJnZW5lcmF0b3IiOiJrYXJhY3RpLXRlc3QifSwic2NlbmUiOjAsInNjZW5lcyI6W3sibm9kZXMiOlswXX1dLCJub2RlcyI6W3sibWVzaCI6MH1dLCJtZXNoZXMiOlt7InByaW1pdGl2ZXMiOlt7ImF0dHJpYnV0ZXMiOnsiUE9TSVRJT04iOjB9fV19XSwiYnVmZmVycyI6W3siYnl0ZUxlbmd0aCI6MzZ9XSwiYnVmZmVyVmlld3MiOlt7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MCwiYnl0ZUxlbmd0aCI6MzYsInRhcmdldCI6MzQ5NjJ9XSwiYWNjZXNzb3JzIjpbeyJidWZmZXJWaWV3IjowLCJjb21wb25lbnRUeXBlIjo1MTI2LCJjb3VudCI6MywidHlwZSI6IlZFQzMiLCJtaW4iOlswLDAsMF0sIm1heCI6WzEsMSwwXX1dfSAgICQAAABCSU4AAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA',
 
     // Éditeur (lecture)

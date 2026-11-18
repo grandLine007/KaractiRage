@@ -42,6 +42,7 @@ import {
   setEditorMode,
   getEngineStatus,
   getAudioSettings,
+  getProjectDimension,
   setAudioSettings,
   getExportPreflight,
   hotReloadCheck,
@@ -62,6 +63,11 @@ const HOT_RELOAD_POLL_MS = 800;
 type ViewportTelemetry = { fps: number; cpuUs: number; score: number; status: string };
 
 export function App() {
+  /**
+   * Dimension du projet ouvert. Un projet 3D n'expose ni pixel art ni vectorisation :
+   * les modes 2D disparaissent et le viewport bascule en 3D.
+   */
+  const [projectDimension, setProjectDimension] = useState<'2D' | '2.5D' | '3D'>('2D');
   const [currentMode, setCurrentMode] = useState<StudioMode>(() => {
     const saved = localStorage.getItem('karactirage.lastMode');
     return saved === 'edit' || saved === 'kvl' || saved === 'pixel' || saved === 'vector' ? saved : 'play';
@@ -109,6 +115,22 @@ export function App() {
 
   // État d'édition natif (polling suspendu hors mode Studio).
   const { state: editorState, refresh } = useStudioState(currentMode === 'edit');
+
+  useEffect(() => {
+    let actif = true;
+    void getProjectDimension().then(dimension => {
+      if (!actif) return;
+      const propre = dimension === '3D' || dimension === '2.5D' ? dimension : '2D';
+      setProjectDimension(propre);
+      if (propre !== '2D') {
+        setView3d(true);
+        setCurrentMode(mode => (mode === 'pixel' || mode === 'vector' ? 'edit' : mode));
+      }
+    });
+    return () => {
+      actif = false;
+    };
+  }, [editorState]);
 
   // Références stables pour l'autosauvegarde (UX-204) sans recréer les callbacks.
   const currentModeRef = useRef(currentMode);
@@ -810,6 +832,7 @@ export function App() {
         onOpenHub={() => setIsHubOpen(true)}
         onOpenAiAssistant={() => setIsAiModalOpen(true)}
         onExportStandalone={() => { void handleExportStandalone(); }}
+        dimension={projectDimension}
       />
 
       {/* 2. Bandeau Flottant de Révision IA (Boucle de Confiance & Rollback en 1 clic) */}
@@ -845,7 +868,7 @@ export function App() {
         {/* Panneau Gauche : Palette + Hiérarchie (Visible en mode Studio) */}
         {currentMode === 'edit' && (
           <div className="flex flex-col w-64 h-full border-r border-[#2d1b4e]">
-            <SpawnPalette onSpawnAtCenter={handleSpawnAtCenter} onSpawn3d={handleSpawn3d} />
+            <SpawnPalette onSpawnAtCenter={handleSpawnAtCenter} onSpawn3d={handleSpawn3d} dimension={projectDimension} />
             <EntityHierarchy
               entities={entities}
               selectedEntityId={selectedEntityId}
@@ -872,7 +895,8 @@ export function App() {
             <VectorWorkspace />
           ) : (
             <>
-              {currentMode === 'edit' && (
+              {/* Barre d'outils de tuiles : 2D uniquement (mur, piège, pièce, dalle…). */}
+              {currentMode === 'edit' && projectDimension === '2D' && (
                 <StudioToolbar
                   tool={editorState?.tool ?? 'select'}
                   tile={editorState?.tile ?? 'wall'}

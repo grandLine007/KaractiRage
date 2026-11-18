@@ -165,6 +165,20 @@ export async function importTiledMap(path: string): Promise<TiledImportResult> {
  * Place un modèle 3D importé dans la scène courante (entité + sauvegarde projet).
  * Refus explicite hors Tauri ou sans projet ouvert.
  */
+/**
+ * Dimension du projet ouvert (`2D`, `2.5D`, `3D`). Un projet 3D n'expose pas les
+ * outils 2D : le Studio adapte ses modes et force le viewport 3D.
+ */
+export async function getProjectDimension(): Promise<string> {
+  try {
+    const dimension = await safeInvoke<string>('engine_project_dimension');
+    return typeof dimension === 'string' && dimension.trim() ? dimension.trim() : '2D';
+  } catch {
+    // Hors Tauri ou moteur injoignable : on reste en 2D, jamais de blocage.
+    return '2D';
+  }
+}
+
 export async function placeMeshAsset(id: string, scale?: number): Promise<string> {
   return await invoke('engine_place_mesh_asset', {
     id,
