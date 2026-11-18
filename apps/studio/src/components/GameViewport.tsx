@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Play, Pause, Crosshair, Grid3X3, PenTool, Box, Upload } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { detectRenderCapabilities, type RenderCapabilities } from '../render3d/capabilities';
-import { retryEngineBoot, importMeshAsset, placeMeshAsset } from '../services/engineBridge';
+import { retryEngineBoot, importMeshAsset, placeMeshAsset, getCamera3d, setCamera3d } from '../services/engineBridge';
 
 /**
  * Envoie une commande au moteur uniquement dans la fenêtre Tauri.
@@ -100,6 +100,10 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
   const [isLoaded, setIsLoaded] = useState(false);
   const [meshImporting, setMeshImporting] = useState(false);
   const [meshImportError, setMeshImportError] = useState('');
+  // Caméra 3D : voie utilisateur de l'opération IA `SetCamera`.
+  const [camOpen, setCamOpen] = useState(false);
+  const [camPos, setCamPos] = useState<[number, number, number]>([0, 2.5, 8]);
+  const [camTgt, setCamTgt] = useState<[number, number, number]>([0, 1, 0]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bootTick, setBootTick] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -424,6 +428,34 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
     }
   }, [onSceneChanged]);
 
+  const chargerCamera = useCallback(async () => {
+    const cam = await getCamera3d();
+    if (cam) {
+      setCamPos(cam.position);
+      setCamTgt(cam.target);
+    }
+  }, []);
+
+  const appliquerCamera = useCallback(async () => {
+    try {
+      await setCamera3d(camPos, camTgt);
+    } catch (err: any) {
+      setMeshImportError(`Caméra refusée : ${err?.message ?? String(err)}`);
+    }
+  }, [camPos, camTgt]);
+
+  const recadrer = useCallback(async () => {
+    const pos: [number, number, number] = [0, 2.5, 8];
+    const tgt: [number, number, number] = [0, 1, 0];
+    setCamPos(pos);
+    setCamTgt(tgt);
+    try {
+      await setCamera3d(pos, tgt);
+    } catch (err: any) {
+      setMeshImportError(`Caméra refusée : ${err?.message ?? String(err)}`);
+    }
+  }, []);
+
   const togglePause = () => setIsPaused(prev => !prev);
   const setZoomMode = (z: 'fit' | '1x' | '2x' | '3x') => {
     setZoom(z);
@@ -440,6 +472,40 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
 
   return (
     <div className="relative flex flex-col flex-1 h-full bg-[#07040d] overflow-hidden select-none">
+      {view3d && camOpen && (
+        <div data-testid="camera-panel" className="flex flex-wrap items-end gap-2 px-4 py-2 bg-[#0b0716] border-b border-[#2d1b4e]">
+          {([
+            { label: 'Pos X', v: camPos[0], set: (n: number) => setCamPos([n, camPos[1], camPos[2]]) },
+            { label: 'Pos Y', v: camPos[1], set: (n: number) => setCamPos([camPos[0], n, camPos[2]]) },
+            { label: 'Pos Z', v: camPos[2], set: (n: number) => setCamPos([camPos[0], camPos[1], n]) },
+            { label: 'Cible X', v: camTgt[0], set: (n: number) => setCamTgt([n, camTgt[1], camTgt[2]]) },
+            { label: 'Cible Y', v: camTgt[1], set: (n: number) => setCamTgt([camTgt[0], n, camTgt[2]]) },
+            { label: 'Cible Z', v: camTgt[2], set: (n: number) => setCamTgt([camTgt[0], camTgt[1], n]) },
+          ]).map(f => (
+            <label key={f.label} className="text-[10px] text-[#94a3b8]">
+              {f.label}
+              <input
+                type="number"
+                step="0.5"
+                value={Number(f.v.toFixed(2))}
+                onChange={e => f.set(parseFloat(e.target.value) || 0)}
+                onBlur={() => void appliquerCamera()}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                className="mt-0.5 w-20 text-xs font-mono py-1 px-1.5 bg-[#07040d] border border-[#2d1b4e] rounded focus:border-[#a855f7]"
+              />
+            </label>
+          ))}
+          <button
+            data-testid="camera-reset"
+            type="button"
+            onClick={() => void recadrer()}
+            className="min-h-[28px] px-2 rounded border border-[#34d399] bg-[#052e1b] text-[11px] font-semibold text-[#d1fae5]"
+          >
+            Recadrer
+          </button>
+        </div>
+      )}
+
       {/* Barre d'outils supérieure du Viewport */}
       <div className="flex items-center justify-between px-4 py-2 bg-[#0d0819] border-b border-[#2d1b4e]">
         <div className="flex items-center gap-2">
@@ -459,6 +525,16 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
                 {meshImporting ? 'Import…' : 'Importer un modèle 3D'}
               </label>
               {meshImportError && <span data-testid="viewport-mesh-error" className="text-[11px] text-[#fca5a5]">{meshImportError}</span>}
+
+              <button
+                data-testid="viewport-camera"
+                type="button"
+                onClick={() => { setCamOpen(prev => !prev); void chargerCamera(); }}
+                className="flex items-center gap-1 min-h-[28px] px-2 rounded border border-[#2d1b4e] bg-[#150d27] text-[11px] font-semibold text-[#f8fafc] hover:border-[#a855f7]"
+                title="Position et cible de la caméra 3D (comme l'opération IA SetCamera)"
+              >
+                Caméra
+              </button>
             </>
           )}
           {view3d && selected3dId !== null && (

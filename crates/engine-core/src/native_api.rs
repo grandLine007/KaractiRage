@@ -1546,6 +1546,23 @@ impl NativeEngine {
         self.game.get_entities_summary_json()
     }
 
+    /// Pose la caméra 3D du projet (position et cible).
+    ///
+    /// Même état que l'opération IA `SetCamera` (qui vise l'origine) : la voie
+    /// utilisateur ajoute seulement la cible explicite.
+    pub fn set_camera3d(&mut self, position: [f32; 3], target: [f32; 3]) -> Result<(), String> {
+        for valeur in position.iter().chain(target.iter()) {
+            if !valeur.is_finite() {
+                return Err(format!("coordonnée de caméra non finie : {valeur}"));
+            }
+        }
+        if position == target {
+            return Err("la caméra et sa cible ne peuvent pas être au même point".to_string());
+        }
+        self.game.camera3d = Some(crate::subsystems::Camera3DData { position, target });
+        Ok(())
+    }
+
     /// Applique une transformée 3D (position, rotation en degrés, échelle).
     ///
     /// Même sémantique que l'opération IA `SetTransform3D` : valeurs finies,
@@ -3080,6 +3097,18 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    /// La caméra 3D de l'interface passe par le même état que l'op IA `SetCamera`.
+    #[test]
+    fn test_set_camera3d_applique_et_refuse() {
+        let mut engine = NativeEngine::init().unwrap();
+        engine.set_camera3d([1.0, 2.0, 3.0], [0.0, 1.0, 0.0]).unwrap();
+        let cam = engine.game.camera3d.as_ref().expect("caméra posée");
+        assert_eq!(cam.position, [1.0, 2.0, 3.0]);
+        assert_eq!(cam.target, [0.0, 1.0, 0.0]);
+        assert!(engine.set_camera3d([1.0, 1.0, 1.0], [1.0, 1.0, 1.0]).is_err(), "caméra = cible refusée");
+        assert!(engine.set_camera3d([f32::INFINITY, 0.0, 0.0], [0.0; 3]).is_err(), "infini refusé");
     }
 
     /// La transformée 3D de l'interface passe par la même validation que l'op IA.

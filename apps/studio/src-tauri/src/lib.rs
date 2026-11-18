@@ -875,6 +875,26 @@ fn engine_new_3d_scene(engine: tauri::State<'_, SharedEngine>) -> usize {
 
 /// Applique une transformée 3D à une entité (position, rotation en degrés, échelle).
 /// Même chemin que l'opération IA `SetTransform3D` : une seule règle de validation.
+/// Caméra 3D courante (`null` si le projet n'en définit pas).
+#[tauri::command]
+fn engine_get_camera3d(engine: tauri::State<'_, SharedEngine>) -> String {
+    let eng = engine.lock().unwrap();
+    serde_json::to_string(&eng.game.camera3d).unwrap_or_else(|_| "null".to_string())
+}
+
+/// Pose la caméra 3D (position + cible). Voie utilisateur de `SetCamera`.
+#[tauri::command]
+fn engine_set_camera3d(
+    position: [f32; 3],
+    target: [f32; 3],
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<(), String> {
+    engine
+        .lock()
+        .map_err(|erreur| format!("Moteur indisponible : {erreur}"))?
+        .set_camera3d(position, target)
+}
+
 #[tauri::command]
 fn engine_set_entity_transform3d(
     id: usize,
@@ -1932,6 +1952,8 @@ pub fn run() {
             engine_new_3d_scene,
             engine_move_entity_3d,
             engine_set_entity_transform3d,
+            engine_set_camera3d,
+            engine_get_camera3d,
             engine_canvas_width,
             engine_canvas_height,
             engine_on_key_down,

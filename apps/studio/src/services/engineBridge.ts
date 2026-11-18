@@ -183,6 +183,27 @@ export async function getProjectDimension(): Promise<string> {
  * Applique une transformée 3D. Même chemin moteur que l'opération IA
  * `SetTransform3D` : la validation (échelle > 0, valeurs finies) est identique.
  */
+export interface Camera3D {
+  position: [number, number, number];
+  target: [number, number, number];
+}
+
+/** Caméra 3D du projet (`null` si aucune n'est posée). */
+export async function getCamera3d(): Promise<Camera3D | null> {
+  try {
+    const brut = await safeInvoke<string>('engine_get_camera3d');
+    const valeur = JSON.parse(brut) as Camera3D | null;
+    return valeur && Array.isArray(valeur.position) ? valeur : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Pose la caméra 3D : voie utilisateur de l'opération IA `SetCamera`. */
+export async function setCamera3d(position: [number, number, number], target: [number, number, number]): Promise<void> {
+  await invoke('engine_set_camera3d', { position, target });
+}
+
 export async function setEntityTransform3d(
   id: number,
   position: [number, number, number],
