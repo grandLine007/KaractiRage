@@ -544,6 +544,23 @@ impl GameState {
                     self.audio.play(SoundType::UiClick);
                     return true;
                 }
+                StudioCommand::Edit3D { entity_id, label, before, after } => {
+                    if let Some(entity) = self.entities.iter_mut().find(|e| e.id == entity_id) {
+                        entity.transform3d = before.transform3d.clone();
+                        if let (Some(rendu), Some(materiau)) = (entity.renderable3d.as_mut(), before.material.clone()) {
+                            rendu.material = materiau;
+                        }
+                        self.editor.undo_stack.push_redo(StudioCommand::Edit3D {
+                            entity_id,
+                            label,
+                            before: after,
+                            after: before,
+                        });
+                        self.status_message = format!("Annulé : {}", desc);
+                        self.audio.play(SoundType::WireCut);
+                        return true;
+                    }
+                }
                 StudioCommand::MoveEntity { entity_id, old_x, old_y, new_x, new_y } => {
                     if let Some(idx) = self.entities.iter().position(|e| e.id == entity_id) {
                         self.entities[idx].transform.x = old_x;
@@ -618,6 +635,23 @@ impl GameState {
                     self.status_message = format!("Rétabli : {}", desc);
                     self.audio.play(SoundType::UiClick);
                     return true;
+                }
+                StudioCommand::Edit3D { entity_id, label, before, after } => {
+                    if let Some(entity) = self.entities.iter_mut().find(|e| e.id == entity_id) {
+                        entity.transform3d = after.transform3d.clone();
+                        if let (Some(rendu), Some(materiau)) = (entity.renderable3d.as_mut(), after.material.clone()) {
+                            rendu.material = materiau;
+                        }
+                        self.editor.undo_stack.push_undo(StudioCommand::Edit3D {
+                            entity_id,
+                            label,
+                            before,
+                            after,
+                        });
+                        self.status_message = format!("Rétabli : {}", desc);
+                        self.audio.play(SoundType::WireCut);
+                        return true;
+                    }
                 }
                 StudioCommand::MoveEntity { entity_id, old_x, old_y, new_x, new_y } => {
                     if let Some(idx) = self.entities.iter().position(|e| e.id == entity_id) {

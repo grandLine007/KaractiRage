@@ -5,6 +5,13 @@ use crate::recipe::{
     DependencyResolver
 };
 
+/// Instantané 3D minimal pour rendre une mutation réversible.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Snapshot3D {
+    pub transform3d: Option<crate::entity::Transform3D>,
+    pub material: Option<crate::entity::MaterialRef>,
+}
+
 /// Commande réversible pour le système d'historique Undo/Redo du Studio (Command Pattern)
 #[derive(Debug, Clone, PartialEq)]
 pub enum StudioCommand {
@@ -28,6 +35,13 @@ pub enum StudioCommand {
         new_x: f32,
         new_y: f32,
     },
+    /// Mutation 3D (transformée, matériau) : réversible par instantané.
+    Edit3D {
+        entity_id: usize,
+        label: String,
+        before: Snapshot3D,
+        after: Snapshot3D,
+    },
     ApplyAiPatch {
         patch_id: String,
         description: String,
@@ -48,6 +62,7 @@ impl StudioCommand {
                 format!("Déplacement #{} ({:.0},{:.0}) -> ({:.0},{:.0})", entity_id, old_x, old_y, new_x, new_y)
             }
             StudioCommand::ApplyAiPatch { description, .. } => format!("Patch IA '{}'", description),
+            StudioCommand::Edit3D { label, .. } => format!("Édition 3D '{}'", label),
         }
     }
 }

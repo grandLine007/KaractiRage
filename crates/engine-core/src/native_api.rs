@@ -1570,6 +1570,10 @@ impl NativeEngine {
             .find(|e| e.id == id)
             .ok_or_else(|| format!("entité {id} introuvable"))?;
         let nom = entite.name.clone();
+        let avant = crate::editor::Snapshot3D {
+            transform3d: entite.transform3d.clone(),
+            material: entite.renderable3d.as_ref().map(|r| r.material.clone()),
+        };
         let rendu = entite
             .renderable3d
             .as_mut()
@@ -1579,6 +1583,16 @@ impl NativeEngine {
             roughness,
             metalness,
         };
+        let apres = crate::editor::Snapshot3D {
+            transform3d: self.game.entities.iter().find(|e| e.id == id).and_then(|e| e.transform3d.clone()),
+            material: self.game.entities.iter().find(|e| e.id == id).and_then(|e| e.renderable3d.as_ref().map(|r| r.material.clone())),
+        };
+        self.game.editor.undo_stack.push_undo(crate::editor::StudioCommand::Edit3D {
+            entity_id: id,
+            label: "matériau".to_string(),
+            before: avant,
+            after: apres,
+        });
         Ok(())
     }
 
@@ -1680,6 +1694,10 @@ impl NativeEngine {
             .find(|e| e.id == id)
             .ok_or_else(|| format!("entité {id} introuvable"))?;
         let nom = entite.name.clone();
+        let avant = crate::editor::Snapshot3D {
+            transform3d: entite.transform3d.clone(),
+            material: entite.renderable3d.as_ref().map(|r| r.material.clone()),
+        };
         let transform = entite
             .transform3d
             .as_mut()
@@ -1695,6 +1713,16 @@ impl NativeEngine {
         transform.rotation = rotation;
         transform.scale = glam::Vec3::from_array(scale);
         transform.prev_position = Some(position);
+        let apres = crate::editor::Snapshot3D {
+            transform3d: self.game.entities.iter().find(|e| e.id == id).and_then(|e| e.transform3d.clone()),
+            material: self.game.entities.iter().find(|e| e.id == id).and_then(|e| e.renderable3d.as_ref().map(|r| r.material.clone())),
+        };
+        self.game.editor.undo_stack.push_undo(crate::editor::StudioCommand::Edit3D {
+            entity_id: id,
+            label: "transformée".to_string(),
+            before: avant,
+            after: apres,
+        });
         Ok(())
     }
 
@@ -3188,6 +3216,45 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    /// Annuler une édition 3D restaure l'état exact, rétablir le remet.
+    #[test]
+    fn test_undo_redo_restaurent_transformee_et_materiau_3d() {
+        let mut engine = NativeEngine::init().unwrap();
+        engine.populate_default_3d_scene();
+        let id = engine
+            .game
+            .entities
+            .iter()
+            .find(|e| e.renderable3d.is_some())
+            .map(|e| e.id)
+            .expect("entité 3D");
+
+        let avant = engine.game.entities.iter().find(|e| e.id == id).unwrap().transform3d.as_ref().unwrap().position;
+        let avant_mat = match &engine.game.entities.iter().find(|e| e.id == id).unwrap().renderable3d.as_ref().unwrap().material {
+            crate::entity::MaterialRef::Solid { color, .. } => *color,
+            _ => 0,
+        };
+
+        engine.set_entity_transform3d(id, [9.0, 0.0, 9.0], [0.0; 3], [1.0; 3]).unwrap();
+        engine.set_entity_material3d(id, 0x00FF0000, 0.1, 0.9).unwrap();
+        assert_eq!(engine.game.entities.iter().find(|e| e.id == id).unwrap().transform3d.as_ref().unwrap().position, glam::Vec3::new(9.0, 0.0, 9.0));
+
+        // Annule le matériau puis la transformée.
+        assert!(engine.undo(), "undo matériau");
+        assert!(engine.undo(), "undo transformée");
+        let apres = engine.game.entities.iter().find(|e| e.id == id).unwrap();
+        assert_eq!(apres.transform3d.as_ref().unwrap().position, avant);
+        match &apres.renderable3d.as_ref().unwrap().material {
+            crate::entity::MaterialRef::Solid { color, .. } => assert_eq!(*color, avant_mat),
+            _ => {}
+        }
+
+        // Rétablit les deux.
+        assert!(engine.redo());
+        assert!(engine.redo());
+        assert_eq!(engine.game.entities.iter().find(|e| e.id == id).unwrap().transform3d.as_ref().unwrap().position, glam::Vec3::new(9.0, 0.0, 9.0));
     }
 
     /// Le matériau 3D de l'interface passe par le même état que l'op IA `SetMaterial`.
