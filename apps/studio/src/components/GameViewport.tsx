@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Play, Pause, Crosshair, Grid3X3, PenTool, Box } from 'lucide-react';
+import { Play, Pause, Crosshair, Grid3X3, PenTool, Box, Upload } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { detectRenderCapabilities, type RenderCapabilities } from '../render3d/capabilities';
-import { retryEngineBoot } from '../services/engineBridge';
+import { retryEngineBoot, importMeshAsset, placeMeshAsset } from '../services/engineBridge';
 
 /**
  * Envoie une commande au moteur uniquement dans la fenêtre Tauri.
@@ -94,6 +94,8 @@ const KEY_MAP: Record<string, number> = {
 export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, onSceneChanged, onSpawnAtScreen, isEditMode = false, view3d, onView3dChange }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [meshImporting, setMeshImporting] = useState(false);
+  const [meshImportError, setMeshImportError] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bootTick, setBootTick] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -378,6 +380,35 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
   }, [onSpawnAtScreen, toCanvasCoords]);
 
   // Actions de la barre d'outils du viewport
+  const importerEtPlacer = useCallback(async (fichier: File) => {
+    if (!/\.(glb|gltf)$/i.test(fichier.name)) {
+      setMeshImportError(`Format non reconnu : ${fichier.name}. Attendu : .glb ou .gltf.`);
+      return;
+    }
+    setMeshImporting(true);
+    setMeshImportError('');
+    try {
+      const octets = new Uint8Array(await fichier.arrayBuffer());
+      let plusGrand = 0;
+      try {
+        const vue = new DataView(octets.buffer);
+        const n = vue.getUint32(12, true);
+        const json = JSON.parse(new TextDecoder().decode(octets.subarray(20, 20 + n)));
+        for (const a of json.accessors ?? []) for (const v of a.max ?? []) plusGrand = Math.max(plusGrand, Number(v) || 0);
+      } catch { /* échelle 1 */ }
+      const echelle = plusGrand > 0 ? Math.min(10, Math.max(0.05, 4 / plusGrand)) : 1;
+      let binaire = '';
+      for (let i = 0; i < octets.length; i += 0x8000) binaire += String.fromCharCode(...octets.subarray(i, i + 0x8000));
+      const id = await importMeshAsset(fichier.name, btoa(binaire), 'Inconnue');
+      await placeMeshAsset(id, echelle);
+      onSceneChanged?.();
+    } catch (err: any) {
+      setMeshImportError(`Import impossible : ${err?.message ?? String(err)}`);
+    } finally {
+      setMeshImporting(false);
+    }
+  }, [onSceneChanged]);
+
   const togglePause = () => setIsPaused(prev => !prev);
   const setZoomMode = (z: 'fit' | '1x' | '2x' | '3x') => {
     setZoom(z);
@@ -400,6 +431,21 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
           <span className="badge-tag bg-[#2e1065] text-[#c084fc] border border-[#a855f7]">
             VIEWPORT {view3d ? '3D' : '2D'}
           </span>
+          {view3d && (
+            <>
+              <label
+                data-testid="viewport-mesh-import"
+                className="flex items-center gap-1.5 min-h-[28px] px-2 rounded border border-[#a855f7] bg-[#2d1b4e] text-[11px] font-semibold text-[#f8fafc] cursor-pointer hover:bg-[#3b0764]"
+                title="Enregistrer un .glb dans le projet et le placer dans la scène"
+              >
+                <input data-testid="viewport-mesh-input" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void importerEtPlacer(f); }} />
+                <Upload size={12} aria-hidden="true" />
+                {meshImporting ? 'Import…' : 'Importer un modèle 3D'}
+              </label>
+              {meshImportError && <span data-testid="viewport-mesh-error" className="text-[11px] text-[#fca5a5]">{meshImportError}</span>}
+            </>
+          )}
           {view3d && selected3dId !== null && (
             <span className="badge-tag bg-[#082F49] text-[#fbbf24] border border-[#f59e0b]">
               Sélection #{selected3dId}
