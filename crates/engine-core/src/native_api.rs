@@ -1546,6 +1546,50 @@ impl NativeEngine {
         self.game.get_entities_summary_json()
     }
 
+    /// Applique une transformée 3D (position, rotation en degrés, échelle).
+    ///
+    /// Même sémantique que l'opération IA `SetTransform3D` : valeurs finies,
+    /// échelle strictement positive, entité portant un `transform3d`.
+    pub fn set_entity_transform3d(
+        &mut self,
+        id: usize,
+        position: [f32; 3],
+        rotation_euler_deg: [f32; 3],
+        scale: [f32; 3],
+    ) -> Result<(), String> {
+        for valeur in position.iter().chain(rotation_euler_deg.iter()).chain(scale.iter()) {
+            if !valeur.is_finite() {
+                return Err(format!("valeur non finie dans la transformée 3D : {valeur}"));
+            }
+        }
+        if scale.iter().any(|c| *c <= 0.0) {
+            return Err(format!("échelle 3D strictement positive attendue (reçu {scale:?})"));
+        }
+        let entite = self
+            .game
+            .entities
+            .iter_mut()
+            .find(|e| e.id == id)
+            .ok_or_else(|| format!("entité {id} introuvable"))?;
+        let nom = entite.name.clone();
+        let transform = entite
+            .transform3d
+            .as_mut()
+            .ok_or_else(|| format!("l'entité « {nom} » n'a pas de transform3d"))?;
+        let position = glam::Vec3::from_array(position);
+        let rotation = crate::entity::Transform3D::from_euler_deg(
+            position,
+            glam::Vec3::from_array(rotation_euler_deg),
+            glam::Vec3::from_array(scale),
+        )
+        .rotation;
+        transform.position = position;
+        transform.rotation = rotation;
+        transform.scale = glam::Vec3::from_array(scale);
+        transform.prev_position = Some(position);
+        Ok(())
+    }
+
     pub fn update_entity_transform(
         &mut self,
         id: usize,

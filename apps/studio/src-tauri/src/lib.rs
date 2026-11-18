@@ -873,6 +873,22 @@ fn engine_new_3d_scene(engine: tauri::State<'_, SharedEngine>) -> usize {
         .count()
 }
 
+/// Applique une transformée 3D à une entité (position, rotation en degrés, échelle).
+/// Même chemin que l'opération IA `SetTransform3D` : une seule règle de validation.
+#[tauri::command]
+fn engine_set_entity_transform3d(
+    id: usize,
+    position: [f32; 3],
+    rotation_euler_deg: [f32; 3],
+    scale: [f32; 3],
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<(), String> {
+    engine
+        .lock()
+        .map_err(|erreur| format!("Moteur indisponible : {erreur}"))?
+        .set_entity_transform3d(id, position, rotation_euler_deg, scale)
+}
+
 #[tauri::command]
 fn engine_move_entity_3d(id: usize, x: f32, z: f32, engine: tauri::State<'_, SharedEngine>) -> bool {
     engine.lock().unwrap().move_entity_3d(id, x, z)
@@ -1915,6 +1931,7 @@ pub fn run() {
             engine_project_dimension,
             engine_new_3d_scene,
             engine_move_entity_3d,
+            engine_set_entity_transform3d,
             engine_canvas_width,
             engine_canvas_height,
             engine_on_key_down,
