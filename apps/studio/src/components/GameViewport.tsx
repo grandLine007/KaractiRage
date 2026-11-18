@@ -19,6 +19,10 @@ function envoyerMoteur(command: string, args?: Record<string, unknown>): void {
 interface GameViewportProps {
   onTelemetryUpdate?: (metrics: { fps: number; cpuUs: number; score: number; status: string }) => void;
   onSceneChanged?: () => void;
+  /** Sélection d'une entité depuis le viewport 3D (clic ou sélection vide). */
+  onSelectEntity?: (id: number | null) => void;
+  /** Suppression d'une entité (touche Suppr en 3D). */
+  onDeleteEntity?: (id: number) => void;
   onSpawnAtScreen?: (preset: string, sx: number, sy: number) => void;
   isEditMode?: boolean;
   view3d: boolean;
@@ -91,7 +95,7 @@ const KEY_MAP: Record<string, number> = {
   'KeyY': 40
 };
 
-export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, onSceneChanged, onSpawnAtScreen, isEditMode = false, view3d, onView3dChange }) => {
+export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, onSceneChanged, onSpawnAtScreen, onSelectEntity, onDeleteEntity, isEditMode = false, view3d, onView3dChange }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [meshImporting, setMeshImporting] = useState(false);
@@ -261,7 +265,10 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
     let active = true;
     import('../render3d/scene3d')
       .then((mod) => mod.startScene3D(container, () => {}, (id) => {
-        if (active) setSelected3dId(id);
+        if (!active) return;
+        setSelected3dId(id);
+        // La sélection 3D devient la sélection de l'atelier : l'inspecteur suit.
+        if (id !== null) onSelectEntity?.(id);
       }))
       .then((ctl) => {
         if (!active) {
@@ -280,7 +287,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
     return () => {
       active = false;
     };
-  }, [view3d]);
+  }, [view3d, onSelectEntity]);
 
   // Gestion des entrées clavier
   useEffect(() => {
@@ -300,7 +307,15 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
       const keyVal = KEY_MAP[e.code];
       if (keyVal !== undefined) {
         envoyerMoteur('engine_on_key_down', { key: keyVal });
-        if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace'].includes(e.code)) {
+        // Suppr en 3D : l'entité sélectionnée dans le viewport est retirée.
+      if (view3d && selected3dId !== null && e.key === 'Delete') {
+        e.preventDefault();
+        onDeleteEntity?.(selected3dId);
+        setSelected3dId(null);
+        return;
+      }
+
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace'].includes(e.code)) {
           e.preventDefault();
         }
       }
@@ -323,7 +338,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [view3d, selected3dId, onDeleteEntity]);
 
   // Conversion client -> coordonnées internes du canvas, en tenant compte du
   // letterboxing de `object-contain` (le contenu 1200×800 est centré dans l'élément).

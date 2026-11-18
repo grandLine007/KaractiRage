@@ -342,6 +342,8 @@ export async function startScene3D(
       for (let i = 0; i < b.instances.length; i++) {
         const clone = entry.root.clone(true);
         clone.matrixAutoUpdate = false;
+        // Le picking remonte du mesh touché jusqu'à ce porteur d'identifiant.
+        clone.userData.entityId = b.instances[i]?.entityId;
         entry.group.add(clone);
       }
     }
@@ -447,6 +449,18 @@ export async function startScene3D(
         if (!best || d < best.distance) {
           const entityId = entry.entityIds[hits[0].instanceId];
           if (entityId !== undefined) best = { distance: d, entityId };
+        }
+      }
+    }
+    // Maillages glTF : intersection récursive, puis remontée vers l'entité.
+    for (const entry of gltfPool.values()) {
+      if (!entry.root) continue;
+      const hits = raycaster.intersectObjects(entry.group.children, true);
+      if (hits.length > 0 && (!best || hits[0].distance < best.distance)) {
+        let objet: Object3D | null = hits[0].object;
+        while (objet && typeof objet.userData.entityId !== 'number') objet = objet.parent;
+        if (objet && typeof objet.userData.entityId === 'number') {
+          best = { distance: hits[0].distance, entityId: objet.userData.entityId };
         }
       }
     }

@@ -933,6 +933,8 @@ export function App() {
                 onSceneChanged={refresh}
                 onSpawnAtScreen={handleSpawnAtScreen}
                 isEditMode={currentMode === 'edit'}
+                onSelectEntity={id => { if (id !== null) void handleSelectEntity(id); }}
+                onDeleteEntity={id => void handleDelete(id)}
                 view3d={view3d}
                 onView3dChange={setView3d}
               />
