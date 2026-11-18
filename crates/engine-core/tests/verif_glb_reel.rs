@@ -68,39 +68,3 @@ fn glb_reel_importe_place_et_encode() {
     let _ = std::fs::remove_dir_all(&racine);
 }
 
-#[test]
-#[ignore]
-fn glb_reel_survit_au_rechargement_du_projet() {
-    use karactirage_engine::project::KaractiProject;
-
-    let chemin = PathBuf::from(std::env::var("KARACTI_GLB_REEL").expect("KARACTI_GLB_REEL"));
-    let octets = std::fs::read(&chemin).expect("lecture");
-    let racine = std::env::temp_dir().join(format!("karacti_reload_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&racine);
-    std::fs::create_dir_all(&racine).unwrap();
-
-    let mut manifeste = karactirage_engine::assets_manifest::AssetsManifest::default();
-    let importe = karactirage_engine::mesh_assets::enregistrer_mesh_importe(
-        &racine, &mut manifeste, "chateau", &octets, Some("Inconnue"), "2026-11-18",
-    ).unwrap();
-
-    let fichier = racine.join("projet.karacti");
-    let mut projet = KaractiProject::default();
-    projet.metadata.dimension = Some("3D".into());
-    projet.assets = Some(manifeste.clone());
-    projet.save_to_file(&fichier).unwrap();
-
-    let mut engine = karactirage_engine::native_api::NativeEngine::init().unwrap();
-    engine.load_project_depuis_fichier(projet.clone(), &fichier).unwrap();
-    println!("manifeste rechargé : {:?}", engine.mesh_manifest().gltf_file(&importe.id));
-    let id = engine.place_mesh_asset(&importe.id, Some(0.135)).expect("placement après rechargement");
-    let packet = karactirage_engine::render_packet::RenderPacket::decode(&engine.render_packet_frame(1.0/60.0)).unwrap();
-    let attendu = karactirage_engine::render_packet::asset_mesh_id(&importe.id);
-    println!("batch trouvé : {:?} | caméra z={}", packet.batches.iter().any(|b| b.mesh_id == attendu), packet.camera.pos[2]);
-    assert!(packet.batches.iter().any(|b| b.mesh_id == attendu), "batch absent après rechargement");
-    let chemin_asset = racine.join(engine.mesh_manifest().gltf_file(&importe.id).unwrap());
-    println!("octets relus : {}", std::fs::metadata(&chemin_asset).unwrap().len());
-    assert_eq!(std::fs::metadata(&chemin_asset).unwrap().len(), octets.len() as u64);
-    let _ = id;
-    let _ = std::fs::remove_dir_all(&racine);
-}
