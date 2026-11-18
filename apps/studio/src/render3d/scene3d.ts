@@ -20,6 +20,7 @@ import {
   SpotLight,
   Object3D,
   Group,
+  Mesh,
   Matrix4,
   Vector2,
   Vector3,
@@ -310,7 +311,30 @@ export async function startScene3D(
       scene.add(entry.group);
     }
     ensureGltfLoaded(b.meshId, entry);
-    if (!entry.root) return 0;
+    if (!entry.root) {
+      // Ne jamais échouer en silence : si le binaire n'est pas encore là (ou est
+      // illisible), on dessine un cube rouge à la place du maillage. L'auteur voit
+      // qu'une entité existe, et la console dit pourquoi.
+      if (entry.failed && entry.group.children.length !== b.instances.length) {
+        for (const enfant of [...entry.group.children]) entry.group.remove(enfant);
+        const cube = new Mesh(new BoxGeometry(1, 1, 1), new MeshStandardMaterial({ color: 0xf43f5e }));
+        cube.matrixAutoUpdate = false;
+        for (let i = 0; i < b.instances.length; i++) {
+          entry.group.add(i === 0 ? cube : cube.clone());
+        }
+      }
+      if (!entry.failed) return 0;
+    }
+    if (!entry.root) {
+      for (let i = 0; i < b.instances.length; i++) {
+        for (let k = 0; k < 16; k++) {
+          lerped[k] = b.instances[i].prevMatrix[k] + (b.instances[i].matrix[k] - b.instances[i].prevMatrix[k]) * alpha;
+        }
+        const enfant = entry.group.children[i];
+        if (enfant) enfant.matrix.fromArray(lerped);
+      }
+      return b.instances.length;
+    }
 
     // Un clone par instance, reconstruit si le nombre change.
     if (entry.group.children.length !== b.instances.length) {

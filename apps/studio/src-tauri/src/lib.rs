@@ -820,6 +820,9 @@ fn engine_place_mesh_asset(
     // Un maillage glTF dans la scène change la nature du projet : les outils 2D
     // (tuiles, sprites, pixel art) ne s'appliquent plus. On l'inscrit dans le projet.
     projet.metadata.dimension = Some("3D".to_string());
+    // La caméra de cadrage doit survivre au rechargement, sinon le viewport revient
+    // à l'orbite lointaine et le modèle paraît absent.
+    projet.camera3d = eng.game.camera3d.clone();
     projet.scene = projet.scenes.first().cloned().unwrap_or_else(|| projet.scene.clone());
     if let Err(erreur) = projet.save_to_file(&project_file) {
         // Pas d'entité fantôme en mémoire si le disque refuse : le Hub affichera
