@@ -693,7 +693,12 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
     if (!meshSavedId || meshPlacing) return;
     setMeshPlacing(true);
     try {
-      const entityId = await placeMeshAsset(meshSavedId);
+      // Un GLB peut mesurer 30 unités ou 0,3 : on le ramène à ~4 unités pour qu'il
+      // soit visible d'emblée, sans réglage manuel.
+      const boite = meshStats?.bounds;
+      const plusGrand = boite ? Math.max(boite.x, boite.y, boite.z) : 0;
+      const echelle = plusGrand > 0 ? Math.min(10, Math.max(0.05, 4 / plusGrand)) : 1;
+      const entityId = await placeMeshAsset(meshSavedId, echelle);
       onNotify?.(`Modèle placé dans la scène (entité ${entityId}).`, 'success');
       onSceneChanged?.();
     } catch (err: any) {
@@ -1088,13 +1093,23 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                       </label>
                       <label className="block text-[11px] text-[#94a3b8]">
                         Dimension
-                        <select
-                          value={form.dimension}
-                          onChange={e => setForm(f => ({ ...f, dimension: e.target.value }))}
-                          className="mt-1 w-full px-2 py-2 bg-[#0d0819] border border-[#2d1b4e] rounded text-sm text-[#f8fafc]"
-                        >
-                          {DIMENSIONS.map(d => <option key={d} value={d}>{d}</option>)}
-                        </select>
+                        {meshStats ? (
+                          // Un maillage glTF impose la 3D : proposer 2D / 2.5D n'a plus de sens.
+                          <p
+                            data-testid="dimension-imposee"
+                            className="mt-1 rounded border border-[#a855f7] bg-[#2e1065] px-2 py-2 text-sm font-semibold text-[#e9d5ff]"
+                          >
+                            3D (imposée par le modèle importé)
+                          </p>
+                        ) : (
+                          <select
+                            value={form.dimension}
+                            onChange={e => setForm(f => ({ ...f, dimension: e.target.value }))}
+                            className="mt-1 w-full px-2 py-2 bg-[#0d0819] border border-[#2d1b4e] rounded text-sm text-[#f8fafc]"
+                          >
+                            {DIMENSIONS.map(d => <option key={d} value={d}>{d}</option>)}
+                          </select>
+                        )}
                       </label>
                       <label className="block text-[11px] text-[#94a3b8] sm:col-span-2">
                         Modèle de départ (optionnel)

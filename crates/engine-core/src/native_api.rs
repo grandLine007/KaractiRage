@@ -455,6 +455,15 @@ impl NativeEngine {
             entite.name = nom;
             entite.tag = "mesh3d".to_string();
         }
+        // Cadrage : sans cela, un modèle posé à la cible de la caméra peut être
+        // traversé par elle (le château de 29 unités englobait la caméra à z=12).
+        // Le Studio ramène le modèle à ~4 unités : une caméra à 8 unités le voit
+        // entièrement. La distance ne dépend donc pas de l'échelle du fichier.
+        let cam = crate::subsystems::Camera3DData {
+            position: [cible.x, 2.5, cible.z + 8.0],
+            target: [cible.x, 1.0, cible.z],
+        };
+        self.game.camera3d = Some(cam);
         let _ = self.game.select_entity_by_id(id);
         Ok(id)
     }
@@ -633,15 +642,6 @@ impl NativeEngine {
         };
         self.game.finish_frame_telemetry(total_us);
         bytes
-    }
-
-    /// Nombre d'entités 3D présentes dans la scène courante.
-    fn count_3d_entities(&self) -> usize {
-        self.game
-            .entities
-            .iter()
-            .filter(|e| e.transform3d.is_some() && e.renderable3d.is_some())
-            .count()
     }
 
     /// Prochain identifiant d'entité disponible (max + 1).
@@ -1011,9 +1011,9 @@ impl NativeEngine {
     /// La scène est auto-peuplée au premier appel ; la caméra orbite lentement.
     pub fn render_packet_frame(&mut self, dt: f32) -> Vec<u8> {
         self.packet_time += dt.clamp(0.0, 0.25);
-        if self.count_3d_entities() == 0 {
-            self.populate_default_3d_scene();
-        }
+        // Aucune scène de démonstration automatique : un projet 3D vide doit rester
+        // vide. Le contenu par défaut s'obtient par la commande explicite
+        // `engine_new_3d_scene`, jamais en cachette du paquet de rendu.
 
         // Caméra : priorité au projet (`project.camera3d`), sinon orbite de démo.
         if let Some(cam) = self.game.camera3d.clone() {
