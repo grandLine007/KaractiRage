@@ -943,8 +943,7 @@ export function App() {
               )}
               <GameViewport
                 onTelemetryUpdate={handleTelemetry}
-                onSceneChanged={refresh}
-                onSpawnAtScreen={handleSpawnAtScreen}
+                        onSpawnAtScreen={handleSpawnAtScreen}
                 isEditMode={currentMode === 'edit'}
                 onSelectEntity={id => { if (id !== null) void handleSelectEntity(id); }}
                 onDeleteEntity={id => void handleDelete(id)}

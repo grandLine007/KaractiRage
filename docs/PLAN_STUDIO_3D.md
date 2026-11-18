@@ -38,12 +38,12 @@ jamais le contrat d'édition ; l'IA ne contourne jamais la validation.
 
 | Lot | Contenu | Critère de sortie |
 |---|---|---|
-| 3D.1 | **Inspecteur 3D** : champs position/rotation/échelle quand l'entité sélectionnée porte `Transform3D` | modifier la position déplace l'objet dans le viewport ; une opération IA équivalente donne le même résultat |
-| 3D.2 | **Sélection 3D** : clic → entité sélectionnée, surbrillance, `Suppr` | cliquer sur le château le sélectionne, l'inspecteur s'ouvre |
-| 3D.3 | **Caméra** : orbite souris, cible, réinitialiser | orbite sans perdre l'objet ; opération IA `SetCamera` équivalente |
-| 3D.4 | **Lumières** : panneau minimal (une lumière ajoutée par défaut) | le modèle cesse d'être blanc ; opération IA `AddLight` |
-| 3D.5 | **Matériaux** : couleur/rugosité dans l'inspecteur | changer la couleur se voit immédiatement |
-| 3D.6 | **Nettoyage Hub** : retirer le bloc « Enregistrer / Placer » et le code mort | build vert, aucune fonction orpheline |
+| 3D.1 ✅ | **Inspecteur 3D** : champs position/rotation/échelle quand l'entité sélectionnée porte `Transform3D` | modifier la position déplace l'objet dans le viewport ; une opération IA équivalente donne le même résultat |
+| 3D.2 ✅ | **Sélection 3D** : clic → entité sélectionnée, surbrillance, `Suppr` | cliquer sur le château le sélectionne, l'inspecteur s'ouvre |
+| 3D.3 ✅ | **Caméra** : orbite souris, cible, réinitialiser | orbite sans perdre l'objet ; opération IA `SetCamera` équivalente |
+| 3D.4 ✅ | **Lumières** : panneau minimal (une lumière ajoutée par défaut) | le modèle cesse d'être blanc ; opération IA `AddLight` |
+| 3D.5 ✅ | **Matériaux** : couleur/rugosité dans l'inspecteur | changer la couleur se voit immédiatement |
+| 3D.6 ✅ | **Nettoyage Hub** : retirer le bloc « Enregistrer / Placer » et le code mort | build vert, aucune fonction orpheline |
 
 ## 4. Ce que chaque lot doit prouver
 

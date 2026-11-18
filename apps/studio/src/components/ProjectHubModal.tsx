@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Archive, ArrowLeft, ArrowRight, Bot, Box, Check, ChevronDown,
   Compass, Copy, Cpu, FolderOpen, FolderSearch, Gamepad2, Layers, Loader2,
-  Pencil, Play, Plus, RefreshCw, Save, Search, Sparkles, Upload, Wrench, X, Zap,
+  Pencil, Play, Plus, RefreshCw, Search, Sparkles, Upload, Wrench, X, Zap,
 } from 'lucide-react';
 import {
   archiveProject, createProject, duplicateProject, isTauri, listProjects, openProject,
   removeRecent, renameProject, revealProject, systemDiagnostics,
   type NewProjectConfig, type ProjectEntry, type SystemDiagnostics,
 } from '../services/projectBridge';
-import { importMeshAsset, importTiledMap, loadProjectJson, placeMeshAsset } from '../services/engineBridge';
+import { importTiledMap, loadProjectJson } from '../services/engineBridge';
 // Import de TYPE seulement : la preview three.js (WebGPU + GLTFLoader) reste
 // dans un chunk séparé, chargé à la sélection d'un fichier — le Hub ne paie pas
 // le poids de three.js à l'ouverture.
@@ -60,16 +60,6 @@ const DIMENSIONS = ['2D', '2.5D', '3D'];
  * c'est lui qui permettra d'afficher les obligations d'attribution dans le paquet
  * exporté. « Inconnue » est le défaut sûr ; « Autre » ouvre un champ libre.
  */
-const MESH_LICENCES: { id: string; label: string }[] = [
-  { id: 'Inconnue', label: 'Inconnue (à vérifier avant publication)' },
-  { id: 'CC0-1.0', label: 'CC0 1.0 — domaine public' },
-  { id: 'CC-BY-4.0', label: 'CC BY 4.0 — attribution' },
-  { id: 'CC-BY-SA-4.0', label: 'CC BY-SA 4.0 — attribution, partage à l’identique' },
-  { id: 'CC-BY-NC-4.0', label: 'CC BY-NC 4.0 — attribution, pas d’usage commercial' },
-  { id: 'MIT', label: 'MIT' },
-  { id: 'Apache-2.0', label: 'Apache 2.0' },
-  { id: 'Autre', label: 'Autre… (préciser)' },
-];
 
 type Filter = 'all' | 'scene' | 'project' | 'recent';
 type SortKey = 'date' | 'name' | 'genre';
@@ -130,16 +120,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
-/** Base64 par blocs : évite de dépasser la pile sur un GLB de plusieurs Mo. */
-function bufferVersBase64(buffer: ArrayBuffer): string {
-  const octets = new Uint8Array(buffer);
-  const bloc = 0x8000;
-  let binaire = '';
-  for (let i = 0; i < octets.length; i += bloc) {
-    binaire += String.fromCharCode(...octets.subarray(i, i + bloc));
-  }
-  return btoa(binaire);
-}
 
 /** Détection de format sans charger three.js (miroir de `meshPreview.ts`). */
 function detecterFormat3D(buffer: ArrayBuffer): 'glb' | 'gltf' | null {
@@ -219,7 +199,7 @@ function SceneThumbnail({ entry }: { entry: ProjectEntry }) {
 }
 
 export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
-  isOpen, onClose, onOpenArchetypes, onOpenWizard, onOpenAiTab, onProjectOpened, onNotify, onSceneChanged,
+  isOpen, onClose, onOpenArchetypes, onOpenWizard, onOpenAiTab, onProjectOpened, onNotify,
   onCreateStart,
 }) => {
   // Parcours débutant : accueil (1 CTA) → création (nom + modèle) → jeu.
@@ -257,16 +237,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
   const [meshFileName, setMeshFileName] = useState('');
   const [meshStats, setMeshStats] = useState<MeshPreviewStats | null>(null);
   const [meshBusy, setMeshBusy] = useState(false);
-  const [meshSaving, setMeshSaving] = useState(false);
   const [meshError, setMeshError] = useState('');
-  // Licence : identifiant canonique choisi dans une liste, jamais un texte libre seul.
-  const [meshLicenseId, setMeshLicenseId] = useState('Inconnue');
-  const [meshLicenseCustom, setMeshLicenseCustom] = useState('');
-  const licenceEffective = meshLicenseId === 'Autre'
-    ? meshLicenseCustom.trim()
-    : meshLicenseId;
-  const [meshSavedId, setMeshSavedId] = useState('');
-  const [meshPlacing, setMeshPlacing] = useState(false);
   const [meshPreviewActive, setMeshPreviewActive] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -453,7 +424,6 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
     setMeshPreviewActive(false);
     setMeshStats(null);
     setMeshFileName('');
-    setMeshSavedId('');
     setMeshError('');
   };
 
@@ -615,7 +585,6 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
     const seq = ++meshLoadSeqRef.current;
     setMeshBusy(true);
     setMeshError('');
-    setMeshSavedId('');
 
     try {
       const buffer = await file.arrayBuffer();
@@ -652,35 +621,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
     }
   };
 
-  /** Enregistre le modèle affiché dans `<projet>/assets/meshes/` (Tauri seul). */
-  const enregistrerMesh = async () => {
-    if (!tauriDisponible) {
-      setMeshError(
-        "Mode navigateur : l’aperçu fonctionne, mais l’enregistrement dans le projet nécessite la fenêtre native du Studio Tauri.",
-      );
-      return;
-    }
-    const bytes = meshBytesRef.current;
-    if (!bytes || !meshFileName) {
-      setMeshError('Chargez d’abord un modèle 3D (.glb ou .gltf) dans l’aperçu.');
-      return;
-    }
-    setMeshSaving(true);
-    setMeshError('');
-    try {
-      const id = await importMeshAsset(meshFileName, bufferVersBase64(bytes), licenceEffective);
-      if (!id) throw new Error('réponse vide du moteur (projet non écrit ?)');
-      setMeshSavedId(id);
-      notify(
-        `Modèle 3D enregistré : identifiant « ${id} » (assets/meshes/${id}.${meshStats?.format ?? 'glb'}).`,
-        'success',
-      );
-    } catch (err: any) {
-      setMeshError(`Enregistrement impossible : ${err?.message ?? String(err)}`);
-    } finally {
-      setMeshSaving(false);
-    }
-  };
+
 
   /** Toute sortie du Hub libère le contexte WebGPU de l'aperçu 3D. */
   const fermerHub = () => {
@@ -688,25 +629,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
     onClose();
   };
 
-  /** Place le modèle enregistré dans la scène courante (entité réelle, sauvegardée). */
-  const placerMesh = async () => {
-    if (!meshSavedId || meshPlacing) return;
-    setMeshPlacing(true);
-    try {
-      // Un GLB peut mesurer 30 unités ou 0,3 : on le ramène à ~4 unités pour qu'il
-      // soit visible d'emblée, sans réglage manuel.
-      const boite = meshStats?.bounds;
-      const plusGrand = boite ? Math.max(boite.x, boite.y, boite.z) : 0;
-      const echelle = plusGrand > 0 ? Math.min(10, Math.max(0.05, 4 / plusGrand)) : 1;
-      const entityId = await placeMeshAsset(meshSavedId, echelle);
-      onNotify?.(`Modèle placé dans la scène (entité ${entityId}).`, 'success');
-      onSceneChanged?.();
-    } catch (err: any) {
-      setMeshError(`Placement impossible : ${err?.message ?? String(err)}`);
-    } finally {
-      setMeshPlacing(false);
-    }
-  };
+
 
   const goHome = () => {
     reinitialiserApercuMesh();
@@ -983,45 +906,14 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                       </div>
                     )}
 
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                      <label className="flex-1 text-[11px] text-[#94a3b8]">
-                        Licence (optionnelle)
-                        <select
-                          data-testid="mesh-license"
-                          value={meshLicenseId}
-                          onChange={e => setMeshLicenseId(e.target.value)}
-                          className="mt-1 w-full px-3 py-2 bg-[#0d0819] border border-[#2d1b4e] rounded text-xs text-[#f8fafc] focus:border-[#a855f7]"
-                        >
-                          {MESH_LICENCES.map(licence => (
-                            <option key={licence.id} value={licence.id}>{licence.label}</option>
-                          ))}
-                        </select>
-                      </label>
-                      {meshLicenseId === 'Autre' && (
-                        <label className="flex-1 text-[11px] text-[#94a3b8]">
-                          Précisez la licence
-                          <input
-                            data-testid="mesh-license-custom"
-                            value={meshLicenseCustom}
-                            onChange={e => setMeshLicenseCustom(e.target.value)}
-                            placeholder="nom ou identifiant de la licence"
-                            className="mt-1 w-full px-3 py-2 bg-[#0d0819] border border-[#2d1b4e] rounded text-xs text-[#f8fafc] focus:border-[#a855f7]"
-                          />
-                        </label>
-                      )}
-                      <button
-                        data-testid="mesh-save"
-                        type="button"
-                        onClick={() => void enregistrerMesh()}
-                        disabled={!tauriDisponible || !meshStats || meshBusy || meshSaving}
-                        className="flex min-h-[40px] items-center justify-center gap-1.5 rounded border border-[#a855f7] bg-[#2d1b4e] px-3 text-xs font-bold text-[#f8fafc] transition hover:bg-[#3b0764] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {meshSaving
-                          ? <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                          : <Save size={14} aria-hidden="true" />}
-                        {meshSaving ? 'Enregistrement…' : 'Enregistrer dans le projet'}
-                      </button>
-                    </div>
+                    <p
+                      data-testid="mesh-import-ailleurs"
+                      className="rounded border border-[#a855f7] bg-[#2e1065] px-3 py-2 text-[11px] leading-relaxed text-[#e9d5ff]"
+                    >
+                      Pour l'utiliser : passez en <strong>vue 3D</strong>. Le bouton
+                      «&nbsp;Importer un modèle 3D&nbsp;» est dans la barre du viewport : un seul
+                      clic l'enregistre dans le projet et le place dans la scène.
+                    </p>
 
                     {!tauriDisponible && (
                       <p data-testid="mesh-save-disabled" className="text-[10px] leading-relaxed text-[#f59e0b]">
@@ -1031,28 +923,7 @@ export const ProjectHubModal: React.FC<ProjectHubModalProps> = ({
                       </p>
                     )}
 
-                    {meshSavedId && (
-                      <p data-testid="mesh-saved" className="text-[11px] text-[#34d399]">
-                        Enregistré dans le projet : <span className="font-mono">{meshSavedId}</span>
-                        {' · '}provenance <span className="font-mono">Imported {'{'} tool: &quot;host&quot; {'}'}</span>
-                        {' · '}licence <span className="font-mono">{licenceEffective || 'non déclarée'}</span>
-                      </p>
-                    )}
 
-                    {meshSavedId && (
-                      <button
-                        data-testid="mesh-place"
-                        type="button"
-                        onClick={() => void placerMesh()}
-                        disabled={meshPlacing}
-                        className="flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded border border-[#34d399] bg-[#052e1b] px-3 text-xs font-bold text-[#d1fae5] transition hover:bg-[#064e2f] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {meshPlacing
-                          ? <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                          : <Box size={14} aria-hidden="true" />}
-                        {meshPlacing ? 'Placement…' : 'Placer dans la scène'}
-                      </button>
-                    )}
 
                     <p data-testid="mesh-placement-limite" className="text-[10px] leading-relaxed text-[#94a3b8]">
                       Le modèle placé devient une entité du projet (hiérarchie, sauvegarde). Le viewport
