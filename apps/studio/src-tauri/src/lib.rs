@@ -875,6 +875,34 @@ fn engine_new_3d_scene(engine: tauri::State<'_, SharedEngine>) -> usize {
 
 /// Applique une transformée 3D à une entité (position, rotation en degrés, échelle).
 /// Même chemin que l'opération IA `SetTransform3D` : une seule règle de validation.
+#[tauri::command]
+fn engine_lights(engine: tauri::State<'_, SharedEngine>) -> String {
+    engine.lock().unwrap().lights_json()
+}
+
+/// Ajoute une lumière 3D (voie utilisateur de l'opération IA `AddLight`).
+#[tauri::command]
+fn engine_add_light(
+    kind: String,
+    position: [f32; 3],
+    color: u32,
+    intensity: f32,
+    engine: tauri::State<'_, SharedEngine>,
+) -> Result<usize, String> {
+    engine
+        .lock()
+        .map_err(|erreur| format!("Moteur indisponible : {erreur}"))?
+        .add_light(kind, position, color, intensity)
+}
+
+#[tauri::command]
+fn engine_remove_light(index: usize, engine: tauri::State<'_, SharedEngine>) -> Result<(), String> {
+    engine
+        .lock()
+        .map_err(|erreur| format!("Moteur indisponible : {erreur}"))?
+        .remove_light(index)
+}
+
 /// Caméra 3D courante (`null` si le projet n'en définit pas).
 #[tauri::command]
 fn engine_get_camera3d(engine: tauri::State<'_, SharedEngine>) -> String {
@@ -1954,6 +1982,9 @@ pub fn run() {
             engine_set_entity_transform3d,
             engine_set_camera3d,
             engine_get_camera3d,
+            engine_lights,
+            engine_add_light,
+            engine_remove_light,
             engine_canvas_width,
             engine_canvas_height,
             engine_on_key_down,

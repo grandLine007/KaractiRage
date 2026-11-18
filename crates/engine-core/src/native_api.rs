@@ -1546,6 +1546,61 @@ impl NativeEngine {
         self.game.get_entities_summary_json()
     }
 
+    /// Ajoute une lumière 3D. Même état que l'opération IA `AddLight`, avec
+    /// position, couleur et intensité explicites (l'IA garde ses valeurs par défaut).
+    pub fn add_light(
+        &mut self,
+        kind: String,
+        position: [f32; 3],
+        color: u32,
+        intensity: f32,
+    ) -> Result<usize, String> {
+        if !matches!(kind.as_str(), "point" | "directional" | "ambient") {
+            return Err(format!("type de lumière inconnu : {kind} (attendu point, directional ou ambient)"));
+        }
+        for valeur in position.iter() {
+            if !valeur.is_finite() {
+                return Err(format!("coordonnée de lumière non finie : {valeur}"));
+            }
+        }
+        if !intensity.is_finite() || intensity < 0.0 || intensity > 100.0 {
+            return Err(format!("intensité hors plage 0–100 : {intensity}"));
+        }
+        self.game.lights.push(crate::subsystems::Light3DData {
+            kind,
+            position,
+            color: color & 0x00FF_FFFF,
+            intensity,
+        });
+        Ok(self.game.lights.len() - 1)
+    }
+
+    pub fn remove_light(&mut self, index: usize) -> Result<(), String> {
+        if index >= self.game.lights.len() {
+            return Err(format!("lumière {index} inexistante ({} au total)", self.game.lights.len()));
+        }
+        self.game.lights.remove(index);
+        Ok(())
+    }
+
+    /// Liste les lumières du projet en JSON (pour le panneau et les tests).
+    pub fn lights_json(&self) -> String {
+        let liste: Vec<serde_json::Value> = self
+            .game
+            .lights
+            .iter()
+            .map(|l| {
+                serde_json::json!({
+                    "kind": l.kind,
+                    "position": l.position,
+                    "color": l.color,
+                    "intensity": l.intensity,
+                })
+            })
+            .collect();
+        serde_json::to_string(&liste).unwrap_or_else(|_| "[]".to_string())
+    }
+
     /// Pose la caméra 3D du projet (position et cible).
     ///
     /// Même état que l'opération IA `SetCamera` (qui vise l'origine) : la voie
@@ -3097,6 +3152,21 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    /// Les lumières de l'interface passent par le même état que l'op IA `AddLight`.
+    #[test]
+    fn test_lumieres_ajout_retrait_et_refus() {
+        let mut engine = NativeEngine::init().unwrap();
+        let i = engine.add_light("point".into(), [3.0, 5.0, 3.0], 0x00FF_FFFF, 1.5).unwrap();
+        assert_eq!(i, 0);
+        assert_eq!(engine.game.lights.len(), 1);
+        assert!(engine.lights_json().contains("point"));
+        engine.remove_light(0).unwrap();
+        assert!(engine.game.lights.is_empty());
+        assert!(engine.add_light("spot".into(), [0.0; 3], 0, 1.0).is_err(), "type inconnu refusé");
+        assert!(engine.add_light("point".into(), [0.0; 3], 0, 500.0).is_err(), "intensité hors plage refusée");
+        assert!(engine.remove_light(7).is_err(), "index inexistant refusé");
     }
 
     /// La caméra 3D de l'interface passe par le même état que l'op IA `SetCamera`.

@@ -183,6 +183,33 @@ export async function getProjectDimension(): Promise<string> {
  * Applique une transformée 3D. Même chemin moteur que l'opération IA
  * `SetTransform3D` : la validation (échelle > 0, valeurs finies) est identique.
  */
+export interface Light3D {
+  kind: string;
+  position: [number, number, number];
+  color: number;
+  intensity: number;
+}
+
+/** Lumières 3D du projet (liste vide = éclairage par défaut du moteur). */
+export async function listLights(): Promise<Light3D[]> {
+  try {
+    const brut = await safeInvoke<string>('engine_lights');
+    const valeur = JSON.parse(brut) as Light3D[];
+    return Array.isArray(valeur) ? valeur : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Ajoute une lumière : voie utilisateur de l'opération IA `AddLight`. */
+export async function addLight(kind: string, position: [number, number, number], color: number, intensity: number): Promise<number> {
+  return await invoke<number>('engine_add_light', { kind, position, color, intensity });
+}
+
+export async function removeLight(index: number): Promise<void> {
+  await invoke('engine_remove_light', { index });
+}
+
 export interface Camera3D {
   position: [number, number, number];
   target: [number, number, number];

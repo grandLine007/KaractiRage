@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Play, Pause, Crosshair, Grid3X3, PenTool, Box, Upload } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { detectRenderCapabilities, type RenderCapabilities } from '../render3d/capabilities';
-import { retryEngineBoot, importMeshAsset, placeMeshAsset, getCamera3d, setCamera3d } from '../services/engineBridge';
+import { retryEngineBoot, importMeshAsset, placeMeshAsset, getCamera3d, setCamera3d, listLights, addLight, removeLight, type Light3D } from '../services/engineBridge';
 
 /**
  * Envoie une commande au moteur uniquement dans la fenêtre Tauri.
@@ -104,6 +104,9 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
   const [camOpen, setCamOpen] = useState(false);
   const [camPos, setCamPos] = useState<[number, number, number]>([0, 2.5, 8]);
   const [camTgt, setCamTgt] = useState<[number, number, number]>([0, 1, 0]);
+  // Lumières 3D : voie utilisateur de l'opération IA `AddLight`.
+  const [lightsOpen, setLightsOpen] = useState(false);
+  const [lights, setLights] = useState<Light3D[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bootTick, setBootTick] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -456,6 +459,28 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
     }
   }, []);
 
+  const rafraichirLumieres = useCallback(async () => {
+    setLights(await listLights());
+  }, []);
+
+  const ajouterLumiere = useCallback(async () => {
+    try {
+      await addLight('point', [3, 5, 3], 0xFFFFFF, 1.0);
+      await rafraichirLumieres();
+    } catch (err: any) {
+      setMeshImportError(`Lumière refusée : ${err?.message ?? String(err)}`);
+    }
+  }, [rafraichirLumieres]);
+
+  const supprimerLumiere = useCallback(async (index: number) => {
+    try {
+      await removeLight(index);
+      await rafraichirLumieres();
+    } catch (err: any) {
+      setMeshImportError(`Lumière refusée : ${err?.message ?? String(err)}`);
+    }
+  }, [rafraichirLumieres]);
+
   const togglePause = () => setIsPaused(prev => !prev);
   const setZoomMode = (z: 'fit' | '1x' | '2x' | '3x') => {
     setZoom(z);
@@ -472,6 +497,28 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
 
   return (
     <div className="relative flex flex-col flex-1 h-full bg-[#07040d] overflow-hidden select-none">
+      {view3d && lightsOpen && (
+        <div data-testid="lights-panel" className="flex flex-wrap items-center gap-2 px-4 py-2 bg-[#0b0716] border-b border-[#2d1b4e] text-[11px] text-[#94a3b8]">
+          {lights.length === 0 && <span>Éclairage par défaut du moteur.</span>}
+          {lights.map((l, i) => (
+            <span key={i} className="flex items-center gap-1 rounded border border-[#2d1b4e] bg-[#150d27] px-2 py-1">
+              <span className="font-mono text-[#f8fafc]">{l.kind}</span>
+              <span>#{l.color.toString(16).padStart(6, '0')}</span>
+              <span>×{l.intensity}</span>
+              <button type="button" onClick={() => void supprimerLumiere(i)} className="text-[#fca5a5] hover:text-[#f43f5e]" aria-label={`Supprimer la lumière ${i + 1}`}>✕</button>
+            </span>
+          ))}
+          <button
+            data-testid="lights-add"
+            type="button"
+            onClick={() => void ajouterLumiere()}
+            className="min-h-[28px] px-2 rounded border border-[#34d399] bg-[#052e1b] text-[11px] font-semibold text-[#d1fae5]"
+          >
+            Ajouter une lumière
+          </button>
+        </div>
+      )}
+
       {view3d && camOpen && (
         <div data-testid="camera-panel" className="flex flex-wrap items-end gap-2 px-4 py-2 bg-[#0b0716] border-b border-[#2d1b4e]">
           {([
@@ -526,6 +573,15 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
               </label>
               {meshImportError && <span data-testid="viewport-mesh-error" className="text-[11px] text-[#fca5a5]">{meshImportError}</span>}
 
+              <button
+                data-testid="viewport-lights"
+                type="button"
+                onClick={() => { setLightsOpen(prev => !prev); void rafraichirLumieres(); }}
+                className="flex items-center gap-1 min-h-[28px] px-2 rounded border border-[#2d1b4e] bg-[#150d27] text-[11px] font-semibold text-[#f8fafc] hover:border-[#a855f7]"
+                title="Lumières 3D du projet (comme l'opération IA AddLight)"
+              >
+                Lumières
+              </button>
               <button
                 data-testid="viewport-camera"
                 type="button"
