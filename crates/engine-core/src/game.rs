@@ -544,6 +544,17 @@ impl GameState {
                     self.audio.play(SoundType::UiClick);
                     return true;
                 }
+                StudioCommand::EditLights { label, before, after } => {
+                    self.lights = before.clone();
+                    self.editor.undo_stack.push_redo(StudioCommand::EditLights {
+                        label,
+                        before,
+                        after,
+                    });
+                    self.status_message = format!("Annulé : {}", desc);
+                    self.audio.play(SoundType::WireCut);
+                    return true;
+                }
                 StudioCommand::Edit3D { entity_id, label, before, after } => {
                     if let Some(entity) = self.entities.iter_mut().find(|e| e.id == entity_id) {
                         entity.transform3d = before.transform3d.clone();
@@ -553,8 +564,8 @@ impl GameState {
                         self.editor.undo_stack.push_redo(StudioCommand::Edit3D {
                             entity_id,
                             label,
-                            before: after,
-                            after: before,
+                            before,
+                            after,
                         });
                         self.status_message = format!("Annulé : {}", desc);
                         self.audio.play(SoundType::WireCut);
@@ -634,6 +645,17 @@ impl GameState {
                     });
                     self.status_message = format!("Rétabli : {}", desc);
                     self.audio.play(SoundType::UiClick);
+                    return true;
+                }
+                StudioCommand::EditLights { label, before, after } => {
+                    self.lights = after.clone();
+                    self.editor.undo_stack.push_undo(StudioCommand::EditLights {
+                        label,
+                        before,
+                        after,
+                    });
+                    self.status_message = format!("Rétabli : {}", desc);
+                    self.audio.play(SoundType::WireCut);
                     return true;
                 }
                 StudioCommand::Edit3D { entity_id, label, before, after } => {

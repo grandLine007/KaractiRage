@@ -35,6 +35,12 @@ pub enum StudioCommand {
         new_x: f32,
         new_y: f32,
     },
+    /// Mutation de la liste des lumières : réversible par instantané complet.
+    EditLights {
+        label: String,
+        before: Vec<crate::subsystems::Light3DData>,
+        after: Vec<crate::subsystems::Light3DData>,
+    },
     /// Mutation 3D (transformée, matériau) : réversible par instantané.
     Edit3D {
         entity_id: usize,
@@ -63,6 +69,7 @@ impl StudioCommand {
             }
             StudioCommand::ApplyAiPatch { description, .. } => format!("Patch IA '{}'", description),
             StudioCommand::Edit3D { label, .. } => format!("Édition 3D '{}'", label),
+            StudioCommand::EditLights { label, .. } => format!("Lumières '{}'", label),
         }
     }
 }

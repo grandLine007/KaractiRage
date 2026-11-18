@@ -1616,11 +1616,18 @@ impl NativeEngine {
         if !intensity.is_finite() || intensity < 0.0 || intensity > 100.0 {
             return Err(format!("intensité hors plage 0–100 : {intensity}"));
         }
+        let avant = self.game.lights.clone();
         self.game.lights.push(crate::subsystems::Light3DData {
             kind,
             position,
             color: color & 0x00FF_FFFF,
             intensity,
+        });
+        let apres = self.game.lights.clone();
+        self.game.editor.undo_stack.push_undo(crate::editor::StudioCommand::EditLights {
+            label: "ajout".to_string(),
+            before: avant,
+            after: apres,
         });
         Ok(self.game.lights.len() - 1)
     }
@@ -1629,7 +1636,14 @@ impl NativeEngine {
         if index >= self.game.lights.len() {
             return Err(format!("lumière {index} inexistante ({} au total)", self.game.lights.len()));
         }
+        let avant = self.game.lights.clone();
         self.game.lights.remove(index);
+        let apres = self.game.lights.clone();
+        self.game.editor.undo_stack.push_undo(crate::editor::StudioCommand::EditLights {
+            label: "retrait".to_string(),
+            before: avant,
+            after: apres,
+        });
         Ok(())
     }
 
@@ -3216,6 +3230,22 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    /// Ajouter puis annuler une lumière restaure la liste exacte.
+    #[test]
+    fn test_undo_lumieres_restaure_la_liste() {
+        let mut engine = NativeEngine::init().unwrap();
+        let avant = engine.game.lights.clone();
+        engine.add_light("point".into(), [1.0, 2.0, 3.0], 0x00FFFFFF, 1.0).unwrap();
+        assert_eq!(engine.game.lights.len(), avant.len() + 1);
+        assert!(engine.undo(), "undo ajout");
+        assert_eq!(engine.game.lights, avant);
+        assert!(engine.redo(), "redo ajout");
+        assert_eq!(engine.game.lights.len(), avant.len() + 1);
+        engine.remove_light(0).unwrap();
+        assert!(engine.undo(), "undo retrait");
+        assert_eq!(engine.game.lights.len(), avant.len() + 1);
     }
 
     /// Annuler une édition 3D restaure l'état exact, rétablir le remet.
