@@ -27,3 +27,13 @@ temps ressenti (2 s ? 8 s ?) : « rapidement » n'est pas un chiffre.
 | Date | Sujet | Résultat |
 |---|---|---|
 | 17/11/2026 | Parcours « Créer un jeu » | validé (trouvé, rapide) |
+
+## 3. Modèle 3D importé — 18 novembre 2026
+
+**Testeur** : propriétaire.
+
+| Question | Réponse |
+|---|---|
+| Le château importé apparaît-il dans le viewport 3D ? | **oui** — « le chateau apparait maintenant » |
+
+**Conclusion** : la chaîne import → enregistrement → placement → rendu fonctionne en fenêtre réelle. Le blocage venait du parcours (deux boutons, dont le premier ne menait nulle part), pas du moteur.
