@@ -366,6 +366,10 @@ export async function startScene3D(
   let orbiting = false;
   let orbitPX = 0;
   let orbitPY = 0;
+  // Panoramique (bouton central) : caméra et cible glissent ensemble sur le plan de vue.
+  const panDroite = new Vector3();
+  const panHaut = new Vector3();
+  let panning = false;
   let lastOrbitSend = 0;
 
   function applyPacket(p: DecodedPacket, alpha: number): number {
@@ -479,7 +483,7 @@ export async function startScene3D(
   };
 
   /** Orbite autour de la cible : envoie la nouvelle caméra au moteur (throttlé). */
-  const envoyerCameraOrbite = (immediat: boolean) => {
+  const envoyerCamera = (immediat: boolean) => {
     if (!inTauri) return;
     const now = performance.now();
     if (!immediat && now - lastOrbitSend < 50) return;
@@ -499,12 +503,35 @@ export async function startScene3D(
       e.preventDefault();
       return;
     }
+    if (e.button === 1) {
+      panning = true;
+      orbitPX = e.clientX;
+      orbitPY = e.clientY;
+      e.preventDefault();
+      return;
+    }
     const id = pick(e);
     selectedId = id;
     onPick?.(id);
     dragging = id !== null;
   };
   const onPointerMove = (e: PointerEvent) => {
+    if (panning) {
+      const dx = e.clientX - orbitPX;
+      const dy = e.clientY - orbitPY;
+      orbitPX = e.clientX;
+      orbitPY = e.clientY;
+      panDroite.setFromMatrixColumn(camera.matrix, 0);
+      panHaut.setFromMatrixColumn(camera.matrix, 1);
+      const k = camera.position.distanceTo(lastTarget) * 0.0015;
+      const glissement = panDroite.multiplyScalar(-dx * k).add(panHaut.multiplyScalar(dy * k));
+      camera.position.add(glissement);
+      lastTarget.add(glissement);
+      camera.lookAt(lastTarget);
+      camera.updateProjectionMatrix();
+      envoyerCamera(false);
+      return;
+    }
     if (orbiting) {
       const dx = (e.clientX - orbitPX) * 0.005;
       const dy = (e.clientY - orbitPY) * 0.005;
@@ -523,7 +550,7 @@ export async function startScene3D(
       );
       camera.lookAt(cible);
       camera.updateProjectionMatrix();
-      envoyerCameraOrbite(false);
+      envoyerCamera(false);
       return;
     }
     if (!dragging || selectedId === null) return;
@@ -536,9 +563,10 @@ export async function startScene3D(
     }
   };
   const onPointerUp = () => {
-    if (orbiting) {
+    if (orbiting || panning) {
       orbiting = false;
-      envoyerCameraOrbite(true);
+      panning = false;
+      envoyerCamera(true);
     }
     dragging = false;
   };
@@ -551,7 +579,7 @@ export async function startScene3D(
     camera.position.copy(cible).add(nouveau);
     camera.lookAt(cible);
     camera.updateProjectionMatrix();
-    envoyerCameraOrbite(false);
+    envoyerCamera(false);
   };
 
   dom.addEventListener('pointerdown', onPointerDown);
