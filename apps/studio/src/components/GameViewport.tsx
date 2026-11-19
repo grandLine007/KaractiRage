@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useEffectEvent } from 'react';
 import { Play, Pause, Crosshair, Grid3X3, PenTool, Box, Upload } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { detectRenderCapabilities, type RenderCapabilities } from '../render3d/capabilities';
@@ -256,7 +256,19 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
   // Vue 3D (three.js) pilotée par le moteur Rust via `engine_frame_packet`.
   // Montée UNE fois (à la première bascule) puis conservée en vie : pause/resume au
   // lieu de recréer le device GPU à chaque aller-retour 2D↔3D.
-  useEffect(() => {
+    // Les callbacks changent d'identité à chaque render de l'App : la scène 3D ne doit
+  // JAMAIS être recréée pour ça (sinon le picking perd son état au pire moment).
+  // useEffectEvent lit toujours la dernière version sans entrer dans les dépendances.
+  const notifierSelection = useEffectEvent((id: number | null) => {
+    setSelected3dId(id);
+    // La sélection 3D devient la sélection de l'atelier : l'inspecteur suit.
+    if (id !== null) onSelectEntity?.(id);
+  });
+  const notifierGizmo = useEffectEvent((id: number, position: [number, number, number]) => {
+    onGizmoMove?.(id, position);
+  });
+
+useEffect(() => {
     if (!view3d) {
       scene3dCtlRef.current?.pause();
       return;
@@ -278,11 +290,9 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
         () => {},
         (id) => {
           if (!active) return;
-          setSelected3dId(id);
-          // La sélection 3D devient la sélection de l'atelier : l'inspecteur suit.
-          if (id !== null) onSelectEntity?.(id);
+          notifierSelection(id);
         },
-        { onMoveAxis: (id, position) => onGizmoMove?.(id, position) },
+        { onMoveAxis: (id, position) => notifierGizmo(id, position) },
       ))
       .then((ctl) => {
         if (!active) {
@@ -301,7 +311,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
     return () => {
       active = false;
     };
-  }, [view3d, onSelectEntity, onGizmoMove]);
+  }, [view3d]);
 
   // Gestion des entrées clavier
   useEffect(() => {

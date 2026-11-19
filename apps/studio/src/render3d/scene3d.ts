@@ -732,7 +732,15 @@ export async function startScene3D(
 
   function loop() {
     if (!running || disposed) return;
-    rafId = requestAnimationFrame(loop);
+    // Hameçon de test : expose l'état du gizmo et de la sélection au harnais.
+  if (typeof window !== 'undefined') {
+    (window as unknown as { __scene3dDebug?: unknown }).__scene3dDebug = {
+      gizmoVisible: () => gizmoGroupe.visible,
+      selection: () => selectedId,
+    };
+  }
+
+  rafId = requestAnimationFrame(loop);
     // Récupération non bloquante (1 requête IPC max en vol).
     void fetchPacket();
     if (!latestPacket) return;

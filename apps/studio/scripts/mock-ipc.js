@@ -96,6 +96,29 @@
   // Dimension du projet simulée : le placement d'un maillage 3D la fait passer à 3D.
   let DIMENSION_PROJET = '2D';
 
+  // Paquet de rendu 3D réel (1 cube à l'origine, entité 1) : permet d'exécuter
+  // scene3d, le picking et le gizmo dans les tests d'interface.
+  let FRAME_3D = 0;
+  function paquet3D() {
+    const dv = new DataView(new ArrayBuffer(1024));
+    let p = 0;
+    const w32 = v => { dv.setUint32(p, v, true); p += 4; };
+    const w16 = v => { dv.setUint16(p, v, true); p += 2; };
+    const wf = v => { dv.setFloat32(p, v, true); p += 4; };
+    w32(0x4b50524b); w16(1); w16(0); w32(++FRAME_3D);
+    w32(1); w32(0); // 1 batch, 0 lumière
+    wf(60); wf(1.5); wf(0.1); wf(200);          // caméra fov/aspect/near/far
+    wf(0); wf(5); wf(10);                        // position
+    wf(0); wf(0); wf(0);                         // cible
+    wf(0); wf(1); wf(0);                         // up
+    wf(0.35); wf(0.35); wf(0.35);               // ambient
+    w16(0); w16(0); w32(1);                      // mesh 0, matériau 0, 1 instance
+    const identite = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    identite.forEach(wf); identite.forEach(wf);
+    w32(0xFFFFFFFF); w32(0); w32(1);             // teinte blanche, flags, entité 1
+    return dv.buffer.slice(0, p);
+  }
+
   const HANDLERS = {
     // Boot & état
     engine_status: () => ({ state: 'ready', error: null, init_ms: 120 }),
@@ -103,7 +126,7 @@
     engine_canvas_width: () => CANVAS_W,
     engine_canvas_height: () => CANVAS_H,
     engine_frame: () => frameBuffer(),
-    engine_frame_packet: () => new ArrayBuffer(0),
+    engine_frame_packet: () => paquet3D(),
     engine_telemetry: () => ({ fps: 60, total_us: 310, score: 0, status: 'OK' }),
     engine_system_diagnostics: () => JSON.stringify({ os: 'macOS', arch: 'arm64', cpu_cores: 8, fps: 60, entities: 12, projects_home: '~/KaractiRage/projects', engine: 'KaractiRage Engine Core 0.1.0' }),
 
