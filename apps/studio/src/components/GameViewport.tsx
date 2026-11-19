@@ -23,6 +23,8 @@ interface GameViewportProps {
   onSelectEntity?: (id: number | null) => void;
   /** Suppression d'une entité (touche Suppr en 3D). */
   onDeleteEntity?: (id: number) => void;
+  /** Déplacement par le gizmo (position monde), émis en continu pendant le glisser. */
+  onGizmoMove?: (id: number, position: [number, number, number]) => void;
   onSpawnAtScreen?: (preset: string, sx: number, sy: number) => void;
   isEditMode?: boolean;
   view3d: boolean;
@@ -95,7 +97,7 @@ const KEY_MAP: Record<string, number> = {
   'KeyY': 40
 };
 
-export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, onSceneChanged, onSpawnAtScreen, onSelectEntity, onDeleteEntity, isEditMode = false, view3d, onView3dChange }) => {
+export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, onSceneChanged, onSpawnAtScreen, onSelectEntity, onDeleteEntity, onGizmoMove, isEditMode = false, view3d, onView3dChange }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [meshImporting, setMeshImporting] = useState(false);
@@ -271,12 +273,17 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
     }
     let active = true;
     import('../render3d/scene3d')
-      .then((mod) => mod.startScene3D(container, () => {}, (id) => {
-        if (!active) return;
-        setSelected3dId(id);
-        // La sélection 3D devient la sélection de l'atelier : l'inspecteur suit.
-        if (id !== null) onSelectEntity?.(id);
-      }))
+      .then((mod) => mod.startScene3D(
+        container,
+        () => {},
+        (id) => {
+          if (!active) return;
+          setSelected3dId(id);
+          // La sélection 3D devient la sélection de l'atelier : l'inspecteur suit.
+          if (id !== null) onSelectEntity?.(id);
+        },
+        { onMoveAxis: (id, position) => onGizmoMove?.(id, position) },
+      ))
       .then((ctl) => {
         if (!active) {
           started3dRef.current = false;
@@ -294,7 +301,7 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
     return () => {
       active = false;
     };
-  }, [view3d, onSelectEntity]);
+  }, [view3d, onSelectEntity, onGizmoMove]);
 
   // Gestion des entrées clavier
   useEffect(() => {

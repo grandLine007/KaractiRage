@@ -28,6 +28,7 @@ import {
   Euler,
   Raycaster,
   Plane,
+  ArrowHelper,
 } from 'three/webgpu';
 import { decodePacket, type DecodedPacket } from './packet';
 
@@ -126,10 +127,16 @@ export interface Scene3DController {
   dispose: () => void;
 }
 
+export interface Scene3DOptions {
+  /** Déplacement par le gizmo : position monde émise, throttle ~20/s + un envoi final. */
+  onMoveAxis?: (entityId: number, position: [number, number, number]) => void;
+}
+
 export async function startScene3D(
   container: HTMLElement,
   onStats: Scene3DStatsListener,
   onPick?: (entityId: number | null) => void,
+  options: Scene3DOptions = {},
 ): Promise<Scene3DController> {
   const scene = new Scene();
   scene.background = new Color(0x0b0d14);
@@ -354,6 +361,7 @@ export async function startScene3D(
       }
       const enfant = entry.group.children[i];
       if (enfant) enfant.matrix.fromArray(lerped);
+      if (inst.entityId === selectedId) { matriceSelection.fromArray(lerped); matriceSelectionValide = true; }
     }
     return b.instances.length;
   }
@@ -361,6 +369,26 @@ export async function startScene3D(
   const tmpColor = new Color();
   const lerped = new Float32Array(16);
   let selectedId: number | null = null;
+  // Gizmo de translation : trois poignées d'axe à la position de l'entité sélectionnée.
+  const axesMonde = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
+  const couleursAxe = [0xff5a5a, 0x5aff7a, 0x5a9bff];
+  const gizmoGroupe = new Group();
+  const gizmoFleches: ArrowHelper[] = axesMonde.map((dir, i) => {
+    const fleche = new ArrowHelper(dir, new Vector3(), 1, couleursAxe[i], 0.2, 0.08);
+    fleche.userData.axis = i;
+    return fleche;
+  });
+  gizmoFleches.forEach(fleche => gizmoGroupe.add(fleche));
+  gizmoGroupe.visible = false;
+  scene.add(gizmoGroupe);
+  const matriceSelection = new Matrix4();
+  let matriceSelectionValide = false;
+  // Glisser de poignée : axe + position initiale + plan de projection.
+  let axeGlisse: Vector3 | null = null;
+  let posDepartGlisse = new Vector3();
+  let planGlisse = new Plane();
+  let hitDepartGlisse = new Vector3();
+  let dernierEnvoiGizmo = 0;
   // Orbite caméra (bouton droit) : la cible vient du paquet, l'angle vient du geste.
   const lastTarget = new Vector3();
   let orbiting = false;
@@ -373,6 +401,8 @@ export async function startScene3D(
   let lastOrbitSend = 0;
 
   function applyPacket(p: DecodedPacket, alpha: number): number {
+    matriceSelection.identity();
+    matriceSelectionValide = false;
     camera.fov = p.camera.fov;
     camera.near = p.camera.near;
     camera.far = p.camera.far;
@@ -417,6 +447,7 @@ export async function startScene3D(
         }
         tmpMatrix.fromArray(lerped);
         entry.mesh.setMatrixAt(i, tmpMatrix);
+        if (inst.entityId === selectedId) { matriceSelection.copy(tmpMatrix); matriceSelectionValide = true; }
         tmpColor.setHex(inst.entityId === selectedId ? 0xffff00 : inst.tint & 0xffffff);
         entry.mesh.setColorAt(i, tmpColor);
         entry.entityIds[i] = inst.entityId;
@@ -514,8 +545,44 @@ export async function startScene3D(
     selectedId = id;
     onPick?.(id);
     dragging = id !== null;
+    // Gizmo : une poignée d'axe attrape le geste à la place du déplacement au sol.
+    if (id !== null && matriceSelectionValide) {
+      updatePointer(e);
+      raycaster.setFromCamera(pointer, camera);
+      const touches = raycaster.intersectObjects(gizmoFleches as unknown as Object3D[], true);
+      if (touches.length > 0) {
+        let objet: Object3D | null = touches[0].object;
+        while (objet && typeof objet.userData.axis !== 'number') objet = objet.parent;
+        if (objet && typeof objet.userData.axis === 'number') {
+          const axe = axesMonde[objet.userData.axis];
+          posDepartGlisse.setFromMatrixPosition(matriceSelection);
+          const vue = camera.position.clone().sub(posDepartGlisse).normalize();
+          const normale = new Vector3().crossVectors(axe, vue);
+          if (normale.lengthSq() < 1e-8) normale.set(0, 1, 0);
+          planGlisse.setFromNormalAndCoplanarPoint(normale, posDepartGlisse);
+          raycaster.ray.intersectPlane(planGlisse, hitDepartGlisse);
+          axeGlisse = axe;
+          dragging = false;
+        }
+      }
+    }
   };
   const onPointerMove = (e: PointerEvent) => {
+    if (axeGlisse && selectedId !== null) {
+      updatePointer(e);
+      raycaster.setFromCamera(pointer, camera);
+      const point = new Vector3();
+      if (!raycaster.ray.intersectPlane(planGlisse, point)) return;
+      const delta = point.sub(hitDepartGlisse).dot(axeGlisse);
+      const nouvelle = posDepartGlisse.clone().addScaledVector(axeGlisse, delta);
+      matriceSelection.setPosition(nouvelle);
+      const maintenant = performance.now();
+      if (maintenant - dernierEnvoiGizmo > 50) {
+        dernierEnvoiGizmo = maintenant;
+        options.onMoveAxis?.(selectedId, [nouvelle.x, nouvelle.y, nouvelle.z]);
+      }
+      return;
+    }
     if (panning) {
       const dx = e.clientX - orbitPX;
       const dy = e.clientY - orbitPY;
@@ -563,6 +630,11 @@ export async function startScene3D(
     }
   };
   const onPointerUp = () => {
+    if (axeGlisse && selectedId !== null) {
+      const position = new Vector3().setFromMatrixPosition(matriceSelection);
+      options.onMoveAxis?.(selectedId, [position.x, position.y, position.z]);
+      axeGlisse = null;
+    }
     if (orbiting || panning) {
       orbiting = false;
       panning = false;
@@ -643,6 +715,21 @@ export async function startScene3D(
     }
   }
 
+  /** Positionne les poignées sur l'entité sélectionnée, taille liée à la distance. */
+  function mettreAJourGizmo() {
+    const actif = selectedId !== null && !orbiting && !panning && !axeGlisse;
+    gizmoGroupe.visible = selectedId !== null && !orbiting && !panning;
+    if (!gizmoGroupe.visible) return;
+    const position = new Vector3().setFromMatrixPosition(matriceSelection);
+    const distance = Math.max(camera.position.distanceTo(position), 0.1);
+    const taille = Math.max(0.6, distance * 0.12);
+    for (const fleche of gizmoFleches) {
+      fleche.position.copy(position);
+      fleche.setLength(taille, taille * 0.22, taille * 0.09);
+    }
+    void actif;
+  }
+
   function loop() {
     if (!running || disposed) return;
     rafId = requestAnimationFrame(loop);
@@ -656,6 +743,7 @@ export async function startScene3D(
     const alpha = Math.min(Math.max((now - packetAt) / (packetDt * 1000), 0), 1);
 
     const instances = applyPacket(latestPacket, alpha);
+    mettreAJourGizmo();
     renderer.render(scene, camera);
 
     acc += rdt;

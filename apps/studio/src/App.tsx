@@ -649,6 +649,24 @@ export function App() {
     [pushToast, refresh],
   );
 
+
+  /** Gizmo : déplacement continu ; rotation et échelle viennent de l'entité sélectionnée. */
+  const handleGizmoMove = useCallback(
+    async (id: number, position: [number, number, number]) => {
+      try {
+        await setEntityTransform3d(
+          id,
+          position,
+          selectedEntity?.transform3d?.rotation_euler_deg ?? [0, 0, 0],
+          selectedEntity?.transform3d?.scale ?? [1, 1, 1],
+        );
+      } catch (err: any) {
+        pushToast(`Gizmo refusé : ${err?.message ?? String(err)}`, 'error');
+      }
+    },
+    [pushToast, selectedEntity],
+  );
+
   /** Voie utilisateur de la transformée 3D (l'IA passe par SetTransform3D, même moteur). */
   const handleUpdateTransform3d = useCallback(
     async (
@@ -932,6 +950,7 @@ export function App() {
                 isEditMode={currentMode === 'edit'}
                 onSelectEntity={id => { if (id !== null) void handleSelectEntity(id); }}
                 onDeleteEntity={id => void handleDelete(id)}
+                onGizmoMove={(id, pos) => void handleGizmoMove(id, pos)}
                 view3d={view3d}
                 onView3dChange={setView3d}
               />
