@@ -560,6 +560,15 @@ export const GameViewport: React.FC<GameViewportProps> = ({ onTelemetryUpdate, o
             VIEWPORT {view3d ? '3D' : '2D'}
           </span>
           {view3d && (
+            <span
+              data-testid="viewport-3d-hint"
+              className="hidden md:inline text-[10px] text-[#94a3b8]"
+              title="Manipulation 3D : clic gauche = sélectionner/déplacer · bouton droit = orbite · molette = zoom"
+            >
+              clic = déplacer · droit = orbite · molette = zoom
+            </span>
+          )}
+          {view3d && (
             <>
               <label
                 data-testid="viewport-mesh-import"

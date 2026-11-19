@@ -361,14 +361,25 @@ export async function startScene3D(
   const tmpColor = new Color();
   const lerped = new Float32Array(16);
   let selectedId: number | null = null;
+  // Orbite caméra (bouton droit) : la cible vient du paquet, l'angle vient du geste.
+  const lastTarget = new Vector3();
+  let orbiting = false;
+  let orbitPX = 0;
+  let orbitPY = 0;
+  let lastOrbitSend = 0;
 
   function applyPacket(p: DecodedPacket, alpha: number): number {
     camera.fov = p.camera.fov;
     camera.near = p.camera.near;
     camera.far = p.camera.far;
-    camera.position.set(p.camera.pos[0], p.camera.pos[1], p.camera.pos[2]);
-    camera.lookAt(p.camera.target[0], p.camera.target[1], p.camera.target[2]);
-    camera.updateProjectionMatrix();
+    lastTarget.set(p.camera.target[0], p.camera.target[1], p.camera.target[2]);
+    if (!orbiting) {
+      // Pendant une orbite, on garde la position locale : le paquet reflète encore
+      // l'ancienne caméra tant que la commande n'a pas atteint le moteur.
+      camera.position.set(p.camera.pos[0], p.camera.pos[1], p.camera.pos[2]);
+      camera.lookAt(p.camera.target[0], p.camera.target[1], p.camera.target[2]);
+      camera.updateProjectionMatrix();
+    }
 
     applyLights(p);
 
@@ -467,13 +478,54 @@ export async function startScene3D(
     return best ? best.entityId : null;
   };
 
+  /** Orbite autour de la cible : envoie la nouvelle caméra au moteur (throttlé). */
+  const envoyerCameraOrbite = (immediat: boolean) => {
+    if (!inTauri) return;
+    const now = performance.now();
+    if (!immediat && now - lastOrbitSend < 50) return;
+    lastOrbitSend = now;
+    void invoke('engine_set_camera3d', {
+      position: [camera.position.x, camera.position.y, camera.position.z],
+      target: [lastTarget.x, lastTarget.y, lastTarget.z],
+    });
+  };
+
   const onPointerDown = (e: PointerEvent) => {
+    // Bouton droit = orbite caméra ; bouton gauche = sélection + déplacement au sol.
+    if (e.button === 2) {
+      orbiting = true;
+      orbitPX = e.clientX;
+      orbitPY = e.clientY;
+      e.preventDefault();
+      return;
+    }
     const id = pick(e);
     selectedId = id;
     onPick?.(id);
     dragging = id !== null;
   };
   const onPointerMove = (e: PointerEvent) => {
+    if (orbiting) {
+      const dx = (e.clientX - orbitPX) * 0.005;
+      const dy = (e.clientY - orbitPY) * 0.005;
+      orbitPX = e.clientX;
+      orbitPY = e.clientY;
+      const cible = lastTarget;
+      const decalage = camera.position.clone().sub(cible);
+      const rayon = Math.max(decalage.length(), 0.5);
+      let azimut = Math.atan2(decalage.x, decalage.z) - dx;
+      let hauteur = Math.asin(Math.min(1, Math.max(-1, decalage.y / rayon))) - dy;
+      hauteur = Math.min(1.45, Math.max(-1.45, hauteur));
+      camera.position.set(
+        cible.x + rayon * Math.cos(hauteur) * Math.sin(azimut),
+        cible.y + rayon * Math.sin(hauteur),
+        cible.z + rayon * Math.cos(hauteur) * Math.cos(azimut),
+      );
+      camera.lookAt(cible);
+      camera.updateProjectionMatrix();
+      envoyerCameraOrbite(false);
+      return;
+    }
     if (!dragging || selectedId === null) return;
     updatePointer(e);
     raycaster.setFromCamera(pointer, camera);
@@ -484,12 +536,30 @@ export async function startScene3D(
     }
   };
   const onPointerUp = () => {
+    if (orbiting) {
+      orbiting = false;
+      envoyerCameraOrbite(true);
+    }
     dragging = false;
+  };
+  /** Molette : rapproche ou éloigne la caméra de la cible, sans changer l'angle. */
+  const onWheel = (e: WheelEvent) => {
+    const cible = lastTarget;
+    const decalage = camera.position.clone().sub(cible);
+    const facteur = Math.exp(e.deltaY * 0.001);
+    const nouveau = decalage.multiplyScalar(Math.min(20, Math.max(0.2, facteur)));
+    camera.position.copy(cible).add(nouveau);
+    camera.lookAt(cible);
+    camera.updateProjectionMatrix();
+    envoyerCameraOrbite(false);
   };
 
   dom.addEventListener('pointerdown', onPointerDown);
   dom.addEventListener('pointermove', onPointerMove);
   dom.addEventListener('pointerup', onPointerUp);
+  dom.addEventListener('wheel', onWheel, { passive: true });
+  const onContextMenu = (e: Event) => e.preventDefault();
+  dom.addEventListener('contextmenu', onContextMenu);
   dom.style.touchAction = 'none';
 
   let last = performance.now();
@@ -599,6 +669,8 @@ export async function startScene3D(
       dom.removeEventListener('pointerdown', onPointerDown);
       dom.removeEventListener('pointermove', onPointerMove);
       dom.removeEventListener('pointerup', onPointerUp);
+      dom.removeEventListener('wheel', onWheel);
+      dom.removeEventListener('contextmenu', onContextMenu);
       dom.remove();
       renderer.dispose();
       material.dispose();
