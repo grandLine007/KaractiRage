@@ -403,6 +403,13 @@ impl NativeEngine {
     /// Échoue explicitement si l'asset n'existe pas ou n'est pas un glTF : placer
     /// un cube de repli silencieux serait exactement le défaut d'origine.
     pub fn place_mesh_asset(&mut self, asset_id: &str, scale: Option<f32>) -> Result<usize, String> {
+        // Un exemple du dépôt ne se modifie pas par l'application : la garde passe
+        // AVANT la résolution, pour que l'erreur soit celle du dépôt, pas de l'asset.
+        if let Some(chemin) = self.project_file().map(|p| p.to_path_buf()) {
+            if self.projet_est_exemple_du_depot(&chemin) {
+                return Err("Projet d'exemple du dépôt : copiez-le d'abord pour le modifier.".to_string());
+            }
+        }
         let manifeste = self.mesh_manifest();
         let def = manifeste.resolve(asset_id).ok_or_else(|| {
             format!(
@@ -3250,6 +3257,20 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    /// Placer un mesh dans un exemple ouvert est refusé.
+    #[test]
+    fn test_placement_refuse_un_exemple_du_depot() {
+        let mut engine = NativeEngine::init().unwrap();
+        let racine = engine.workspace_root();
+        engine
+            .open_project_path(racine.join("assets/projects/jeu_reference.karacti").to_str().unwrap())
+            .expect("projet de référence ouvert");
+        // L'exemple ne déclare aucun mesh importé : l'erreur doit être celle du dépôt,
+        // pas celle de l'asset inconnu.
+        let erreur = engine.place_mesh_asset("n_importe_quoi", None).unwrap_err();
+        assert!(erreur.contains("exemple"), "refus attendu pour un exemple : {erreur}");
     }
 
     /// Un projet d'exemple du dépôt ne doit jamais être réécrit par l'auto-save.

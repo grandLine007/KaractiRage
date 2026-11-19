@@ -786,6 +786,9 @@ fn engine_place_mesh_asset(
             "Aucun projet ouvert : ouvrez un projet avant de placer un modèle 3D.".to_string()
         })?
         .to_path_buf();
+    if eng.projet_est_exemple_du_depot(&project_file) {
+        return Err("Projet d'exemple du dépôt : copiez-le d'abord pour le modifier.".to_string());
+    }
 
     let entity_id = eng.place_mesh_asset(&id, scale)?;
     let entite = eng
@@ -1624,6 +1627,9 @@ fn engine_import_mesh_asset(
                 .to_string()
         })?
         .to_path_buf();
+    if eng.projet_est_exemple_du_depot(&project_file) {
+        return Err("Projet d'exemple du dépôt : copiez-le d'abord pour le modifier.".to_string());
+    }
     let racine = project_file
         .parent()
         .ok_or_else(|| {
