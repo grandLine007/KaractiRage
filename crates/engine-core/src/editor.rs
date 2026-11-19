@@ -35,6 +35,12 @@ pub enum StudioCommand {
         new_x: f32,
         new_y: f32,
     },
+    /// Proposition IA appliquée : réversible par instantanés sérialisés du projet.
+    EditProject {
+        label: String,
+        before: String,
+        after: String,
+    },
     /// Mutation de la liste des lumières : réversible par instantané complet.
     EditLights {
         label: String,
@@ -70,6 +76,7 @@ impl StudioCommand {
             StudioCommand::ApplyAiPatch { description, .. } => format!("Patch IA '{}'", description),
             StudioCommand::Edit3D { label, .. } => format!("Édition 3D '{}'", label),
             StudioCommand::EditLights { label, .. } => format!("Lumières '{}'", label),
+            StudioCommand::EditProject { label, .. } => format!("Proposition IA '{}'", label),
         }
     }
 }

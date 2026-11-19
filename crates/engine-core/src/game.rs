@@ -555,6 +555,21 @@ impl GameState {
                     self.audio.play(SoundType::WireCut);
                     return true;
                 }
+                StudioCommand::EditProject { label, before, after } => {
+                    if let Ok(projet) = crate::project::KaractiProject::from_json(&before) {
+                        self.entities = projet.scene.entities.clone();
+                        self.kvl_graphs = projet.kvl_graphs.clone();
+                        self.scene_name = projet.scene.name.clone();
+                        self.scene_objective = projet.scene.objective.clone();
+                        self.rebuild_static_spatial_grid();
+                        self.editor.undo_stack.push_redo(StudioCommand::EditProject { label, before, after });
+                        self.status_message = format!("Annulé : {}", desc);
+                        self.audio.play(SoundType::WireCut);
+                        return true;
+                    }
+                    self.status_message = "Restauration impossible : instantané illisible.".to_string();
+                    return false;
+                }
                 StudioCommand::Edit3D { entity_id, label, before, after } => {
                     if let Some(entity) = self.entities.iter_mut().find(|e| e.id == entity_id) {
                         entity.transform3d = before.transform3d.clone();
@@ -657,6 +672,21 @@ impl GameState {
                     self.status_message = format!("Rétabli : {}", desc);
                     self.audio.play(SoundType::WireCut);
                     return true;
+                }
+                StudioCommand::EditProject { label, before, after } => {
+                    if let Ok(projet) = crate::project::KaractiProject::from_json(&after) {
+                        self.entities = projet.scene.entities.clone();
+                        self.kvl_graphs = projet.kvl_graphs.clone();
+                        self.scene_name = projet.scene.name.clone();
+                        self.scene_objective = projet.scene.objective.clone();
+                        self.rebuild_static_spatial_grid();
+                        self.editor.undo_stack.push_undo(StudioCommand::EditProject { label, before, after });
+                        self.status_message = format!("Rétabli : {}", desc);
+                        self.audio.play(SoundType::WireCut);
+                        return true;
+                    }
+                    self.status_message = "Rétablissement impossible : instantané illisible.".to_string();
+                    return false;
                 }
                 StudioCommand::Edit3D { entity_id, label, before, after } => {
                     if let Some(entity) = self.entities.iter_mut().find(|e| e.id == entity_id) {

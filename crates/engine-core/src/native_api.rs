@@ -1876,9 +1876,20 @@ impl NativeEngine {
         proposal: &crate::ai_edit::EditProposal,
     ) -> Result<(String, crate::ai_edit::AiTransaction), String> {
         let project = self.game.export_current_project();
+        // Instantané sérialisé AVANT application : la proposition entre dans la même
+        // pile d'annulation que les mutations manuelles (ordre global garanti).
+        let avant = serde_json::to_string(&project)
+            .map_err(|error| format!("instantané illisible : {error}"))?;
         let applied =
             crate::ai_edit::apply_edit(&project, proposal).map_err(|error| error.to_string())?;
         self.apply_ai_edit_project(&applied.project);
+        let apres = serde_json::to_string(&self.game.export_current_project())
+            .map_err(|error| format!("instantané illisible : {error}"))?;
+        self.game.editor.undo_stack.push_undo(crate::editor::StudioCommand::EditProject {
+            label: proposal.intent_id.clone(),
+            before: avant,
+            after: apres,
+        });
         let report = serde_json::json!({
             "transaction_id": applied.transaction.id,
             "intent_id": applied.transaction.intent_id,
@@ -4132,6 +4143,25 @@ mod ai_edit_tests {
             .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
         assert_ne!(before, after, "la couleur a changé");
         assert_eq!(after, Some(0x00DC2626));
+
+        // La proposition vit dans la MÊME pile que les mutations manuelles : ⌘Z
+        // unique, ordre global garanti.
+        assert!(engine.undo(), "undo de la proposition IA");
+        let apres_undo = engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
+        assert_eq!(apres_undo, before, "undo restaure la couleur d'origine");
+        assert!(engine.redo(), "redo de la proposition IA");
+        let apres_redo = engine
+            .game
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .and_then(|entity| entity.renderable.as_ref().map(|renderable| renderable.color));
+        assert_eq!(apres_redo, after, "redo réapplique la couleur");
         // La sélection survit à l'application (édition enchaînable).
         assert_eq!(engine.get_selected_entity_id(), Some(id));
 

@@ -52,7 +52,7 @@ import {
 } from './services/engineBridge';
 import { Check, X, HelpCircle, Volume2, VolumeX, Save } from 'lucide-react';
 import type { ProjectEntry } from './services/projectBridge';
-import { getAiEditContext, undoAiEdit, type AiApplyReport } from './services/aiEditBridge';
+import { getAiEditContext, type AiApplyReport } from './services/aiEditBridge';
 import { prewarm3D } from './render3d/prewarm';
 
 /**
@@ -558,21 +558,6 @@ export function App() {
         // ouvrait l'état sans rien afficher quand on était en mode Jouer.
         if (currentMode !== 'edit') applyMode('edit');
         openAiEdit(null);
-        return;
-      }
-
-      // 0ter. Annulation de la dernière édition IA (une intention = une transaction).
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey && lastAiTransaction) {
-        e.preventDefault();
-        const transaction = lastAiTransaction;
-        setLastAiTransaction(null);
-        void undoAiEdit(transaction).then(ok => {
-          refresh();
-          pushToast(
-            ok ? 'Édition IA annulée.' : 'Annulation IA indisponible (session expirée).',
-            ok ? 'info' : 'error'
-          );
-        });
         return;
       }
 
