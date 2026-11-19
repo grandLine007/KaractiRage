@@ -1978,7 +1978,27 @@ impl NativeEngine {
     }
 
     /// Sauvegarde la scène ECS et les scripts KVL sur disque.
+    /// Un projet situé sous `assets/` du dépôt est un **exemple versionné**, pas une
+    /// œuvre en cours : l'auto-save ne doit jamais le réécrire (il corrompt le dépôt
+    /// et fait échouer les tests — trois incidents constatés).
+    pub fn projet_est_exemple_du_depot(&self, chemin: &std::path::Path) -> bool {
+        chemin.starts_with(self.workspace_root().join("assets"))
+    }
+
     pub fn save_scene(&mut self) -> bool {
+        match self.project_file().map(|p| p.to_path_buf()) {
+            None => {
+                self.game.status_message =
+                    "Aucun projet ouvert : sauvegarde ignorée.".to_string();
+                return true;
+            }
+            Some(chemin) if self.projet_est_exemple_du_depot(&chemin) => {
+                self.game.status_message =
+                    "Projet d'exemple du dépôt : sauvegarde désactivée (il est versionné).".to_string();
+                return true;
+            }
+            Some(_) => {}
+        }
         let ok = self.game.save_scene_and_scripts().is_ok();
         if ok {
             // Le Studio vient lui-même d'écrire ces fichiers : réarmer le
@@ -3230,6 +3250,35 @@ mod tests {
         assert_eq!(t3d.position.z, 4.0);
         // Une entité inexistante ne doit rien faire.
         assert!(!engine.move_entity_3d(usize::MAX, 0.0, 0.0));
+    }
+
+    /// Un projet d'exemple du dépôt ne doit jamais être réécrit par l'auto-save.
+    #[test]
+    fn test_projet_exemple_du_depot_n_est_pas_sauvegarde() {
+        let mut engine = NativeEngine::init().unwrap();
+        let racine = engine.workspace_root();
+        assert!(engine.projet_est_exemple_du_depot(&racine.join("assets/projects/jeu_reference.karacti")));
+        assert!(engine.projet_est_exemple_du_depot(&racine.join("assets/scenes/level_01.scene.json")));
+        assert!(!engine.projet_est_exemple_du_depot(&std::path::PathBuf::from("/tmp/ailleurs/jeu.karacti")));
+
+        // Un moteur sans projet ne doit rien écrire non plus.
+        engine.game.status_message.clear();
+        assert!(engine.save_scene(), "acceptée en apparence");
+        assert!(engine.game.status_message.contains("Aucun projet ouvert"));
+
+        // Ouvre le projet de référence (sous assets/ du dépôt).
+        engine
+            .open_project_path(racine.join("assets/projects/jeu_reference.karacti").to_str().unwrap())
+            .expect("projet de référence ouvert");
+        engine.game.status_message.clear();
+        let avant = std::fs::metadata(racine.join("assets/scenes/level_01.scene.json"))
+            .expect("scène versionnée présente")
+            .modified()
+            .unwrap();
+        let _ = engine.save_scene();
+        let apres = std::fs::metadata(racine.join("assets/scenes/level_01.scene.json")).unwrap().modified().unwrap();
+        assert_eq!(avant, apres, "l'exemple du dépôt ne doit pas être réécrit");
+        assert!(engine.game.status_message.contains("désactivée"));
     }
 
     /// Ajouter puis annuler une lumière restaure la liste exacte.
